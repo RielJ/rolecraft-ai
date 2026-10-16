@@ -362,11 +362,22 @@ const ModelName = z
   .max(100)
   .regex(/^[A-Za-z0-9._:/-]*$/, "Model names use letters, digits, dots, dashes, colons and slashes.");
 
+/** The smallest monthly cap. Caps are stored to the cent, so anything that rounds below this is refused. */
+export const MIN_CAP_USD = 0.01;
+
+/** True when `usd` is still at least the minimum after rounding to cents, as the database stores it. */
+export const isValidCap = (usd: number): boolean => Number(usd.toFixed(2)) >= MIN_CAP_USD;
+
 export const UpdateSettingsInput = z.object({
   /** Blank means "use the default for the provider". */
   modelLight: ModelName.optional(),
   modelWriting: ModelName.optional(),
-  monthlyCapUsd: z.number().positive().max(999_999).nullable().optional(),
+  monthlyCapUsd: z
+    .number()
+    .refine(isValidCap, `The smallest cap is $${MIN_CAP_USD.toFixed(2)}. Leave it empty for no cap.`)
+    .max(999_999)
+    .nullable()
+    .optional(),
   eligibilityOnRefresh: z.boolean().optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof UpdateSettingsInput>;

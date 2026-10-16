@@ -154,6 +154,17 @@ describe("models, cap and toggles", () => {
       expect((await json(res, ApiErrorBody, 400)).error.code).toBe("invalid_input");
     }
   });
+
+  test("a cap that rounds below $0.01 is a 400 naming the smallest cap; $0.005 and up round to a valid cap", async () => {
+    for (const monthlyCapUsd of [0.001, 0.004999]) {
+      const res = await call("PATCH", "/settings", { monthlyCapUsd });
+      const { error } = await json(res, ApiErrorBody, 400);
+      expect(error.code).toBe("invalid_input");
+      expect(error.message).toContain("The smallest cap is $0.01.");
+    }
+    const ok = await json(await call("PATCH", "/settings", { monthlyCapUsd: 0.005 }), SettingsDto);
+    expect(ok.ai.monthlyCapUsd).toBe(0.01);
+  });
 });
 
 describe("pricing", () => {

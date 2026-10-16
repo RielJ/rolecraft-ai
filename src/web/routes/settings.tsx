@@ -1,6 +1,6 @@
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
-import type { SettingsDto } from "@/shared/api";
+import { isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
 import { AI_PROVIDERS, type AiProvider } from "@/shared/enums";
 import { errorMessage } from "../api";
 import { useRemoveAiKey, useSaveAiKey, useSettings, useUpdateSettings } from "../queries";
@@ -203,7 +203,7 @@ function SpendForm({ settings }: { settings: SettingsDto }) {
   const { spend, ai } = settings;
   const [cap, setCap] = useState(ai.monthlyCapUsd === null ? "" : String(ai.monthlyCapUsd));
   const parsed = cap.trim() === "" ? null : Number(cap);
-  const invalid = parsed !== null && !(Number.isFinite(parsed) && parsed > 0);
+  const invalid = parsed !== null && !(Number.isFinite(parsed) && isValidCap(parsed));
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -250,7 +250,7 @@ function SpendForm({ settings }: { settings: SettingsDto }) {
         </div>
         <p id={`${id}-cap-help`} className={invalid ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
           {invalid
-            ? "Enter an amount above zero, like 5 or 12.50, or leave it empty for no cap."
+            ? `Enter an amount of at least ${usd(MIN_CAP_USD)}, like 5 or 12.50, or leave it empty for no cap.`
             : "Before a call would cross the cap, the app asks you first."}
         </p>
       </div>
