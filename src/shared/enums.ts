@@ -7,6 +7,16 @@ export const PROFILE_ITEM_KINDS = ["cv", "experience", "open_source", "challenge
 export const ProfileItemKind = z.enum(PROFILE_ITEM_KINDS);
 export type ProfileItemKind = z.infer<typeof ProfileItemKind>;
 
+/** Add-on kinds (decision 2): every item kind except the single CV. */
+export const ADDON_KINDS = [
+  "experience",
+  "open_source",
+  "challenge",
+  "other",
+] as const satisfies readonly ProfileItemKind[];
+export const AddonKind = z.enum(ADDON_KINDS);
+export type AddonKind = z.infer<typeof AddonKind>;
+
 export const ITEM_USAGES = ["everywhere", "letters_only"] as const;
 export const ItemUsage = z.enum(ITEM_USAGES);
 export type ItemUsage = z.infer<typeof ItemUsage>;

@@ -3,7 +3,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { AddJobResult, ApiErrorBody, type GateBlocker, ProfileDto, TextExport, WorkspaceDto } from "@/shared/api";
-import { resetDb, testDeps, testSql } from "./setup";
+import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 let deps: Deps;
 let app: ReturnType<typeof createApp>;
@@ -25,6 +25,12 @@ async function json<T>(res: Response, schema: { parse(v: unknown): T }, status =
   const body: unknown = await res.json();
   expect({ status: res.status, body }).toMatchObject({ status });
   return schema.parse(body);
+}
+
+/** Save CV text, wait for its split task, and return the profile after it. */
+async function pasteCv(text: string): Promise<ProfileDto> {
+  await waitForSplits(await json(await call("PUT", "/profile/cv", { text }), ProfileDto));
+  return json(await call("GET", "/profile"), ProfileDto);
 }
 
 const CV = [
@@ -70,14 +76,14 @@ async function confirmedProfile(): Promise<ProfileDto> {
       links: ["https://github.com/juan"],
     },
   });
-  await call("PUT", "/profile/cv", { text: CV });
+  await pasteCv(CV);
   return json(await call("POST", "/facts/confirm-all"), ProfileDto);
 }
 
 describe("profile: CV paste to facts", () => {
   test("pasting CV text creates a cv item and pending facts by rule split; confirming moves them to confirmed", async () => {
-    const profile = await json(await call("PUT", "/profile/cv", { text: CV }), ProfileDto);
-    expect(profile.cv?.text).toBe(CV);
+    const profile = await pasteCv(CV);
+    expect(profile.cv?.body).toBe(CV);
     expect(profile.facts.map((f) => [f.key, f.text, f.status, f.itemKind])).toEqual([
       ["FACT-1", "Juan Dela Cruz", "pending", "cv"],
       ["FACT-2", "Built a payments API in Go serving 2M requests a day", "pending", "cv"],
@@ -100,12 +106,7 @@ describe("profile: CV paste to facts", () => {
   test("re-pasting keeps unchanged facts and their keys, drops vanished pending ones", async () => {
     const before = await confirmedProfile();
     const kept = before.facts.find((f) => f.text.startsWith("Built a payments"));
-    const after = await json(
-      await call("PUT", "/profile/cv", {
-        text: "- Built a payments API in Go serving 2M requests a day\n- Wrote docs",
-      }),
-      ProfileDto,
-    );
+    const after = await pasteCv("- Built a payments API in Go serving 2M requests a day\n- Wrote docs");
     const again = after.facts.find((f) => f.text.startsWith("Built a payments"));
     expect(String(again?.id)).toBe(String(kept?.id));
     expect(String(again?.key)).toBe(String(kept?.key));
@@ -125,10 +126,10 @@ describe("profile: CV paste to facts", () => {
   });
 
   test("a deleted fact's key is never reused", async () => {
-    const profile = await json(await call("PUT", "/profile/cv", { text: "- One\n- Two" }), ProfileDto);
+    const profile = await pasteCv("- One\n- Two");
     const two = profile.facts.find((f) => f.key === "FACT-2");
     await call("DELETE", `/facts/${two?.id}`);
-    const after = await json(await call("PUT", "/profile/cv", { text: "- One\n- Three" }), ProfileDto);
+    const after = await pasteCv("- One\n- Three");
     expect(after.facts.map((f) => String(f.key))).toEqual(["FACT-1", "FACT-3"]);
   });
 });

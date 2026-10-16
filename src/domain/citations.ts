@@ -364,3 +364,19 @@ export function quarantineViolations({
   }
   return out;
 }
+
+/**
+ * Skills from the claim list that appear in `texts`, deduplicated case-insensitively and spelled
+ * as first written. This is what "Skills found in your confirmed facts" shows.
+ */
+export function findSkills({ texts }: { texts: readonly string[] }): string[] {
+  const found = new Map<string, string>();
+  for (const text of texts) {
+    for (const word of words(claimText(text))) {
+      const lower = word.toLowerCase();
+      if (found.has(lower)) continue;
+      if (CLAIM_SKILLS.some((s) => (s === s.toLowerCase() ? s === lower : s === word))) found.set(lower, word);
+    }
+  }
+  return [...found.values()];
+}

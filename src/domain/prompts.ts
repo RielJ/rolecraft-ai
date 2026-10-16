@@ -195,3 +195,57 @@ export function estimateTokens(text: string): number {
 export function promptText(prompt: Prompt): string {
   return [prompt.system, ...prompt.messages.map((m) => m.content)].join("\n");
 }
+
+// ---------- Splitting an item into facts (section 3.3, step 2) ----------
+
+/** Output budget for one split call. The cap estimate uses the same number. */
+export const SPLIT_MAX_TOKENS = 3000;
+
+export type SplitItem = { kindLabel: string; title: string; body: string; skills: readonly string[] };
+
+const SPLIT_REPLY = 'Reply with JSON only: {"facts": [{"text": "..."}, ...]}';
+
+/**
+ * The light-tier split prompt. The item's text sits between `<<<` and `>>>`; the skills field is
+ * context only, and every fact is later checked against the text alone.
+ */
+export function buildSplitPrompt({ item }: { item: SplitItem }): Prompt {
+  const system = [
+    "You turn one person's CV or profile entry into a list of short facts they can confirm.",
+    "",
+    "Rules:",
+    "- One claim per fact: one thing they did, built, led, learned or achieved, with its result if the text gives one.",
+    "- Keep their own words. Keep every number, name, tool, date and link exactly as written.",
+    "- Add nothing the text does not say. Do not infer skills, years, titles or employers.",
+    "- Skip headings and contact details (name, email, phone, address).",
+    "- Write each fact as a plain sentence or phrase, without bullets or numbering.",
+  ].join("\n");
+  const skills = item.skills.length ? item.skills.join(", ") : "(none)";
+  const user = [
+    "ITEM",
+    `Kind: ${item.kindLabel}`,
+    `Title: ${item.title}`,
+    `Skills the person listed (context only; a fact must still come from the text): ${skills}`,
+    "Text:",
+    "<<<",
+    item.body.trim(),
+    ">>>",
+    "",
+    "TASK",
+    "Split the text into facts.",
+    SPLIT_REPLY,
+  ].join("\n");
+  return { system, messages: [{ role: "user", content: user }] };
+}
+
+/** The one retry after a reply that was not the JSON asked for. */
+export function buildSplitRetryPrompt({ prompt, reply }: { prompt: Prompt; reply: string }): Prompt {
+  return {
+    system: prompt.system,
+    messages: [
+      ...prompt.messages,
+      { role: "assistant", content: reply },
+      { role: "user", content: `That reply could not be read. ${SPLIT_REPLY}` },
+    ],
+  };
+}

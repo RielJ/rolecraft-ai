@@ -3,8 +3,8 @@ import type { FakeAi } from "@/server/adapters/ai/fake";
 import { createApp } from "@/server/http/app";
 import { AppError, type Deps } from "@/server/services/context";
 import { getTask, markInterrupted, startTask, waitForTask } from "@/server/services/tasks";
-import { AddJobResult, ApiErrorBody, TaskDto, WorkspaceDto } from "@/shared/api";
-import { resetDb, testDeps, testSql } from "./setup";
+import { AddJobResult, ApiErrorBody, ProfileDto, TaskDto, WorkspaceDto } from "@/shared/api";
+import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 let deps: Deps & { fake: FakeAi };
 let app: ReturnType<typeof createApp>;
@@ -127,7 +127,9 @@ describe("restart and retry", () => {
     await call("PUT", "/profile", {
       contact: { fullName: "Juan Dela Cruz", email: "", phone: "", location: "Manila", links: [] },
     });
-    await call("PUT", "/profile/cv", { text: "- Built a payments API in Go" });
+    await waitForSplits(
+      await json(await call("PUT", "/profile/cv", { text: "- Built a payments API in Go" }), ProfileDto),
+    );
     await call("POST", "/facts/confirm-all");
     await call("PUT", "/settings/ai-key", { provider: "openai", key: "sk-proj-good-key-9z8y" });
     const added = await json(

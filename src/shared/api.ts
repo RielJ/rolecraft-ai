@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AddonKind,
   AiProvider,
   FactStatus,
   FileKind,
@@ -55,6 +56,7 @@ export const ERROR_CODES = [
   "key_rejected",
   "ai_unavailable",
   "refresh_running",
+  "unreadable_file",
   "internal",
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -76,6 +78,19 @@ export const OverCapDetails = z.object({
   estimateUsd: z.number(),
 });
 export type OverCapDetails = z.infer<typeof OverCapDetails>;
+
+// ---------- Tasks ----------
+
+export const TaskDto = z.object({
+  id: TaskId,
+  kind: TaskKind,
+  status: TaskStatus,
+  step: z.string(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  finishedAt: z.string().nullable(),
+});
+export type TaskDto = z.infer<typeof TaskDto>;
 
 // ---------- Profile ----------
 
@@ -108,14 +123,39 @@ export const FactDto = z.object({
   itemKind: ProfileItemKind,
   itemTitle: z.string(),
   usage: ItemUsage,
+  /** False when the item's latest split no longer produced it (`seen_rev < rev`): "Not in your latest CV". */
+  inLatest: z.boolean(),
 });
 export type FactDto = z.infer<typeof FactDto>;
+
+/** The CV or an add-on, with its latest split task so a reload can resume progress or offer Retry. */
+export const ProfileItemDto = z.object({
+  id: ItemId,
+  kind: ProfileItemKind,
+  title: z.string(),
+  body: z.string(),
+  /** `YYYY-MM-DD` or null. */
+  happenedOn: z.string().nullable(),
+  link: z.string().nullable(),
+  skills: z.array(z.string()),
+  usage: ItemUsage,
+  rev: z.number().int(),
+  /** CV only: the uploaded file's name. */
+  fileName: z.string().nullable(),
+  splitTask: TaskDto.nullable(),
+});
+export type ProfileItemDto = z.infer<typeof ProfileItemDto>;
 
 export const ProfileDto = z.object({
   contact: Contact,
   standardAnswers: StandardAnswers,
-  cv: z.object({ id: ItemId, text: z.string(), rev: z.number().int() }).nullable(),
+  cv: ProfileItemDto.nullable(),
+  addons: z.array(ProfileItemDto),
   facts: z.array(FactDto),
+  /** Skills named in confirmed fact text: what matching counts. */
+  skillsFound: z.array(z.string()),
+  /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
+  aiReady: z.boolean(),
 });
 export type ProfileDto = z.infer<typeof ProfileDto>;
 
@@ -125,8 +165,44 @@ export const UpdateProfileInput = z.object({
 });
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>;
 
-export const PasteCvInput = z.object({ text: z.string().trim().min(1).max(100_000) });
+const CvText = z.string().trim().min(1).max(100_000);
+
+export const PasteCvInput = z.object({ text: CvText, confirmOverCap: z.boolean().optional() });
 export type PasteCvInput = z.infer<typeof PasteCvInput>;
+
+/** Largest CV file accepted for upload. */
+export const MAX_CV_BYTES = 10 * 1024 * 1024;
+
+/** `POST /api/profile/cv/file` as multipart form data. The file is read once and not kept. */
+export const UploadCvForm = z.object({
+  file: z
+    .instanceof(File, { message: "Choose a PDF or DOCX file." })
+    .refine((f) => f.size > 0, "That file is empty. Choose another, or paste the text.")
+    .refine((f) => f.size <= MAX_CV_BYTES, "That file is over 10 MB. Save a smaller copy, or paste the text."),
+  confirmOverCap: z.enum(["true", "false"]).optional(),
+});
+export type UploadCvForm = z.infer<typeof UploadCvForm>;
+
+/** An add-on (decision 2). Saving it splits it into pending facts. */
+export const AddonInput = z.object({
+  kind: AddonKind,
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1).max(20_000),
+  happenedOn: z.iso.date().nullable().optional(),
+  link: z
+    .url({ protocol: /^https?$/ })
+    .max(2000)
+    .nullable()
+    .optional(),
+  skills: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
+  usage: ItemUsage.optional(),
+  confirmOverCap: z.boolean().optional(),
+});
+export type AddonInput = z.infer<typeof AddonInput>;
+
+/** What a split task needs to run again (stored in `tasks.input`). */
+export const SplitTaskInput = z.object({ itemId: ItemId });
+export type SplitTaskInput = z.infer<typeof SplitTaskInput>;
 
 export const UpdateFactInput = z.object({ text: z.string().trim().min(1).max(2000) });
 export type UpdateFactInput = z.infer<typeof UpdateFactInput>;
@@ -227,18 +303,7 @@ export const OutputDto = z.object({
 });
 export type OutputDto = z.infer<typeof OutputDto>;
 
-// ---------- Tasks ----------
-
-export const TaskDto = z.object({
-  id: TaskId,
-  kind: TaskKind,
-  status: TaskStatus,
-  step: z.string(),
-  error: z.string().nullable(),
-  createdAt: z.string(),
-  finishedAt: z.string().nullable(),
-});
-export type TaskDto = z.infer<typeof TaskDto>;
+// ---------- Task requests ----------
 
 export const ConfirmOverCapInput = z.object({ confirmOverCap: z.boolean().optional() });
 export type ConfirmOverCapInput = z.infer<typeof ConfirmOverCapInput>;

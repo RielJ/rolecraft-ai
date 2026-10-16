@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ConfirmOverCapInput, TaskId } from "@/shared/api";
 import type { Deps } from "../../services/context";
+import { retrySplit } from "../../services/profile";
 import { getTask, retryTask } from "../../services/tasks";
 import { retryDraft } from "../../services/workspace";
 import { validate } from "../validate";
@@ -18,7 +19,10 @@ export function taskRoutes(deps: Deps) {
         await retryTask(deps, {
           taskId: c.req.valid("param").id,
           confirmOverCap: c.req.valid("json").confirmOverCap ?? false,
-          handlers: { draft: (input, options) => retryDraft(deps, input, options) },
+          handlers: {
+            draft: (input, options) => retryDraft(deps, input, options),
+            split: (input, options) => retrySplit(deps, input, options),
+          },
         }),
         202,
       ),

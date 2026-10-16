@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   AddJobResult,
+  type AddonInput,
   BoardItemDto,
   type DraftInput,
   type FactId,
+  type ItemId,
   type OpportunityId,
   type OutputId,
   type PasteJobInput,
@@ -33,8 +35,17 @@ const TASK_POLL_MS = 1000;
 
 // ---------- Profile ----------
 
+/** True while the CV or an add-on is being split into facts. */
+export const splitRunning = (profile: ProfileDto | undefined): boolean =>
+  [profile?.cv, ...(profile?.addons ?? [])].some((item) => item?.splitTask?.status === "running");
+
 export function useProfile() {
-  return useQuery({ queryKey: keys.profile, queryFn: () => unwrap(client.api.profile.$get(), ProfileDto) });
+  return useQuery({
+    queryKey: keys.profile,
+    queryFn: () => unwrap(client.api.profile.$get(), ProfileDto),
+    // New facts arrive by polling while a split task runs.
+    refetchInterval: (query) => (splitRunning(query.state.data) ? TASK_POLL_MS : false),
+  });
 }
 
 function useProfileMutation<I>(run: (input: I) => Promise<ProfileDto>) {
@@ -54,7 +65,43 @@ export const useUpdateProfile = () =>
   useProfileMutation((json: UpdateProfileInput) => unwrap(client.api.profile.$put({ json }), ProfileDto));
 
 export const usePasteCv = () =>
-  useProfileMutation((text: string) => unwrap(client.api.profile.cv.$put({ json: { text } }), ProfileDto));
+  useProfileMutation(({ text, confirmOverCap }: { text: string; confirmOverCap?: boolean }) =>
+    unwrap(client.api.profile.cv.$put({ json: { text, confirmOverCap } }), ProfileDto),
+  );
+
+/** Upload a PDF or DOCX. The server reads it once and keeps only the text. */
+export const useUploadCv = () =>
+  useProfileMutation(({ file, confirmOverCap }: { file: File; confirmOverCap?: boolean }) =>
+    unwrap(
+      client.api.profile.cv.file.$post({ form: { file, confirmOverCap: confirmOverCap ? "true" : "false" } }),
+      ProfileDto,
+    ),
+  );
+
+export const useCreateAddon = () =>
+  useProfileMutation((json: AddonInput) => unwrap(client.api.profile.addons.$post({ json }), ProfileDto));
+
+export const useUpdateAddon = () =>
+  useProfileMutation(({ id, ...json }: { id: ItemId } & AddonInput) =>
+    unwrap(client.api.profile.addons[":id"].$put({ param: { id }, json }), ProfileDto),
+  );
+
+export const useDeleteAddon = () =>
+  useProfileMutation((id: ItemId) => unwrap(client.api.profile.addons[":id"].$delete({ param: { id } }), ProfileDto));
+
+/** Keep a fact that is not in the latest version of its CV or add-on. */
+export const useKeepFact = () =>
+  useProfileMutation((id: FactId) => unwrap(client.api.facts[":id"].keep.$post({ param: { id } }), ProfileDto));
+
+/** Retry a failed split. The profile refetch picks up the new task and polls it. */
+export function useRetrySplit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, confirmOverCap }: { id: TaskId; confirmOverCap?: boolean }) =>
+      unwrap(client.api.tasks[":id"].retry.$post({ param: { id }, json: { confirmOverCap } }), TaskDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.profile }),
+  });
+}
 
 export const useConfirmFact = () =>
   useProfileMutation((id: FactId) => unwrap(client.api.facts[":id"].confirm.$post({ param: { id } }), ProfileDto));

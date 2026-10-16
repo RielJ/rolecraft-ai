@@ -1,5 +1,5 @@
 import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
-import type { MustAnswer, OpportunityStatus, OpportunityType, OutputKind } from "./enums";
+import type { ItemUsage, MustAnswer, OpportunityStatus, OpportunityType, OutputKind, ProfileItemKind } from "./enums";
 
 export function outputKindLabel(kind: OutputKind): string {
   switch (kind) {
@@ -13,6 +13,38 @@ export function outputKindLabel(kind: OutputKind): string {
       return "Answer";
     default: {
       const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}
+
+export function itemKindLabel(kind: ProfileItemKind): string {
+  switch (kind) {
+    case "cv":
+      return "CV";
+    case "experience":
+      return "Experience";
+    case "open_source":
+      return "Open source";
+    case "challenge":
+      return "Challenge";
+    case "other":
+      return "Other";
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}
+
+export function itemUsageLabel(usage: ItemUsage): string {
+  switch (usage) {
+    case "everywhere":
+      return "Everywhere";
+    case "letters_only":
+      return "Letters and answers only";
+    default: {
+      const _exhaustive: never = usage;
       return _exhaustive;
     }
   }

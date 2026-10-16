@@ -1,4 +1,5 @@
 import { estimateTokens } from "@/domain/prompts";
+import { splitFacts } from "@/domain/split";
 import { sentenceSpans } from "@/domain/text";
 import { type AiCompletion, type AiCompletionRequest, AiError, type AiProviderClient } from "./types";
 
@@ -39,6 +40,21 @@ function defaultRewrite(request: AiCompletionRequest): string {
   return JSON.stringify({ rewrites: sentences });
 }
 
+/** Split the item text between `<<<` and `>>>` by rule, so the default split equals the rule splitter. */
+function defaultSplit(request: AiCompletionRequest): string {
+  const prompt = request.messages[0]?.content ?? "";
+  const text = /^<<<\n([\s\S]*?)\n>>>$/m.exec(prompt)?.[1] ?? "";
+  return JSON.stringify({ facts: splitFacts({ text }).map((t) => ({ text: t })) });
+}
+
+/** Which default writer answers a request, from what its last message asks for. */
+function defaultReply(request: AiCompletionRequest): string {
+  const last = request.messages.at(-1)?.content ?? "";
+  if (last.includes('{"rewrites"')) return defaultRewrite(request);
+  if (last.includes('{"facts"')) return defaultSplit(request);
+  return defaultDraft(request);
+}
+
 /**
  * The `HB_AI=fake` provider for tests and Playwright. Keys containing "bad" are rejected.
  */
@@ -52,15 +68,7 @@ export function createFakeAi(): FakeAi {
     if (request.key.includes("bad")) throw new AiError({ kind: "rejected_key", message: "Fake: key rejected." });
     const reply = replies.shift();
     if (reply instanceof AiError) throw reply;
-    const isRewrite = (request.messages.at(-1)?.content ?? "").includes('{"rewrites"');
-    const text =
-      reply === undefined
-        ? isRewrite
-          ? defaultRewrite(request)
-          : defaultDraft(request)
-        : typeof reply === "string"
-          ? reply
-          : reply(request);
+    const text = reply === undefined ? defaultReply(request) : typeof reply === "string" ? reply : reply(request);
     const input = [request.system, ...request.messages.map((m) => m.content)].join("\n");
     return { text, inputTokens: estimateTokens(input), outputTokens: estimateTokens(text), model: request.model };
   }

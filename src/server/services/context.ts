@@ -17,7 +17,7 @@ export type Deps = {
   clock: Clock;
 };
 
-type Status = 400 | 402 | 404 | 409 | 500 | 503;
+type Status = 400 | 402 | 404 | 409 | 422 | 500 | 503;
 
 const STATUS: Record<ErrorCode, Status> = {
   invalid_input: 400,
@@ -31,6 +31,7 @@ const STATUS: Record<ErrorCode, Status> = {
   key_rejected: 400,
   ai_unavailable: 503,
   refresh_running: 409,
+  unreadable_file: 422,
   internal: 500,
 };
 

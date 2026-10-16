@@ -12,7 +12,7 @@ import {
   TextExport,
   WorkspaceDto,
 } from "@/shared/api";
-import { resetDb, testDeps, testSql } from "./setup";
+import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 let deps: Deps & { fake: FakeAi };
 let app: ReturnType<typeof createApp>;
@@ -59,7 +59,7 @@ async function setup(): Promise<{ ws: WorkspaceDto; profile: ProfileDto }> {
       links: ["https://github.com/juan"],
     },
   });
-  await call("PUT", "/profile/cv", { text: CV });
+  await waitForSplits(await json(await call("PUT", "/profile/cv", { text: CV }), ProfileDto));
   const profile = await json(await call("POST", "/facts/confirm-all"), ProfileDto);
   expect((await call("PUT", "/settings/ai-key", { provider: "anthropic", key: "sk-ant-good-key-a1B2" })).status).toBe(
     200,

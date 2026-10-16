@@ -10,6 +10,8 @@ import { createDb, type Db } from "@/server/db/client";
 import { migrateDb } from "@/server/db/migrate";
 import type { Deps } from "@/server/services/context";
 import { ensureUser } from "@/server/services/profile";
+import { waitForTask } from "@/server/services/tasks";
+import type { ProfileDto } from "@/shared/api";
 import { resetTables } from "./reset";
 
 // bunfig preload: migrate the test database once per `bun test` run.
@@ -64,6 +66,12 @@ export async function testDeps(
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
     fake,
   };
+}
+
+/** Wait for every split task a profile response shows as running (CV and add-ons). */
+export async function waitForSplits(profile: ProfileDto): Promise<void> {
+  const items = [profile.cv, ...profile.addons];
+  for (const item of items) if (item?.splitTask?.status === "running") await waitForTask(item.splitTask.id);
 }
 
 /** Raw SQL against the test database, for CHECK and row-level assertions. */
