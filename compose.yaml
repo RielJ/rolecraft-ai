@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: hanapbuhay
+      POSTGRES_PASSWORD: ${HB_DB_PASSWORD:-hanapbuhay}
+      POSTGRES_DB: hanapbuhay
+    ports:
+      - "${HB_DB_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 keeps data under /var/lib/postgresql.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hanapbuhay -d hanapbuhay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

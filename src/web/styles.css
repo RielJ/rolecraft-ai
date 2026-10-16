@@ -1,0 +1,118 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * One OKLCH palette: warm paper neutrals (hue 75) and one green accent (hue 160).
+ * Light and dark follow prefers-color-scheme only (decision 39); there is no toggle.
+ */
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.985 0.004 75);
+  --foreground: oklch(0.22 0.012 75);
+  --card: oklch(0.985 0.004 75);
+  --card-foreground: oklch(0.22 0.012 75);
+  --popover: oklch(0.995 0.003 75);
+  --popover-foreground: oklch(0.22 0.012 75);
+  --primary: oklch(0.44 0.085 160);
+  --primary-foreground: oklch(0.985 0.01 160);
+  --secondary: oklch(0.945 0.008 75);
+  --secondary-foreground: oklch(0.26 0.012 75);
+  --muted: oklch(0.955 0.006 75);
+  --muted-foreground: oklch(0.47 0.012 75);
+  --accent: oklch(0.94 0.02 160);
+  --accent-foreground: oklch(0.28 0.06 160);
+  --destructive: oklch(0.53 0.19 28);
+  --warning: oklch(0.58 0.13 70);
+  --warning-foreground: oklch(0.35 0.08 70);
+  --warning-surface: oklch(0.965 0.035 85);
+  --border: oklch(0.89 0.008 75);
+  --input: oklch(0.87 0.01 75);
+  --ring: oklch(0.55 0.1 160);
+  --selection: oklch(0.88 0.06 160);
+  --scrollbar: oklch(0.8 0.01 75);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.19 0.008 75);
+    --foreground: oklch(0.93 0.006 75);
+    --card: oklch(0.19 0.008 75);
+    --card-foreground: oklch(0.93 0.006 75);
+    --popover: oklch(0.23 0.009 75);
+    --popover-foreground: oklch(0.93 0.006 75);
+    --primary: oklch(0.74 0.11 160);
+    --primary-foreground: oklch(0.2 0.03 160);
+    --secondary: oklch(0.26 0.009 75);
+    --secondary-foreground: oklch(0.92 0.006 75);
+    --muted: oklch(0.245 0.008 75);
+    --muted-foreground: oklch(0.7 0.01 75);
+    --accent: oklch(0.29 0.04 160);
+    --accent-foreground: oklch(0.9 0.04 160);
+    --destructive: oklch(0.68 0.17 25);
+    --warning: oklch(0.78 0.13 80);
+    --warning-foreground: oklch(0.86 0.09 85);
+    --warning-surface: oklch(0.27 0.04 75);
+    --border: oklch(0.31 0.009 75);
+    --input: oklch(0.36 0.01 75);
+    --ring: oklch(0.68 0.1 160);
+    --selection: oklch(0.4 0.07 160);
+    --scrollbar: oklch(0.38 0.01 75);
+  }
+}
+
+@theme inline {
+  --font-sans: "Public Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Literata Variable", Georgia, ui-serif, serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-surface: var(--warning-surface);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light dark;
+    scrollbar-color: var(--scrollbar) transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    caret-color: var(--primary);
+  }
+  ::selection {
+    background: var(--selection);
+    color: var(--foreground);
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+}
