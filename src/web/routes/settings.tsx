@@ -1,6 +1,6 @@
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
-import { isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
+import { CurrencyCode, isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
 import { AI_PROVIDERS, type AiProvider } from "@/shared/enums";
 import { errorMessage } from "../api";
 import { useRemoveAiKey, useSaveAiKey, useSettings, useUpdateSettings } from "../queries";
@@ -281,6 +281,257 @@ function EligibilityToggle({ ai }: { ai: SettingsDto["ai"] }) {
   );
 }
 
+type Money = SettingsDto["money"];
+
+const SET_ON = new Intl.DateTimeFormat("en-PH", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "Asia/Manila",
+});
+
+/** A positive rate typed by hand, or null when the text is not one. */
+function rateFrom(text: string): number | null {
+  const n = Number(text.replace(/,/g, "").trim());
+  return text.trim() !== "" && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function ViewCurrencyForm({ money }: { money: Money }) {
+  const id = useId();
+  const update = useUpdateSettings();
+  const [code, setCode] = useState(money.viewCurrency);
+  const parsed = CurrencyCode.safeParse(code);
+  const changed = parsed.success && parsed.data !== money.viewCurrency;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!parsed.success || !changed) return;
+    update.mutate(
+      { viewCurrency: parsed.data },
+      {
+        onSuccess: () =>
+          toast(
+            money.fxRates.length
+              ? `Pay now shows in ${parsed.data}. Your rates were cleared.`
+              : `Pay now shows in ${parsed.data}.`,
+          ),
+        onError,
+      },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="grid gap-2">
+      <Label htmlFor={`${id}-code`}>View currency</Label>
+      <div className="flex max-w-xs gap-2">
+        <Input
+          id={`${id}-code`}
+          className="w-24 uppercase"
+          maxLength={3}
+          autoComplete="off"
+          spellCheck={false}
+          value={code}
+          aria-invalid={!parsed.success}
+          aria-describedby={`${id}-help`}
+          onChange={(e) => setCode(e.target.value.toUpperCase())}
+        />
+        <Button type="submit" variant="secondary" disabled={update.isPending || !changed}>
+          Save currency
+        </Button>
+      </div>
+      <p id={`${id}-help`} className={parsed.success ? "text-muted-foreground text-sm" : "text-destructive text-sm"}>
+        {parsed.success
+          ? "Pay shows as a monthly amount in this currency. Changing it clears your rates, since they are relative to it."
+          : "Use a three-letter currency code, such as PHP or USD."}
+      </p>
+    </form>
+  );
+}
+
+/** One currency's rate: set, changed or removed. A currency with no rate yet shows an empty field. */
+function RateRow({ money, currency, rate, setAt }: { money: Money; currency: string; rate?: number; setAt?: string }) {
+  const id = useId();
+  const update = useUpdateSettings();
+  const [text, setText] = useState(rate === undefined ? "" : String(rate));
+  const value = rateFrom(text);
+  const invalid = text.trim() !== "" && value === null;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (value === null || value === rate) return;
+    update.mutate(
+      { fxRates: { [currency]: value } },
+      { onSuccess: () => toast(`1 ${currency} = ${value} ${money.viewCurrency}`), onError },
+    );
+  }
+
+  return (
+    <li>
+      <form onSubmit={submit} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Label htmlFor={`${id}-rate`} className="w-14 font-normal tabular-nums">
+          1 {currency} =
+        </Label>
+        <Input
+          id={`${id}-rate`}
+          inputMode="decimal"
+          className="w-32 tabular-nums"
+          placeholder="No rate"
+          value={text}
+          aria-invalid={invalid}
+          aria-describedby={`${id}-note`}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <span className="text-muted-foreground">{money.viewCurrency}</span>
+        <Button
+          type="submit"
+          size="sm"
+          variant="secondary"
+          disabled={update.isPending || value === null || value === rate}
+        >
+          Save
+        </Button>
+        {rate !== undefined && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={update.isPending}
+            onClick={() => update.mutate({ fxRates: { [currency]: null } }, { onError })}
+          >
+            Remove
+          </Button>
+        )}
+        <span id={`${id}-note`} className={invalid ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
+          {invalid
+            ? "Enter a number above zero, like 57.80."
+            : setAt
+              ? `Set ${SET_ON.format(new Date(setAt))}`
+              : `${currency} pay shows as posted until you set a rate.`}
+        </span>
+      </form>
+    </li>
+  );
+}
+
+function AddRateForm({ money }: { money: Money }) {
+  const id = useId();
+  const update = useUpdateSettings();
+  const [code, setCode] = useState("");
+  const [text, setText] = useState("");
+  const parsed = CurrencyCode.safeParse(code);
+  const value = rateFrom(text);
+  const problem =
+    code.trim() === ""
+      ? null
+      : !parsed.success
+        ? "Use a three-letter currency code, such as USD."
+        : parsed.data === money.viewCurrency
+          ? `${parsed.data} is your view currency, so it needs no rate.`
+          : text.trim() !== "" && value === null
+            ? "Enter a number above zero, like 57.80."
+            : null;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!parsed.success || value === null || problem) return;
+    update.mutate(
+      { fxRates: { [parsed.data]: value } },
+      {
+        onSuccess: () => {
+          setCode("");
+          setText("");
+        },
+        onError,
+      },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="grid gap-1">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-code`}>Currency</Label>
+          <Input
+            id={`${id}-code`}
+            className="w-24 uppercase"
+            maxLength={3}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="USD"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-rate`}>Rate in {money.viewCurrency}</Label>
+          <Input
+            id={`${id}-rate`}
+            inputMode="decimal"
+            className="w-32 tabular-nums"
+            placeholder="57.80"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </div>
+        <Button
+          type="submit"
+          variant="secondary"
+          disabled={update.isPending || value === null || !parsed.success || !!problem}
+        >
+          Add rate
+        </Button>
+      </div>
+      {problem && (
+        <p role="alert" className="text-destructive text-sm">
+          {problem}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/** View currency and hand-typed FX rates (decision 20, Q12). */
+function MoneySection({ money }: { money: Money }) {
+  const id = useId();
+  return (
+    <section id="money" aria-labelledby={`${id}-h`} className="grid max-w-2xl scroll-mt-20 gap-6">
+      <div>
+        <h2 id={`${id}-h`} className="font-semibold text-lg">
+          Money
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          Rates are typed by hand and used as they are, so a change re-prices every job at once.
+        </p>
+      </div>
+      <ViewCurrencyForm key={money.viewCurrency} money={money} />
+      <div className="grid gap-3">
+        <h3 className="font-medium text-sm">Rates</h3>
+        {money.fxRates.length === 0 && money.missingRates.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            No rates yet. Currencies from your jobs appear here when they need one.
+          </p>
+        ) : (
+          <ul className="grid gap-2 text-sm">
+            {money.missingRates.map((currency) => (
+              <RateRow key={`missing:${currency}`} money={money} currency={currency} />
+            ))}
+            {money.fxRates.map((r) => (
+              <RateRow
+                key={`${r.currency}:${r.rate}:${r.setAt}`}
+                money={money}
+                currency={r.currency}
+                rate={r.rate}
+                setAt={r.setAt}
+              />
+            ))}
+          </ul>
+        )}
+        <AddRateForm money={money} />
+      </div>
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const settings = useSettings();
   if (settings.isPending) return <p className="text-muted-foreground">Loading settings…</p>;
@@ -294,7 +545,7 @@ export function SettingsPage() {
       </div>
     );
   }
-  const { ai } = settings.data;
+  const { ai, money } = settings.data;
   return (
     <div className="grid gap-10">
       <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
@@ -304,6 +555,8 @@ export function SettingsPage() {
       <Separator />
       <ModelsForm key={`${ai.provider}:${ai.modelLight}:${ai.modelWriting}`} ai={ai} />
       <EligibilityToggle ai={ai} />
+      <Separator />
+      <MoneySection money={money} />
     </div>
   );
 }

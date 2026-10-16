@@ -45,6 +45,7 @@ import type { DbOrTx } from "../db/client";
 import { facts, jobs, opportunities, outputFacts, outputs, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
+import { jobFacts } from "./jobs";
 import { loadContact } from "./profile";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 
@@ -191,7 +192,7 @@ export async function getWorkspace(
 ): Promise<WorkspaceDto> {
   const { opportunity, job } = await loadOpportunity(deps, opportunityId);
   const frozen = isFrozen(opportunity.status);
-  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask] = await Promise.all([
+  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask, jobView] = await Promise.all([
     loadContact(deps),
     loadOutputs(deps.db, opportunityId),
     deps.db
@@ -201,6 +202,7 @@ export async function getWorkspace(
       .orderBy(asc(facts.no)),
     loadAiConfig(deps),
     latestTask(deps, { kind: "draft", inputMatches: { opportunityId } }),
+    jobFacts(deps, job),
   ]);
   const gate = checkGate({ outputs: loaded.map(toGateOutput), standardAnswers });
   const dtos = loaded.map((o) => toOutputDto(o, standardAnswers, frozen));
@@ -222,6 +224,7 @@ export async function getWorkspace(
       company: job.company,
       description: job.description,
       applyUrl: job.applyUrl,
+      ...jobView,
     },
     files: dtos.filter((o) => o.kind !== "answer"),
     answers: dtos.filter((o) => o.kind === "answer"),

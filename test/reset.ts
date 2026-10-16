@@ -15,5 +15,5 @@ export async function resetTables(sql: postgres.Sql): Promise<void> {
     UPDATE users SET full_name = DEFAULT, email = DEFAULT, phone = DEFAULT, location = DEFAULT,
       links = DEFAULT, standard_answers = DEFAULT, ai_provider = DEFAULT, ai_key_hint = DEFAULT,
       model_light = DEFAULT, model_writing = DEFAULT, monthly_cap_usd = DEFAULT,
-      ai_eligibility_on_refresh = DEFAULT`;
+      ai_eligibility_on_refresh = DEFAULT, view_currency = DEFAULT, fx_rates = DEFAULT`;
 }

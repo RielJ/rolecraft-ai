@@ -38,6 +38,7 @@ describe("AI key", () => {
   test("a fresh install has no key, default models and no spend", async () => {
     const settings = await json(await call("GET", "/settings"), SettingsDto);
     expect(settings).toEqual({
+      money: { viewCurrency: "PHP", fxRates: [], missingRates: [] },
       ai: {
         provider: null,
         keyHint: null,
@@ -278,5 +279,65 @@ describe("provider adapters over HTTP", () => {
     });
     expect(res).toEqual({ text: "Hi [FACT-2].", inputTokens: 50, outputTokens: 4, model: "gpt-6.1-sol" });
     expect(ok.urls[0]).toBe("http://openai.test/v1/responses");
+  });
+});
+
+describe("view currency and FX rates (decision 20, Q12)", () => {
+  const SET_AT = "2026-07-10T08:00:00.000Z";
+  beforeEach(async () => {
+    deps = await testDeps({ clock: { now: () => new Date(SET_AT) } });
+    app = createApp(deps);
+  });
+
+  test("rates are saved per currency with the date set; null removes one", async () => {
+    const saved = await json(await call("PATCH", "/settings", { fxRates: { usd: 57.8, EUR: 62.1 } }), SettingsDto);
+    expect(saved.money).toEqual({
+      viewCurrency: "PHP",
+      fxRates: [
+        { currency: "EUR", rate: 62.1, setAt: SET_AT },
+        { currency: "USD", rate: 57.8, setAt: SET_AT },
+      ],
+      missingRates: [],
+    });
+    const after = await json(await call("PATCH", "/settings", { fxRates: { EUR: null } }), SettingsDto);
+    expect(after.money.fxRates).toEqual([{ currency: "USD", rate: 57.8, setAt: SET_AT }]);
+  });
+
+  test("the view currency cannot have a rate", async () => {
+    const err = await json(await call("PATCH", "/settings", { fxRates: { PHP: 1 } }), ApiErrorBody, 400);
+    expect(err.error).toMatchObject({
+      code: "invalid_input",
+      message: "PHP is your view currency, so it needs no rate.",
+    });
+  });
+
+  test("changing the view currency clears the rates", async () => {
+    await call("PATCH", "/settings", { fxRates: { USD: 57.8 } });
+    const saved = await json(await call("PATCH", "/settings", { viewCurrency: "usd" }), SettingsDto);
+    expect(saved.money).toEqual({ viewCurrency: "USD", fxRates: [], missingRates: [] });
+  });
+
+  test("a zero or negative rate and a bad code are refused", async () => {
+    for (const body of [{ fxRates: { USD: 0 } }, { fxRates: { USD: -1 } }, { viewCurrency: "pesos" }]) {
+      const err = await json(await call("PATCH", "/settings", body), ApiErrorBody, 400);
+      expect(err.error.code).toBe("invalid_input");
+    }
+  });
+
+  test("lists currencies of open jobs that have no rate", async () => {
+    await call("POST", "/jobs/from-paste", {
+      title: "Engineer",
+      company: "Euro Co",
+      description: "Remote role. Pay is €4,000 per month.",
+    });
+    await call("POST", "/jobs/from-paste", {
+      title: "Engineer",
+      company: "Peso Co",
+      description: "₱90,000 a month, Manila.",
+    });
+    const settings = await json(await call("GET", "/settings"), SettingsDto);
+    expect(settings.money.missingRates).toEqual(["EUR"]);
+    const after = await json(await call("PATCH", "/settings", { fxRates: { EUR: 62.1 } }), SettingsDto);
+    expect(after.money.missingRates).toEqual([]);
   });
 });

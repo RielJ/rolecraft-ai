@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { contentHash, descriptionKey, normalize, sentenceSpans, sha256Hex, tokens, wordCount } from "./text";
+import {
+  contentHash,
+  descriptionKey,
+  htmlToText,
+  normalize,
+  sentenceSpans,
+  sentencesOf,
+  sha256Hex,
+  tokens,
+  wordCount,
+} from "./text";
 
 describe("normalize", () => {
   test("lowercases, drops punctuation, collapses whitespace", () => {
@@ -73,5 +83,31 @@ describe("sentenceSpans", () => {
 describe("wordCount", () => {
   test("counts words, not markers or punctuation", () => {
     expect(wordCount("I built it - fast, really.")).toBe(5);
+  });
+});
+
+describe("htmlToText", () => {
+  test("keeps paragraph and list breaks and drops tags, scripts and styles", () => {
+    const html =
+      "<style>p{}</style><h2>About</h2><p>We build <b>APIs</b>.<br>Remote&nbsp;first.</p><ul><li>Go</li><li>Postgres &amp; Redis</li></ul><p>Apply now</p><script>x()</script>";
+    expect(htmlToText(html)).toBe("About\n\nWe build APIs.\nRemote first.\n\n- Go\n- Postgres & Redis\n\nApply now");
+  });
+  test("decodes entity-escaped HTML, as JSON-LD descriptions often are", () => {
+    expect(htmlToText("&lt;p&gt;Hello &amp;amp; welcome&lt;/p&gt;&lt;p&gt;Next&lt;/p&gt;")).toBe(
+      "Hello & welcome\n\nNext",
+    );
+  });
+  test("handles upper-case tags and numeric references", () => {
+    expect(htmlToText("<DIV>One</DIV><DIV>Caf&#233; &#x2014; two</DIV>")).toBe("One\n\nCafé — two");
+  });
+});
+
+describe("sentencesOf", () => {
+  test("splits at lines and sentence ends and drops bullets", () => {
+    expect(sentencesOf("Remote (US only). We pay well.\n- Must live in Canada")).toEqual([
+      "Remote (US only).",
+      "We pay well.",
+      "Must live in Canada",
+    ]);
   });
 });

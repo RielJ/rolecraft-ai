@@ -4,6 +4,7 @@ import { createAnthropicClient } from "./adapters/ai/anthropic";
 import { createFakeAi } from "./adapters/ai/fake";
 import { createOpenAiClient } from "./adapters/ai/openai";
 import type { AiClients } from "./adapters/ai/types";
+import { createHttpClient } from "./adapters/http";
 import { createFileKeyStore } from "./adapters/key-store";
 import { createChromiumPdf } from "./adapters/pdf";
 import { createDb } from "./db/client";
@@ -29,7 +30,7 @@ const ai: AiClients = fake
   : { anthropic: createAnthropicClient(), openai: createOpenAiClient() };
 const keyStore = createFileKeyStore({ dir: env.HB_DATA_DIR });
 
-const deps: Deps = { db, userId, pdf, ai, keyStore, clock: { now: () => new Date() } };
+const deps: Deps = { db, userId, pdf, ai, keyStore, http: createHttpClient(), clock: { now: () => new Date() } };
 
 const server = new Hono()
   .route("/", createApp(deps))

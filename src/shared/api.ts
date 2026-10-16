@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AddonKind,
   AiProvider,
+  Eligibility,
   FactStatus,
   FileKind,
   ItemUsage,
@@ -229,6 +230,65 @@ export const AddJobResult = z.discriminatedUnion("kind", [
 ]);
 export type AddJobResult = z.infer<typeof AddJobResult>;
 
+export const AddLinkInput = z.object({
+  url: z.url({ protocol: /^https?$/ }).max(2000),
+});
+export type AddLinkInput = z.infer<typeof AddLinkInput>;
+
+export const NEEDS_PASTE_REASONS = ["blocked_host", "too_little_text", "fetch_failed"] as const;
+export const NeedsPasteReason = z.enum(NEEDS_PASTE_REASONS);
+export type NeedsPasteReason = z.infer<typeof NeedsPasteReason>;
+
+/** Section 3.2: a link either makes a job, finds one, or opens the paste form with what was read. */
+export const AddLinkResult = z.discriminatedUnion("kind", [
+  ...AddJobResult.options,
+  z.object({
+    kind: z.literal("needs_paste"),
+    url: z.string(),
+    prefill: z.object({ title: z.string().optional(), company: z.string().optional() }),
+    reason: NeedsPasteReason,
+  }),
+]);
+export type AddLinkResult = z.infer<typeof AddLinkResult>;
+
+/** A job that may be the same as this one (section 3.8), with what sets the two apart. */
+export const PossibleDuplicate = z.object({
+  jobId: JobId,
+  title: z.string(),
+  company: z.string(),
+  /** Set when the other job is on the board, so the hint can link to it. */
+  opportunityId: OpportunityId.nullable(),
+  /** One line per job: requirements, location or pay that differ. */
+  diff: z.object({ job: z.string(), other: z.string() }),
+});
+export type PossibleDuplicate = z.infer<typeof PossibleDuplicate>;
+
+/** The job as the header shows it: values arrive converted and worded (section 1, "How API types reach the SPA"). */
+export const JobFacts = z.object({
+  locationText: z.string(),
+  eligibility: z.object({
+    verdict: Eligibility,
+    label: z.string(),
+    /** The phrase that decided it (decision 7); null only when unclear. */
+    phrase: z.string().nullable(),
+  }),
+  /** Null when the posting states no hours. */
+  hours: z.object({ phrase: z.string(), manila: z.string() }).nullable(),
+  /** Null when the posting states no pay ("not stated", decision 20). */
+  pay: z
+    .object({
+      posted: z.string(),
+      /** Monthly in the view currency, or null when shown as posted. */
+      converted: z.string().nullable(),
+      /** The currency to set a rate for, when that is why there is no conversion. */
+      missingRate: z.string().nullable(),
+    })
+    .nullable(),
+  expiresAt: z.iso.datetime().nullable(),
+  possibleDuplicates: z.array(PossibleDuplicate),
+});
+export type JobFacts = z.infer<typeof JobFacts>;
+
 // ---------- Board (decisions 16 to 19) ----------
 
 /** A contract's terms (decision 16). Every field is optional until the user fills it in. */
@@ -398,7 +458,27 @@ export type DraftInput = z.infer<typeof DraftInput>;
 
 // ---------- Settings ----------
 
+/** An ISO 4217 code such as PHP or USD. */
+export const CurrencyCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, "Use a three-letter currency code, such as PHP or USD.");
+
+/** One stored rate (Q12): view-currency units per 1 unit, and when the user set it. */
+export const FxRateEntry = z.object({ rate: z.number().positive(), setAt: z.iso.datetime() });
+export type FxRateEntry = z.infer<typeof FxRateEntry>;
+
+const FxRateValue = z.number().positive("A rate must be more than zero.").max(1_000_000, "That rate is too large.");
+
 export const SettingsDto = z.object({
+  money: z.object({
+    viewCurrency: z.string(),
+    /** Sorted by currency. */
+    fxRates: z.array(FxRateEntry.extend({ currency: z.string() })),
+    /** Currencies of open jobs' pay that have no rate yet, so their pay shows as posted. */
+    missingRates: z.array(z.string()),
+  }),
   ai: z.object({
     provider: AiProvider.nullable(),
     /** The last four characters of the saved key, or null. The key itself never leaves the server. */
@@ -449,6 +529,10 @@ export const UpdateSettingsInput = z.object({
     .nullable()
     .optional(),
   eligibilityOnRefresh: z.boolean().optional(),
+  /** Changing it clears the rates, which are relative to it, unless `fxRates` comes too. */
+  viewCurrency: CurrencyCode.optional(),
+  /** Sets each listed rate (dated now); null removes one. Unlisted rates stay. */
+  fxRates: z.record(CurrencyCode, FxRateValue.nullable()).optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof UpdateSettingsInput>;
 
@@ -465,13 +549,15 @@ export const WorkspaceDto = z.object({
     /** Null for jobs; the terms (possibly blank) for contracts. */
     contract: ContractTerms.nullable(),
   }),
-  job: z.object({
-    id: JobId,
-    title: z.string(),
-    company: z.string(),
-    description: z.string(),
-    applyUrl: z.string().nullable(),
-  }),
+  job: z
+    .object({
+      id: JobId,
+      title: z.string(),
+      company: z.string(),
+      description: z.string(),
+      applyUrl: z.string().nullable(),
+    })
+    .extend(JobFacts.shape),
   files: z.array(OutputDto),
   answers: z.array(OutputDto),
   gate: GateResult,

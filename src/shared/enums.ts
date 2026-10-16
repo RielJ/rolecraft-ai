@@ -33,8 +33,12 @@ export const JobOrigin = z.enum(JOB_ORIGINS);
 export type JobOrigin = z.infer<typeof JobOrigin>;
 
 export const PAY_PERIODS = ["hour", "day", "week", "month", "year"] as const;
+export const PayPeriod = z.enum(PAY_PERIODS);
+export type PayPeriod = z.infer<typeof PayPeriod>;
 
 export const ELIGIBILITIES = ["ph", "worldwide", "apac", "americas", "excluded", "unclear"] as const;
+export const Eligibility = z.enum(ELIGIBILITIES);
+export type Eligibility = z.infer<typeof Eligibility>;
 export const ELIGIBILITY_SOURCES = ["rule", "ai"] as const;
 
 export const OPPORTUNITY_TYPES = ["job", "contract"] as const;

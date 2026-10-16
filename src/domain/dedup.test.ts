@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { applyUrlKey, companyKey, titleKey } from "./dedup";
+import {
+  applyUrlKey,
+  companyKey,
+  type DuplicateCandidate,
+  duplicateDiff,
+  isAutoMerge,
+  likelyDuplicates,
+  titleKey,
+} from "./dedup";
+import { descriptionKey } from "./text";
 
 describe("titleKey", () => {
   test("seniority abbreviations, parentheticals, punctuation and order do not matter", () => {
@@ -33,5 +42,98 @@ describe("applyUrlKey", () => {
   test("returns null for non-http or invalid URLs", () => {
     expect(applyUrlKey("not a url")).toBeNull();
     expect(applyUrlKey("mailto:jobs@acme.com")).toBeNull();
+  });
+});
+
+describe("isAutoMerge (decision 46)", () => {
+  const base = {
+    titleKey: titleKey("Software Engineer"),
+    companyKey: companyKey("Acme Inc"),
+    applyUrlKey: null,
+    descriptionKey: descriptionKey("Build payment APIs in Go."),
+    seenAt: new Date("2026-03-01T00:00:00Z"),
+  };
+  test("the same company, title and description within 28 days merge", () => {
+    expect(isAutoMerge({ a: base, b: { ...base, seenAt: new Date("2026-03-29T00:00:00Z") } })).toBe(true);
+  });
+  test("past 28 days, or with a different description, they stay apart", () => {
+    expect(isAutoMerge({ a: base, b: { ...base, seenAt: new Date("2026-03-30T00:00:01Z") } })).toBe(false);
+    expect(isAutoMerge({ a: base, b: { ...base, descriptionKey: descriptionKey("Build UIs in React.") } })).toBe(false);
+  });
+  test("the same apply URL and title merge at any date; a different title never does", () => {
+    const url = { ...base, applyUrlKey: "https://jobs.lever.co/acme/1" };
+    const later = { ...url, descriptionKey: "x", seenAt: new Date("2027-01-01T00:00:00Z") };
+    expect(isAutoMerge({ a: url, b: later })).toBe(true);
+    expect(isAutoMerge({ a: url, b: { ...url, titleKey: titleKey("Designer") } })).toBe(false);
+  });
+});
+
+function candidate(overrides: Partial<DuplicateCandidate> & { id: string; title: string }): DuplicateCandidate {
+  const { title, ...rest } = overrides;
+  return {
+    titleKey: titleKey(title),
+    companyKey: companyKey("Acme Inc"),
+    description: "We build payment APIs in Go for banks across Asia and need help scaling them.",
+    locationText: "Remote",
+    payPhrase: null,
+    skills: ["Go"],
+    minYears: null,
+    closedAt: null,
+    ...rest,
+  };
+}
+
+describe("likelyDuplicates (section 3.8)", () => {
+  const job = candidate({ id: "a", title: "Software Engineer" });
+
+  test("same company with title token Jaccard >= 0.5", () => {
+    const same = candidate({ id: "b", title: "Software Engineer", description: "Totally different text about UIs." });
+    const close = candidate({ id: "c", title: "Senior Software Engineer" }); // 2 of 3 tokens
+    const far = candidate({ id: "d", title: "Product Designer" });
+    expect(likelyDuplicates({ job, candidates: [same, close, far] }).map((c) => c.id)).toEqual(["b", "c"]);
+  });
+
+  test("same title at another company only when descriptions are >= 0.8 similar", () => {
+    const copied = candidate({ id: "b", title: "Software Engineer", companyKey: "acme recruiting" });
+    const different = candidate({
+      id: "c",
+      title: "Software Engineer",
+      companyKey: "globex",
+      description: "Globex hires engineers to maintain a large Java monolith for insurance clients.",
+    });
+    expect(likelyDuplicates({ job, candidates: [copied, different] }).map((c) => c.id)).toEqual(["b"]);
+  });
+
+  test("the job itself and closed jobs are left out", () => {
+    const closed = candidate({ id: "b", title: "Software Engineer", closedAt: new Date("2026-01-01T00:00:00Z") });
+    expect(likelyDuplicates({ job, candidates: [job, closed] })).toEqual([]);
+  });
+});
+
+describe("duplicateDiff", () => {
+  test("names the requirements, location and pay that differ, one line per job", () => {
+    const a = candidate({
+      id: "a",
+      title: "Software Engineer",
+      skills: ["Go", "Kafka"],
+      minYears: 5,
+      locationText: "Remote (US only)",
+      payPhrase: "$120k–$150k/yr",
+    });
+    const b = candidate({ id: "b", title: "Software Engineer", skills: ["Go", "React"], minYears: 2 });
+    expect(duplicateDiff({ job: a, other: b })).toEqual({
+      job: "Asks for 5+ years, Kafka · Remote (US only) · $120k–$150k/yr",
+      other: "Asks for 2+ years, React · Remote · Pay not stated",
+    });
+  });
+
+  test("with the same requirements, location and pay, it quotes the first sentence that differs", () => {
+    const a = candidate({ id: "a", title: "Software Engineer", description: "Join payments. You own the ledger." });
+    const b = candidate({ id: "b", title: "Software Engineer", description: "Join payments. You own onboarding." });
+    expect(duplicateDiff({ job: a, other: b })).toEqual({ job: "You own the ledger.", other: "You own onboarding." });
+    expect(duplicateDiff({ job: a, other: a })).toEqual({
+      job: "Same requirements, location and pay",
+      other: "Same requirements, location and pay",
+    });
   });
 });

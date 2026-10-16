@@ -21,6 +21,7 @@ import type {
   AiCallId,
   FactId,
   FactKey,
+  FxRateEntry,
   ItemId,
   JobId,
   OpportunityId,
@@ -110,7 +111,8 @@ export const users = pgTable(
     minPay: jsonb().$type<Money>(),
     standardAnswers: jsonb().$type<StandardAnswers>().notNull().default({}),
     viewCurrency: char({ length: 3 }).notNull().default("PHP"),
-    fxRates: jsonb().$type<Record<string, number>>().notNull().default({}),
+    // Q12: per currency, the rate (view-currency units per 1 unit) and when it was set.
+    fxRates: jsonb().$type<Record<string, FxRateEntry>>().notNull().default({}),
     aiProvider: text().$type<AiProvider>(),
     aiKeyHint: text(),
     modelLight: text(),

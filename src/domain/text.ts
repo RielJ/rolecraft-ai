@@ -12,6 +12,92 @@ export function tokens(text: string): string[] {
   return n === "" ? [] : n.split(" ");
 }
 
+// ---------- HTML to plain text (no HTML is stored; section "What this plan cuts") ----------
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“",
+  ndash: "–",
+  mdash: "—",
+  hellip: "…",
+  bull: "•",
+  middot: "·",
+  euro: "€",
+  pound: "£",
+  peso: "₱",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+};
+
+/** Decode HTML character references. Unknown names stay as written. */
+export function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, ref: string) => {
+    if (ref[0] === "#") {
+      const code = ref[1] === "x" || ref[1] === "X" ? Number.parseInt(ref.slice(2), 16) : Number(ref.slice(1));
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    }
+    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole;
+  });
+}
+
+const DROPPED_ELEMENTS = /<(script|style|noscript|template|head|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const BLOCK_TAGS =
+  /<\/?(p|div|section|article|header|footer|main|aside|nav|h[1-6]|ul|ol|table|tr|blockquote|pre|dl|dt|dd|hr|figure)\b[^>]*>/gi;
+
+/**
+ * Plain text from HTML, keeping paragraph and list breaks: blocks become blank-line breaks,
+ * `<br>` a line break, and `<li>` a "- " bullet. Entity-escaped HTML (common in JSON-LD) is
+ * decoded first.
+ */
+export function htmlToText(html: string): string {
+  const source = /<[a-z!/]/i.test(html) || !/&lt;[a-z/]/i.test(html) ? html : decodeEntities(html);
+  const marked = source
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(DROPPED_ELEMENTS, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n\n- ")
+    .replace(/<\/li\s*>/gi, "\n\n")
+    .replace(BLOCK_TAGS, "\n\n")
+    .replace(/<\/?(td|th)\b[^>]*>/gi, " ")
+    .replace(/<[^>]+>/g, "");
+  const lines = decodeEntities(marked)
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[\t\f\v \u00a0]+/g, " ").trim());
+  const out: string[] = [];
+  let blank = false;
+  for (const line of lines) {
+    if (line === "") {
+      blank = out.length > 0;
+      continue;
+    }
+    const bullet = line.startsWith("- ");
+    const previousBullet = out.at(-1)?.startsWith("- ") ?? false;
+    // Consecutive bullets stay a tight list; anything else after a gap is a new paragraph.
+    if (blank && !(bullet && previousBullet)) out.push("");
+    out.push(line);
+    blank = false;
+  }
+  return out.join("\n");
+}
+
+/** Sentences and lines of plain text, for rules that quote the sentence that decided them. */
+export function sentencesOf(text: string): string[] {
+  return text
+    .split(/\n+|(?<=[.!?])\s+(?=[\p{Lu}\d"“(])/u)
+    .map((s) => s.replace(/^[-*•]\s+/, "").trim())
+    .filter((s) => s !== "");
+}
+
 /**
  * The text that two copies of the same posting share: lowercased, URLs and dates removed,
  * whitespace collapsed. Tracking links and "posted 3 days ago" lines then don't differ.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
+import { createHttpClient, type HttpClient } from "@/server/adapters/http";
 import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
 import { createChromiumPdf, type PdfRenderer } from "@/server/adapters/pdf";
 import { createDb, type Db } from "@/server/db/client";
@@ -49,11 +50,24 @@ export function testKeyStore(): KeyStore {
 }
 
 /**
+ * An HTTP client that never reaches the network: every request fails as a network error. Tests
+ * that read pages pass their own fetch to `createHttpClient`.
+ */
+export function offlineHttp(): HttpClient {
+  return createHttpClient({
+    fetch: async () => {
+      throw new TypeError("Network access is disabled in tests.");
+    },
+    sleep: async () => {},
+  });
+}
+
+/**
  * Deps against the test database, with a fixed clock unless one is given. The AI is a fresh
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore">> = {},
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http">> = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
@@ -63,6 +77,7 @@ export async function testDeps(
     pdf: over.pdf ?? pdf,
     ai: { anthropic: fake, openai: fake },
     keyStore: over.keyStore ?? testKeyStore(),
+    http: over.http ?? offlineHttp(),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
     fake,
   };

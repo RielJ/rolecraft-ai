@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   AddJobResult,
+  type AddLinkInput,
+  AddLinkResult,
   type AddonInput,
   BoardItemDto,
   type ChangeStatusInput,
@@ -125,11 +127,31 @@ export function useBoard() {
   return useQuery({ queryKey: keys.board, queryFn: () => unwrap(client.api.board.$get(), z.array(BoardItemDto)) });
 }
 
-export function useAddPastedJob() {
+/** A new job changes the board, and its pay currency may need a rate in Settings. */
+function useJobAdded() {
   const qc = useQueryClient();
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.board }),
+      qc.invalidateQueries({ queryKey: keys.settings }),
+      // Other jobs' duplicate hints are computed on read.
+      qc.invalidateQueries({ queryKey: ["workspace"] }),
+    ]);
+}
+
+export function useAddPastedJob() {
+  const onSuccess = useJobAdded();
   return useMutation({
     mutationFn: (json: PasteJobInput) => unwrap(client.api.jobs["from-paste"].$post({ json }), AddJobResult),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.board }),
+    onSuccess,
+  });
+}
+
+export function useAddJobFromLink() {
+  const onSuccess = useJobAdded();
+  return useMutation({
+    mutationFn: (json: AddLinkInput) => unwrap(client.api.jobs["from-link"].$post({ json }), AddLinkResult),
+    onSuccess,
   });
 }
 

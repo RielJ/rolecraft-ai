@@ -34,15 +34,24 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   await page.getByRole("button", { name: "Confirm all" }).click();
   await expect(page.getByRole("list", { name: "Confirmed facts" }).getByRole("listitem")).toHaveCount(3);
 
-  // 2. Add a job by pasting it.
+  // 2. Add a job by link. LinkedIn is never fetched: the dialog becomes the paste form, keeping
+  // the link as the apply URL.
   await page.getByRole("button", { name: "Add job" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a job" });
+  const link = "https://www.linkedin.com/jobs/view/4012345678/";
+  await dialog.getByLabel("Link to the posting").fill(link);
+  await dialog.getByRole("button", { name: "Add job" }).click();
+  await expect(dialog.getByText("LinkedIn does not allow automated reading. Paste the description.")).toBeVisible();
+  await expect(dialog.getByLabel("Link to the posting (optional)")).toHaveValue(link);
   await dialog.getByLabel("Job title").fill("Senior Backend Engineer");
   await dialog.getByLabel("Company").fill("Acme Inc");
   await dialog.getByLabel("Description").fill("Build payment APIs in Go. Remote, worldwide.");
   await dialog.getByRole("button", { name: "Add job" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Senior Backend Engineer" })).toBeVisible();
   await expect(page.getByText("Needs your input (3)")).toBeVisible();
+  // The header shows who can apply, with the phrase that decided it, and that pay is not stated.
+  await expect(page.getByText("Worldwide", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pay not stated")).toBeVisible();
 
   // 3. Write the resume, citing facts.
   await page

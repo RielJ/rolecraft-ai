@@ -1,5 +1,6 @@
 import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type {
+  Eligibility,
   ItemUsage,
   MustAnswer,
   OpportunityStatus,
@@ -185,6 +186,28 @@ export function outdatedLabel(change: Pick<OutdatedChange, "factKey" | "reason">
       return `${change.factKey} is now for letters only, so it cannot stay on a resume`;
     default: {
       const _exhaustive: never = change.reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/** The eligibility verdict as the UI names it (decision 7). */
+export function eligibilityLabel(verdict: Eligibility): string {
+  switch (verdict) {
+    case "ph":
+      return "Open to the Philippines";
+    case "worldwide":
+      return "Worldwide";
+    case "apac":
+      return "APAC";
+    case "americas":
+      return "Americas";
+    case "excluded":
+      return "Excluded";
+    case "unclear":
+      return "Unclear";
+    default: {
+      const _exhaustive: never = verdict;
       return _exhaustive;
     }
   }

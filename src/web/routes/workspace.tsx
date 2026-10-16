@@ -21,6 +21,7 @@ import {
 } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
+import { JobFacts, PossibleDuplicates } from "../components/job-facts";
 import { NeedsInput } from "../components/needs-input";
 import { OutdatedNotice, OutputEditor } from "../components/output-editor";
 import {
@@ -583,12 +584,15 @@ function KindAndTerms({ ws }: { ws: WorkspaceDto }) {
 
 function Posting({ ws }: { ws: WorkspaceDto }) {
   return (
-    <details className="group rounded-lg border px-4 py-3">
-      <summary className="cursor-pointer select-none font-medium text-sm">The posting</summary>
-      <div className="mt-3 max-w-[68ch] whitespace-pre-wrap font-serif text-sm leading-relaxed">
-        {ws.job.description}
-      </div>
-    </details>
+    <div className="grid gap-4">
+      <PossibleDuplicates duplicates={ws.job.possibleDuplicates} />
+      <details className="group rounded-lg border px-4 py-3">
+        <summary className="cursor-pointer select-none font-medium text-sm">The posting</summary>
+        <div className="mt-3 max-w-[68ch] whitespace-pre-wrap font-serif text-sm leading-relaxed">
+          {ws.job.description}
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -636,6 +640,7 @@ function Workspace({ ws }: { ws: WorkspaceDto }) {
             <p className="text-sm">This job is marked applied, so its files and answers stay as you sent them.</p>
           )}
         </div>
+        <JobFacts job={ws.job} />
         <KindAndTerms ws={ws} />
       </header>
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
