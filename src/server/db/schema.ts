@@ -17,8 +17,24 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { FactId, FactKey, ItemId, JobId, OpportunityId, OutputId, StandardAnswers, UserId } from "@/shared/api";
+import type {
+  AiCallId,
+  FactId,
+  FactKey,
+  ItemId,
+  JobId,
+  OpportunityId,
+  OutputId,
+  StandardAnswers,
+  StyleHit,
+  TaskId,
+  UserId,
+} from "@/shared/api";
 import {
+  AI_PROVIDERS,
+  AI_PURPOSES,
+  AI_TIERS,
+  type AiProvider,
   DISMISS_REASONS,
   ELIGIBILITIES,
   ELIGIBILITY_SOURCES,
@@ -34,6 +50,8 @@ import {
   PAY_PERIODS,
   PROFILE_ITEM_KINDS,
   RATE_TYPES,
+  TASK_KINDS,
+  TASK_STATUSES,
   USER_SENIORITIES,
 } from "@/shared/enums";
 
@@ -93,7 +111,7 @@ export const users = pgTable(
     standardAnswers: jsonb().$type<StandardAnswers>().notNull().default({}),
     viewCurrency: char({ length: 3 }).notNull().default("PHP"),
     fxRates: jsonb().$type<Record<string, number>>().notNull().default({}),
-    aiProvider: text().$type<"anthropic" | "openai">(),
+    aiProvider: text().$type<AiProvider>(),
     aiKeyHint: text(),
     modelLight: text(),
     modelWriting: text(),
@@ -103,7 +121,7 @@ export const users = pgTable(
   () => [
     check("users_seniority", sql`seniority IS NULL OR ${oneOf("seniority", USER_SENIORITIES)}`),
     check("users_years", sql`years_experience BETWEEN 0 AND 60`),
-    check("users_ai_provider", sql`ai_provider IS NULL OR ai_provider IN ('anthropic', 'openai')`),
+    check("users_ai_provider", sql`ai_provider IS NULL OR ${oneOf("ai_provider", AI_PROVIDERS)}`),
     check("users_cap", sql`monthly_cap_usd > 0`),
   ],
 );
@@ -272,7 +290,11 @@ export const outputs = pgTable(
     mustAnswer: text().$type<(typeof MUST_ANSWERS)[number]>(),
     position: integer().notNull().default(0),
     body: text(),
-    // ai_call_id arrives in slice 2 with its must-answer CHECK clause.
+    aiCallId: uuid()
+      .references(() => aiCalls.id, { onDelete: "set null" })
+      .$type<AiCallId>(),
+    /** Style warnings left after the one rewrite, re-checked on every edit (section 3.4, step 4a). */
+    styleHits: jsonb().$type<StyleHit[]>().notNull().default([]),
     generatedAt: timestamp({ withTimezone: true }),
     editedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
@@ -283,7 +305,10 @@ export const outputs = pgTable(
     check("outputs_question", sql`(kind = 'answer') = (question IS NOT NULL)`),
     check("outputs_must_answer_kind", sql`must_answer IS NULL OR kind = 'answer'`),
     // Never drafted (decision 24).
-    check("outputs_must_answer_not_generated", sql`must_answer IS NULL OR generated_at IS NULL`),
+    check(
+      "outputs_must_answer_not_generated",
+      sql`must_answer IS NULL OR (ai_call_id IS NULL AND generated_at IS NULL)`,
+    ),
     uniqueIndex("outputs_one_file").on(t.opportunityId, t.kind).where(sql`kind <> 'answer'`),
     index("outputs_opportunity").on(t.opportunityId, t.kind, t.position),
   ],
@@ -304,4 +329,56 @@ export const outputFacts = pgTable(
     factText: text().notNull(),
   },
   (t) => [primaryKey({ columns: [t.outputId, t.factKey] }), index("output_facts_fact").on(t.factId)],
+);
+
+/** Long work (decision 36). Tasks start immediately in-process; there is no queue in v1. */
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<TaskId>(),
+    userId: userRef(),
+    kind: text().notNull().$type<(typeof TASK_KINDS)[number]>(),
+    status: text().notNull().default("running").$type<(typeof TASK_STATUSES)[number]>(),
+    step: text().notNull().default(""),
+    /** Enough to retry. */
+    input: jsonb().$type<unknown>().notNull(),
+    result: jsonb().$type<unknown>(),
+    error: text(),
+    createdAt: createdAt(),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    check("tasks_kind", oneOf("kind", TASK_KINDS)),
+    check("tasks_status", oneOf("status", TASK_STATUSES)),
+    // The "one running sync" rule.
+    uniqueIndex("tasks_one_refresh").on(t.userId).where(sql`kind = 'refresh' AND status = 'running'`),
+    index("tasks_recent").on(t.userId, t.createdAt.desc()),
+  ],
+);
+
+/** One row per AI call: tokens and estimated cost (decision 31). */
+export const aiCalls = pgTable(
+  "ai_calls",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<AiCallId>(),
+    userId: userRef(),
+    taskId: uuid()
+      .references(() => tasks.id, { onDelete: "set null" })
+      .$type<TaskId>(),
+    tier: text().notNull().$type<(typeof AI_TIERS)[number]>(),
+    purpose: text().notNull().$type<(typeof AI_PURPOSES)[number]>(),
+    provider: text().notNull(),
+    model: text().notNull(),
+    inputTokens: integer().notNull(),
+    outputTokens: integer().notNull(),
+    /** NULL when the model is missing from pricing.ts. */
+    costUsd: numeric({ precision: 10, scale: 6 }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("ai_calls_tier", oneOf("tier", AI_TIERS)),
+    check("ai_calls_purpose", oneOf("purpose", AI_PURPOSES)),
+    check("ai_calls_provider", oneOf("provider", AI_PROVIDERS)),
+    index("ai_calls_month").on(t.userId, t.createdAt),
+  ],
 );

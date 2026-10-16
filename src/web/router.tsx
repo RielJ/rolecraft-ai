@@ -3,6 +3,7 @@ import { OpportunityId } from "@/shared/api";
 import { TopBar } from "./components/top-bar";
 import { BoardPage } from "./routes/board";
 import { ProfilePage } from "./routes/profile";
+import { SettingsPage } from "./routes/settings";
 import { WorkspacePage } from "./routes/workspace";
 import { Toaster } from "./ui/sonner";
 
@@ -32,6 +33,7 @@ const indexRoute = createRoute({
 
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/board", component: BoardPage });
 const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: "/profile", component: ProfilePage });
+const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage });
 
 export const workspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -49,7 +51,7 @@ export const workspaceRoute = createRoute({
   ),
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, boardRoute, profileRoute, workspaceRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, boardRoute, profileRoute, settingsRoute, workspaceRoute]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

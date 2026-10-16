@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 // E2E runs the built SPA and the real server on its own port and database, so it never
@@ -23,7 +25,13 @@ export default defineConfig({
     url: `http://localhost:${PORT}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,
-    env: { PORT: String(PORT), DATABASE_URL: E2E_DATABASE_URL, HB_STATIC_DIR: "./dist" },
+    env: {
+      PORT: String(PORT),
+      DATABASE_URL: E2E_DATABASE_URL,
+      HB_STATIC_DIR: "./dist",
+      HB_AI: "fake",
+      HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   },

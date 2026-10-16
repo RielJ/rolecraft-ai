@@ -3,14 +3,20 @@ import { z } from "zod";
 import {
   AddJobResult,
   BoardItemDto,
+  type DraftInput,
   type FactId,
   type OpportunityId,
   type OutputId,
   type PasteJobInput,
   ProfileDto,
+  type SaveAiKeyInput,
+  SettingsDto,
+  TaskDto,
+  type TaskId,
   TextExport,
   type UpdateOutputInput,
   type UpdateProfileInput,
+  type UpdateSettingsInput,
   WorkspaceDto,
 } from "@/shared/api";
 import { client, toApiError, unwrap } from "./api";
@@ -19,7 +25,11 @@ export const keys = {
   profile: ["profile"] as const,
   board: ["board"] as const,
   workspace: (id: OpportunityId) => ["workspace", id] as const,
+  settings: ["settings"] as const,
 };
+
+/** How often the workspace polls while a draft task runs. */
+const TASK_POLL_MS = 1000;
 
 // ---------- Profile ----------
 
@@ -80,6 +90,8 @@ export function useWorkspace(id: OpportunityId) {
   return useQuery({
     queryKey: keys.workspace(id),
     queryFn: () => unwrap(client.api.opportunities[":id"].$get({ param: { id } }), WorkspaceDto),
+    // The draft task's step and the drafted bodies arrive by polling the workspace.
+    refetchInterval: (query) => (query.state.data?.draftTask?.status === "running" ? TASK_POLL_MS : false),
   });
 }
 
@@ -111,6 +123,30 @@ export const useDeleteQuestion = (opportunityId: OpportunityId) =>
   useWorkspaceMutation(opportunityId, (id: OutputId) =>
     unwrap(client.api.outputs[":id"].$delete({ param: { id } }), WorkspaceDto),
   );
+
+export const useMarkOutputCurrent = (opportunityId: OpportunityId) =>
+  useWorkspaceMutation(opportunityId, (id: OutputId) =>
+    unwrap(client.api.outputs[":id"]["mark-current"].$post({ param: { id } }), WorkspaceDto),
+  );
+
+/** Start a draft task. The workspace refetch picks up the running task and polls it. */
+export function useDraft(opportunityId: OpportunityId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (json: DraftInput) =>
+      unwrap(client.api.opportunities[":id"].draft.$post({ param: { id: opportunityId }, json }), TaskDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) }),
+  });
+}
+
+export function useRetryTask(opportunityId: OpportunityId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, confirmOverCap }: { id: TaskId; confirmOverCap?: boolean }) =>
+      unwrap(client.api.tasks[":id"].retry.$post({ param: { id }, json: { confirmOverCap } }), TaskDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) }),
+  });
+}
 
 export function useMarkReady(opportunityId: OpportunityId) {
   const qc = useQueryClient();
@@ -148,3 +184,30 @@ export async function downloadPdf(id: OutputId): Promise<void> {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
+
+// ---------- Settings ----------
+
+export function useSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: () => unwrap(client.api.settings.$get(), SettingsDto) });
+}
+
+function useSettingsMutation<I>(run: (input: I) => Promise<SettingsDto>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: run,
+    onSuccess: (settings) => {
+      qc.setQueryData(keys.settings, settings);
+      // aiReady on every workspace follows the key.
+      void qc.invalidateQueries({ queryKey: ["workspace"] });
+    },
+  });
+}
+
+export const useSaveAiKey = () =>
+  useSettingsMutation((json: SaveAiKeyInput) => unwrap(client.api.settings["ai-key"].$put({ json }), SettingsDto));
+
+export const useRemoveAiKey = () =>
+  useSettingsMutation(() => unwrap(client.api.settings["ai-key"].$delete(), SettingsDto));
+
+export const useUpdateSettings = () =>
+  useSettingsMutation((json: UpdateSettingsInput) => unwrap(client.api.settings.$patch({ json }), SettingsDto));

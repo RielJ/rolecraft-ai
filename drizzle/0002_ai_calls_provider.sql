@@ -1,0 +1,1 @@
+ALTER TABLE "ai_calls" ADD CONSTRAINT "ai_calls_provider" CHECK (provider IN ('anthropic', 'openai'));

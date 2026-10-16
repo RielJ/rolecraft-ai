@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { AppType } from "@/server/http/app";
-import { ApiErrorBody, ERROR_CODES, type ErrorCode, GateBlocker } from "@/shared/api";
+import { ApiErrorBody, ERROR_CODES, type ErrorCode, GateBlocker, OverCapDetails } from "@/shared/api";
 
 export const client = hc<AppType>(globalThis.location?.origin ?? "http://localhost");
 
@@ -32,6 +32,13 @@ export class ApiError extends Error {
     if (this.code !== "needs_input") return [];
     const parsed = GateBlocker.array().safeParse(this.details);
     return parsed.success ? parsed.data : [];
+  }
+
+  /** Spend, cap and estimate when the server answered `402 over_cap`. */
+  get overCap(): OverCapDetails | null {
+    if (this.code !== "over_cap") return null;
+    const parsed = OverCapDetails.safeParse(this.details);
+    return parsed.success ? parsed.data : null;
   }
 }
 

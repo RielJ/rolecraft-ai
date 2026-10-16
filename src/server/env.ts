@@ -9,6 +9,10 @@ const EnvSchema = z.object({
   HB_CHROMIUM_PATH: z.string().min(1).optional(),
   /** Directory of the built SPA. */
   HB_STATIC_DIR: z.string().min(1).default("./dist"),
+  /** App data directory. The AI key file lives here (open question 3). Compose mounts the appdata volume. */
+  HB_DATA_DIR: z.string().min(1).default("./data"),
+  /** `fake` swaps in the scriptable AI provider for tests and Playwright. */
+  HB_AI: z.enum(["live", "fake"]).default("live"),
 });
 export type Env = z.infer<typeof EnvSchema>;
 

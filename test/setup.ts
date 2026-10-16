@@ -1,5 +1,10 @@
 import { afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import postgres from "postgres";
+import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
+import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
 import { createChromiumPdf, type PdfRenderer } from "@/server/adapters/pdf";
 import { createDb, type Db } from "@/server/db/client";
 import { migrateDb } from "@/server/db/migrate";
@@ -33,14 +38,31 @@ export async function resetDb(): Promise<void> {
   await resetTables(sql);
 }
 
-/** Deps against the test database, with a fixed clock unless one is given. */
-export async function testDeps(over: Partial<Pick<Deps, "clock" | "pdf">> = {}): Promise<Deps> {
+// One key directory per test run, removed at the end.
+const keyDir = mkdtempSync(join(tmpdir(), "hb-test-keys-"));
+
+/** A key store in a fresh directory under this run's temp dir, so tests never touch ./data or each other. */
+export function testKeyStore(): KeyStore {
+  return createFileKeyStore({ dir: mkdtempSync(join(keyDir, "store-")) });
+}
+
+/**
+ * Deps against the test database, with a fixed clock unless one is given. The AI is a fresh
+ * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
+ */
+export async function testDeps(
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore">> = {},
+): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
+  const fake = createFakeAi();
   return {
     db,
     userId: await ensureUser(db),
     pdf: over.pdf ?? pdf,
+    ai: { anthropic: fake, openai: fake },
+    keyStore: over.keyStore ?? testKeyStore(),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
+    fake,
   };
 }
 
@@ -50,6 +72,7 @@ export function testSql(): postgres.Sql {
 }
 
 afterAll(async () => {
+  rmSync(keyDir, { recursive: true, force: true });
   if (!shared) return;
   await shared.pdf.close();
   await shared.sql.end({ timeout: 5 });

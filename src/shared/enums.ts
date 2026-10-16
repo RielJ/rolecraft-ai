@@ -65,3 +65,36 @@ export const PDF_KINDS = ["resume", "letter"] as const satisfies readonly FileKi
 export const MUST_ANSWERS = ["salary", "work_auth", "notice", "start_date", "references"] as const;
 export const MustAnswer = z.enum(MUST_ANSWERS);
 export type MustAnswer = z.infer<typeof MustAnswer>;
+
+// ---------- AI and tasks (decisions 29 to 31, 36) ----------
+
+export const AI_PROVIDERS = ["anthropic", "openai"] as const;
+export const AiProvider = z.enum(AI_PROVIDERS);
+export type AiProvider = z.infer<typeof AiProvider>;
+
+/** Light: facts, eligibility, questions. Writing: files and answers (decision 30). */
+export const AI_TIERS = ["light", "writing"] as const;
+export const AiTier = z.enum(AI_TIERS);
+export type AiTier = z.infer<typeof AiTier>;
+
+export const AI_PURPOSES = ["split", "eligibility", "questions", "draft"] as const;
+export const AiPurpose = z.enum(AI_PURPOSES);
+export type AiPurpose = z.infer<typeof AiPurpose>;
+
+export const TASK_KINDS = ["refresh", "split", "draft", "suggest_questions"] as const;
+export const TaskKind = z.enum(TASK_KINDS);
+export type TaskKind = z.infer<typeof TaskKind>;
+
+export const TASK_STATUSES = ["running", "done", "failed", "interrupted"] as const;
+export const TaskStatus = z.enum(TASK_STATUSES);
+export type TaskStatus = z.infer<typeof TaskStatus>;
+
+/** What `checkStyle` flags (section 3.4, step 4a). */
+export const STYLE_RULES = ["dash", "banned_phrase", "adjective_triplet", "long_sentence"] as const;
+export const StyleRule = z.enum(STYLE_RULES);
+export type StyleRule = z.infer<typeof StyleRule>;
+
+/** Why a cited fact makes its output outdated (section 2, Provenance). */
+export const OUTDATED_REASONS = ["edited", "deleted", "unconfirmed", "letters_only"] as const;
+export const OutdatedReason = z.enum(OUTDATED_REASONS);
+export type OutdatedReason = z.infer<typeof OutdatedReason>;

@@ -8,6 +8,20 @@
       "when": 1792180986484,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792183854698,
+      "tag": "0001_ai_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792185738299,
+      "tag": "0002_ai_calls_provider",
+      "breakpoints": true
     }
   ]
 }

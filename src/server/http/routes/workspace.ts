@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { AddQuestionInput, OpportunityId, OutputId, UpdateOutputInput } from "@/shared/api";
+import { AddQuestionInput, DraftInput, OpportunityId, OutputId, UpdateOutputInput } from "@/shared/api";
 import type { Deps } from "../../services/context";
 import {
   addQuestion,
   deleteQuestion,
+  draft,
   exportPdf,
   exportText,
   getWorkspace,
+  markOutputCurrent,
   markReady,
   updateOutput,
 } from "../../services/workspace";
@@ -28,11 +30,17 @@ export function workspaceRoutes(deps: Deps) {
       async (c) =>
         c.json(await addQuestion(deps, { opportunityId: c.req.valid("param").id, ...c.req.valid("json") }), 201),
     )
+    .post("/opportunities/:id/draft", validate("param", OpportunityParam), validate("json", DraftInput), async (c) =>
+      c.json(await draft(deps, { opportunityId: c.req.valid("param").id, ...c.req.valid("json") }), 202),
+    )
     .post("/opportunities/:id/ready", validate("param", OpportunityParam), async (c) =>
       c.json(await markReady(deps, { opportunityId: c.req.valid("param").id })),
     )
     .patch("/outputs/:id", validate("param", OutputParam), validate("json", UpdateOutputInput), async (c) =>
       c.json(await updateOutput(deps, { outputId: c.req.valid("param").id, ...c.req.valid("json") })),
+    )
+    .post("/outputs/:id/mark-current", validate("param", OutputParam), async (c) =>
+      c.json(await markOutputCurrent(deps, { outputId: c.req.valid("param").id })),
     )
     .delete("/outputs/:id", validate("param", OutputParam), async (c) =>
       c.json(await deleteQuestion(deps, { outputId: c.req.valid("param").id })),

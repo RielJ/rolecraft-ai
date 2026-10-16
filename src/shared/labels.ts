@@ -1,4 +1,4 @@
-import type { GateBlocker } from "./api";
+import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type { MustAnswer, OpportunityStatus, OpportunityType, OutputKind } from "./enums";
 
 export function outputKindLabel(kind: OutputKind): string {
@@ -69,6 +69,45 @@ export function blockerLabel(blocker: GateBlocker): string {
       return `This cites ${blocker.factKey}, which you deleted. Remove the claim or cite another fact.`;
     default: {
       const _exhaustive: never = blocker;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Sentences longer than this are flagged by the style check. */
+export const MAX_SENTENCE_WORDS = 35;
+
+/** A short explanation of a hit for the editor. */
+export function styleHitLabel(hit: Pick<StyleHit, "rule" | "phrase">): string {
+  switch (hit.rule) {
+    case "dash":
+      return `Dash used as punctuation ("${hit.phrase}"). Use a full stop or a comma.`;
+    case "banned_phrase":
+      return `"${hit.phrase}" reads as machine-written. Say it plainly.`;
+    case "adjective_triplet":
+      return `Three adjectives in a row ("${hit.phrase}"). Keep the one that matters.`;
+    case "long_sentence":
+      return `Sentence over ${MAX_SENTENCE_WORDS} words. Split it.`;
+    default: {
+      const _exhaustive: never = hit.rule;
+      return _exhaustive;
+    }
+  }
+}
+
+/** One line per changed fact in the outdated notice. */
+export function outdatedLabel(change: Pick<OutdatedChange, "factKey" | "reason">): string {
+  switch (change.reason) {
+    case "edited":
+      return `${change.factKey} changed`;
+    case "deleted":
+      return `${change.factKey} was deleted`;
+    case "unconfirmed":
+      return `${change.factKey} is no longer confirmed`;
+    case "letters_only":
+      return `${change.factKey} is now for letters only, so it cannot stay on a resume`;
+    default: {
+      const _exhaustive: never = change.reason;
       return _exhaustive;
     }
   }

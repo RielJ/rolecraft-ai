@@ -1,12 +1,20 @@
-import { CheckIcon, ExternalLinkIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import type { GateBlocker, OpportunityId, OutputDto, OutputId, WorkspaceDto } from "@/shared/api";
 import { mustAnswerLabel, outputKindLabel, statusLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
+import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
 import { NeedsInput } from "../components/needs-input";
-import { OutputEditor } from "../components/output-editor";
-import { useAddQuestion, useDeleteQuestion, useMarkReady, useUpdateOutput, useWorkspace } from "../queries";
+import { OutdatedNotice, OutputEditor } from "../components/output-editor";
+import {
+  useAddQuestion,
+  useDeleteQuestion,
+  useMarkOutputCurrent,
+  useMarkReady,
+  useUpdateOutput,
+  useWorkspace,
+} from "../queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -20,14 +28,119 @@ function blockersFor(ws: WorkspaceDto, id: OutputId): GateBlocker[] {
   return ws.gate.ok ? [] : ws.gate.blockers.filter((b) => b.outputId === id);
 }
 
-function Files({ ws, selected, onSelect }: { ws: WorkspaceDto; selected: OutputId; onSelect: (id: OutputId) => void }) {
+type DraftActions = ReturnType<typeof useDraftActions>;
+
+/** Ids the running draft task is writing right now; empty when none runs. */
+function draftingIds(ws: WorkspaceDto): ReadonlySet<OutputId> {
+  return ws.draftTask?.status === "running" ? new Set(ws.draftTask.outputIds) : new Set();
+}
+
+/** Remount editors when the server body changes by an edit or a new draft. */
+const editorKey = (o: OutputDto) => `${o.id}:${o.editedAt ?? ""}:${o.generatedAt ?? ""}`;
+
+/** Draft or Regenerate for one output. Null when drafting is not possible here. */
+function DraftOne({
+  ws,
+  output,
+  actions,
+  variant = "outline",
+}: {
+  ws: WorkspaceDto;
+  output: OutputDto;
+  actions: DraftActions;
+  variant?: "outline" | "default";
+}) {
+  if (ws.opportunity.frozen || !ws.aiReady || output.mustAnswer !== null) return null;
+  const label = outputKindLabel(output.kind).toLowerCase();
+  const busy = actions.starting || ws.draftTask?.status === "running";
+  return (
+    <Button
+      size="sm"
+      variant={variant}
+      disabled={busy}
+      onClick={() =>
+        actions.request({
+          input: { outputId: output.id },
+          what: output.kind === "answer" ? "this answer" : `the ${label}`,
+          replacesEdits: output.body !== null && output.editedAt !== null,
+        })
+      }
+    >
+      {output.body === null ? (output.kind === "answer" ? "Draft answer" : `Draft ${label}`) : "Regenerate"}
+    </Button>
+  );
+}
+
+function Outdated({ ws, output, actions }: { ws: WorkspaceDto; output: OutputDto; actions: DraftActions }) {
+  const mark = useMarkOutputCurrent(ws.opportunity.id);
+  return (
+    <OutdatedNotice
+      output={output}
+      regenerate={<DraftOne ws={ws} output={output} actions={actions} variant="default" />}
+      marking={mark.isPending}
+      onMarkCurrent={() =>
+        mark.mutate(output.id, { onSuccess: () => toast("Marked up to date with your facts."), onError })
+      }
+    />
+  );
+}
+
+/** "Draft all" for the included files, the task's progress, and the no-key hint. */
+function DraftBar({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions }) {
+  const included = ws.files.filter((f) => f.included);
+  const running = ws.draftTask?.status === "running";
+  const anyDrafted = included.some((f) => f.body !== null);
+  if (ws.opportunity.frozen) return null;
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2">
+      {ws.aiReady ? (
+        <Button
+          size="sm"
+          disabled={included.length === 0 || running || actions.starting}
+          title={included.length === 0 ? "Tick a file to draft it" : undefined}
+          onClick={() =>
+            actions.request({
+              input: {},
+              what: "one or more of these files",
+              replacesEdits: included.some((f) => f.body !== null && f.editedAt !== null),
+            })
+          }
+        >
+          <SparklesIcon aria-hidden />
+          {anyDrafted ? "Regenerate all" : "Draft all"}
+        </Button>
+      ) : (
+        <NoKeyHint />
+      )}
+      <DraftStatus
+        task={ws.draftTask}
+        busy={actions.starting}
+        onRetry={() => ws.draftTask && actions.retry(ws.draftTask.id)}
+      />
+    </div>
+  );
+}
+
+function Files({
+  ws,
+  selected,
+  onSelect,
+  actions,
+}: {
+  ws: WorkspaceDto;
+  selected: OutputId;
+  onSelect: (id: OutputId) => void;
+  actions: DraftActions;
+}) {
   const update = useUpdateOutput(ws.opportunity.id);
   const current = ws.files.find((f) => f.id === selected) ?? ws.files[0];
   if (!current) return null;
   const label = outputKindLabel(current.kind);
+  const drafting = draftingIds(ws);
 
   return (
     <section aria-label="Files" className="grid gap-4">
+      <DraftBar ws={ws} actions={actions} />
       <div role="tablist" aria-label="Files" className="flex gap-1 border-b">
         {ws.files.map((f) => (
           <button
@@ -41,6 +154,8 @@ function Files({ ws, selected, onSelect }: { ws: WorkspaceDto; selected: OutputI
             className="-mb-px flex items-center gap-2 border-transparent border-b-2 px-3 py-2 text-muted-foreground text-sm transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-selected:border-primary aria-selected:text-foreground"
           >
             <span className={f.included ? "" : "line-through decoration-1"}>{outputKindLabel(f.kind)}</span>
+            {drafting.has(f.id) && <span className="text-muted-foreground text-xs">drafting</span>}
+            {f.included && f.outdated.length > 0 && <span className="text-warning-foreground text-xs">outdated</span>}
             {f.included && blockersFor(ws, f.id).length > 0 && (
               <span className="size-1.5 rounded-full bg-warning" role="img" aria-label="needs input" />
             )}
@@ -59,13 +174,16 @@ function Files({ ws, selected, onSelect }: { ws: WorkspaceDto; selected: OutputI
         </div>
         {current.included ? (
           <OutputEditor
-            key={`${current.id}:${current.editedAt ?? ""}`}
+            key={editorKey(current)}
             output={current}
             frozen={ws.opportunity.frozen}
             blockers={blockersFor(ws, current.id)}
             blocked={!ws.gate.ok}
             saving={update.isPending}
             onSave={(body) => update.mutate({ id: current.id, body }, { onError })}
+            drafting={drafting.has(current.id)}
+            draftButton={<DraftOne ws={ws} output={current} actions={actions} />}
+            outdated={<Outdated ws={ws} output={current} actions={actions} />}
           />
         ) : (
           <p className="text-muted-foreground text-sm">
@@ -77,7 +195,7 @@ function Files({ ws, selected, onSelect }: { ws: WorkspaceDto; selected: OutputI
   );
 }
 
-function AnswerRow({ ws, answer }: { ws: WorkspaceDto; answer: OutputDto }) {
+function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDto; actions: DraftActions }) {
   const id = useId();
   const update = useUpdateOutput(ws.opportunity.id);
   const remove = useDeleteQuestion(ws.opportunity.id);
@@ -85,6 +203,7 @@ function AnswerRow({ ws, answer }: { ws: WorkspaceDto; answer: OutputDto }) {
   const [draft, setDraft] = useState(saved);
   const dirty = draft !== saved;
   const frozen = ws.opportunity.frozen;
+  const drafting = draftingIds(ws).has(answer.id);
   const save = () => {
     if (dirty) update.mutate({ id: answer.id, body: draft.trim() === "" ? null : draft }, { onError });
   };
@@ -115,10 +234,12 @@ function AnswerRow({ ws, answer }: { ws: WorkspaceDto; answer: OutputDto }) {
         </Button>
       </div>
       <div className="grid gap-2 pl-7">
+        <Outdated ws={ws} output={answer} actions={actions} />
         <Textarea
           id={`${id}-body`}
           value={draft}
-          readOnly={frozen}
+          readOnly={frozen || drafting}
+          aria-busy={drafting}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           className="min-h-20 max-w-[68ch] font-serif"
@@ -135,17 +256,24 @@ function AnswerRow({ ws, answer }: { ws: WorkspaceDto; answer: OutputDto }) {
             Using your profile answer. Type above to answer differently here.
           </p>
         )}
-        {dirty && (
-          <Button size="sm" className="justify-self-start" onClick={save} disabled={update.isPending}>
-            Save answer
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty && (
+            <Button size="sm" onClick={save} disabled={update.isPending}>
+              Save answer
+            </Button>
+          )}
+          {drafting ? (
+            <span className="text-muted-foreground text-sm">Drafting…</span>
+          ) : (
+            <DraftOne ws={ws} output={answer} actions={actions} />
+          )}
+        </div>
       </div>
     </li>
   );
 }
 
-function Questions({ ws }: { ws: WorkspaceDto }) {
+function Questions({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions }) {
   const id = useId();
   const add = useAddQuestion(ws.opportunity.id);
   const [question, setQuestion] = useState("");
@@ -168,7 +296,7 @@ function Questions({ ws }: { ws: WorkspaceDto }) {
       ) : (
         <ul className="divide-y border-y">
           {ws.answers.map((a) => (
-            <AnswerRow key={`${a.id}:${a.editedAt ?? ""}`} ws={ws} answer={a} />
+            <AnswerRow key={editorKey(a)} ws={ws} answer={a} actions={actions} />
           ))}
         </ul>
       )}
@@ -249,6 +377,7 @@ function Posting({ ws }: { ws: WorkspaceDto }) {
 function Workspace({ ws }: { ws: WorkspaceDto }) {
   const firstFile = ws.files[0];
   const [selected, setSelected] = useState<OutputId | null>(firstFile?.id ?? null);
+  const actions = useDraftActions(ws);
 
   function jump(id: OutputId) {
     if (ws.files.some((f) => f.id === id)) {
@@ -289,12 +418,13 @@ function Workspace({ ws }: { ws: WorkspaceDto }) {
       </header>
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="grid content-start gap-10">
-          {selected && <Files ws={ws} selected={selected} onSelect={setSelected} />}
-          <Questions ws={ws} />
+          {selected && <Files ws={ws} selected={selected} onSelect={setSelected} actions={actions} />}
+          <Questions ws={ws} actions={actions} />
           <Posting ws={ws} />
         </div>
         <Rail ws={ws} onJump={jump} />
       </div>
+      {actions.dialogs}
     </div>
   );
 }

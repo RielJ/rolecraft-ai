@@ -3,6 +3,8 @@ import type { ApiErrorBody } from "@/shared/api";
 import { AppError, type Deps } from "../services/context";
 import { jobRoutes } from "./routes/jobs";
 import { profileRoutes } from "./routes/profile";
+import { settingsRoutes } from "./routes/settings";
+import { taskRoutes } from "./routes/tasks";
 import { workspaceRoutes } from "./routes/workspace";
 
 export function createApp(deps: Deps) {
@@ -11,7 +13,9 @@ export function createApp(deps: Deps) {
     .get("/health", (c) => c.json({ ok: true }))
     .route("/", profileRoutes(deps))
     .route("/", jobRoutes(deps))
-    .route("/", workspaceRoutes(deps));
+    .route("/", workspaceRoutes(deps))
+    .route("/", settingsRoutes(deps))
+    .route("/", taskRoutes(deps));
 
   app.onError((err, c) => {
     if (err instanceof AppError) {

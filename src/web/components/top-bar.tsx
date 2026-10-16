@@ -7,6 +7,7 @@ import { AddJobDialog } from "./add-job-dialog";
 const NAV = [
   { to: "/board", label: "Board" },
   { to: "/profile", label: "Profile" },
+  { to: "/settings", label: "Settings" },
 ] as const;
 
 export function TopBar() {

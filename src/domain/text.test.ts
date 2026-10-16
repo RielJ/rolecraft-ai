@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { contentHash, descriptionKey, normalize, sha256Hex, tokens } from "./text";
+import { contentHash, descriptionKey, normalize, sentenceSpans, sha256Hex, tokens, wordCount } from "./text";
 
 describe("normalize", () => {
   test("lowercases, drops punctuation, collapses whitespace", () => {
@@ -42,5 +42,36 @@ describe("contentHash", () => {
     expect(contentHash(base)).toBe(contentHash({ ...base }));
     expect(contentHash(base)).not.toBe(contentHash({ ...base, payPhrase: "$5k" }));
     expect(contentHash(base)).not.toBe(contentHash({ ...base, title: "Engineer II" }));
+  });
+});
+
+describe("sentenceSpans", () => {
+  test("splits prose at sentence ends and keeps markers with their sentence", () => {
+    const body = "I build APIs [FACT-1]. I led a team [FACT-2][FACT-3]. Then 2.5M users joined.";
+    expect(sentenceSpans(body).map((s) => s.text)).toEqual([
+      "I build APIs [FACT-1].",
+      "I led a team [FACT-2][FACT-3].",
+      "Then 2.5M users joined.",
+    ]);
+  });
+
+  test("a marker after the full stop stays with the sentence", () => {
+    expect(sentenceSpans("I build APIs. [FACT-1] Next one.").map((s) => s.text)).toEqual([
+      "I build APIs. [FACT-1]",
+      "Next one.",
+    ]);
+  });
+
+  test("Markdown lines are units without their prefix, and offsets point into the body", () => {
+    const body = "# Summary\n- Led a team [FACT-2]\n1. Shipped it";
+    const spans = sentenceSpans(body);
+    expect(spans.map((s) => s.text)).toEqual(["Summary", "Led a team [FACT-2]", "Shipped it"]);
+    for (const s of spans) expect(body.slice(s.start, s.end)).toBe(s.text);
+  });
+});
+
+describe("wordCount", () => {
+  test("counts words, not markers or punctuation", () => {
+    expect(wordCount("I built it - fast, really.")).toBe(5);
   });
 });

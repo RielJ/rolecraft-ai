@@ -110,3 +110,47 @@ export function sha256Hex(message: string): string {
 
   return Array.from(h, (x) => x.toString(16).padStart(8, "0")).join("");
 }
+
+// ---------- Sentences of a draft ----------
+
+/** A sentence of a draft body, with its offsets so a caller can replace it in place. */
+export type SentenceSpan = { text: string; start: number; end: number; line: number };
+
+// A Markdown line prefix the drafting format allows: heading, bullet or numbered item.
+const LINE_PREFIX = /^\s*(?:#{1,6}\s+|[-*•]\s+|\d{1,2}[.)]\s+)?/;
+// A sentence ends at . ! or ? (plus any [FACT-n] markers right after it), then whitespace,
+// then the next sentence's first character. "2.5M" and "e.g. this" do not split.
+const BOUNDARY = /(?<=[.!?]["”’)]?(?:\s*\[FACT-[1-9]\d*\])*)\s+(?!\[FACT-)(?=[\p{Lu}\d"“[(])/gu;
+
+/**
+ * Split a draft into sentences: every Markdown line is its own unit, and prose lines split at
+ * sentence ends. Markers after the full stop stay with the sentence they follow.
+ */
+export function sentenceSpans(body: string): SentenceSpan[] {
+  const spans: SentenceSpan[] = [];
+  let offset = 0;
+  body.split("\n").forEach((raw, line) => {
+    const prefix = LINE_PREFIX.exec(raw)?.[0].length ?? 0;
+    const content = raw.slice(prefix);
+    let cursor = 0;
+    const push = (from: number, to: number) => {
+      const piece = content.slice(from, to);
+      const lead = piece.length - piece.trimStart().length;
+      const text = piece.trim();
+      if (text === "") return;
+      const start = offset + prefix + from + lead;
+      spans.push({ text, start, end: start + text.length, line });
+    };
+    for (const m of content.matchAll(BOUNDARY)) {
+      push(cursor, m.index);
+      cursor = m.index + m[0].length;
+    }
+    push(cursor, content.length);
+    offset += raw.length + 1;
+  });
+  return spans;
+}
+
+export function wordCount(text: string): number {
+  return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+}

@@ -1,27 +1,56 @@
-import { and, asc, eq, inArray, max } from "drizzle-orm";
-import { factKey, parseCitations, stripMarkers } from "@/domain/citations";
+import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
+import { z } from "zod";
+import { checkDraft, factKey, parseCitations, quarantineViolations, stripMarkers } from "@/domain/citations";
 import { checkGate, type GateOutput } from "@/domain/gate";
 import { classifyQuestion } from "@/domain/must-answer";
-import type {
-  AddQuestionInput,
-  FactKey,
-  GateResult,
-  OpportunityId,
-  OutputDto,
-  OutputId,
-  StandardAnswers,
-  UpdateOutputInput,
-  WorkspaceDto,
+import {
+  allowedFacts,
+  buildDraftPrompt,
+  buildRetryPrompt,
+  buildStyleRewritePrompt,
+  cleanModelText,
+  DRAFT_MAX_TOKENS,
+  type PromptFact,
+} from "@/domain/prompts";
+import { checkStyle } from "@/domain/style";
+import { sentenceSpans } from "@/domain/text";
+import {
+  type AddQuestionInput,
+  type DraftInput,
+  DraftTaskInput,
+  type FactId,
+  type FactKey,
+  type GateResult,
+  type OpportunityId,
+  type OutdatedChange,
+  type OutputDto,
+  type OutputId,
+  type StandardAnswers,
+  type TaskDto,
+  type UpdateOutputInput,
+  type WorkspaceDto,
 } from "@/shared/api";
-import { FROZEN_STATUSES, type OpportunityStatus, PDF_KINDS } from "@/shared/enums";
+import {
+  type FactStatus,
+  FILE_KINDS,
+  FROZEN_STATUSES,
+  type ItemUsage,
+  type OpportunityStatus,
+  type OutputKind,
+  PDF_KINDS,
+} from "@/shared/enums";
 import { outputKindLabel } from "@/shared/labels";
 import type { DbOrTx } from "../db/client";
-import { facts, jobs, opportunities, outputFacts, outputs } from "../db/schema";
+import { facts, jobs, opportunities, outputFacts, outputs, profileItems } from "../db/schema";
+import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { loadContact } from "./profile";
+import { latestTask, startTask, type TaskContext } from "./tasks";
 
 type OutputRow = typeof outputs.$inferSelect;
-type Citation = { factKey: FactKey; factText: string; deleted: boolean };
+/** A cited fact as it is now; null when the fact was deleted. */
+type CurrentFact = { text: string; status: FactStatus; usage: ItemUsage };
+type Citation = { factKey: FactKey; factText: string; deleted: boolean; current: CurrentFact | null };
 
 function isFrozen(status: OpportunityStatus | null): boolean {
   return FROZEN_STATUSES.some((s) => s === status);
@@ -54,16 +83,46 @@ async function loadOutputs(
           factKey: outputFacts.factKey,
           factText: outputFacts.factText,
           factId: outputFacts.factId,
+          currentText: facts.text,
+          currentStatus: facts.status,
+          usage: profileItems.usage,
         })
         .from(outputFacts)
+        .leftJoin(facts, eq(facts.id, outputFacts.factId))
+        .leftJoin(profileItems, eq(profileItems.id, facts.itemId))
         .where(inArray(outputFacts.outputId, ids))
+        .orderBy(asc(outputFacts.factKey))
     : [];
   return rows.map((row) => ({
     row,
     citations: cites
       .filter((c) => c.outputId === row.id)
-      .map((c) => ({ factKey: c.factKey, factText: c.factText, deleted: c.factId === null })),
+      .map((c) => ({
+        factKey: c.factKey,
+        factText: c.factText,
+        deleted: c.factId === null,
+        current:
+          c.currentText !== null && c.currentStatus !== null && c.usage !== null
+            ? { text: c.currentText, status: c.currentStatus, usage: c.usage }
+            : null,
+      })),
   }));
+}
+
+/**
+ * What changed in the facts an output cites (section 2, Provenance). Frozen outputs skip this.
+ * One reason per fact: deleted, then edited, then unconfirmed, then letters-only on a resume.
+ */
+function outdatedChanges(kind: OutputKind, citations: readonly Citation[]): OutdatedChange[] {
+  return citations.flatMap((c): OutdatedChange[] => {
+    const base = { factKey: c.factKey, oldText: c.factText };
+    if (c.current === null) return [{ ...base, reason: "deleted", newText: null }];
+    const newText = c.current.text;
+    if (newText !== c.factText) return [{ ...base, reason: "edited", newText }];
+    if (c.current.status !== "confirmed") return [{ ...base, reason: "unconfirmed", newText }];
+    if (kind === "resume" && c.current.usage === "letters_only") return [{ ...base, reason: "letters_only", newText }];
+    return [];
+  });
 }
 
 function toGateOutput({ row, citations }: { row: OutputRow; citations: Citation[] }): GateOutput {
@@ -81,6 +140,7 @@ function toGateOutput({ row, citations }: { row: OutputRow; citations: Citation[
 function toOutputDto(
   { row, citations }: { row: OutputRow; citations: Citation[] },
   standardAnswers: StandardAnswers,
+  frozen: boolean,
 ): OutputDto {
   return {
     id: row.id,
@@ -91,8 +151,11 @@ function toOutputDto(
     body: row.body,
     profileAnswer: row.mustAnswer ? (standardAnswers[row.mustAnswer] ?? null) : null,
     position: row.position,
+    generatedAt: row.generatedAt?.toISOString() ?? null,
     editedAt: row.editedAt?.toISOString() ?? null,
     citations: citations.map((c) => ({ key: c.factKey, text: c.factText, deleted: c.deleted })),
+    styleHits: row.styleHits,
+    outdated: frozen ? [] : outdatedChanges(row.kind, citations),
   };
 }
 
@@ -113,7 +176,8 @@ export async function getWorkspace(
   { opportunityId }: { opportunityId: OpportunityId },
 ): Promise<WorkspaceDto> {
   const { opportunity, job } = await loadOpportunity(deps, opportunityId);
-  const [{ standardAnswers }, loaded, confirmed] = await Promise.all([
+  const frozen = isFrozen(opportunity.status);
+  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask] = await Promise.all([
     loadContact(deps),
     loadOutputs(deps.db, opportunityId),
     deps.db
@@ -121,15 +185,18 @@ export async function getWorkspace(
       .from(facts)
       .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")))
       .orderBy(asc(facts.no)),
+    loadAiConfig(deps),
+    latestTask(deps, { kind: "draft", inputMatches: { opportunityId } }),
   ]);
   const gate = checkGate({ outputs: loaded.map(toGateOutput), standardAnswers });
-  const dtos = loaded.map((o) => toOutputDto(o, standardAnswers));
+  const dtos = loaded.map((o) => toOutputDto(o, standardAnswers, frozen));
+  const draftInput = DraftTaskInput.safeParse(draftTask?.input);
   return {
     opportunity: {
       id: opportunity.id,
       type: opportunity.type,
       status: opportunity.status,
-      frozen: isFrozen(opportunity.status),
+      frozen,
       ready: opportunity.readyAt !== null && gate.ok,
     },
     job: {
@@ -143,6 +210,8 @@ export async function getWorkspace(
     answers: dtos.filter((o) => o.kind === "answer"),
     gate,
     facts: confirmed.map((f) => ({ key: factKey(f.no), text: f.text })),
+    aiReady: aiConfig !== null,
+    draftTask: draftTask && draftInput.success ? { ...draftTask.task, outputIds: draftInput.data.outputIds } : null,
   };
 }
 
@@ -215,6 +284,8 @@ export async function updateOutput(
     if (input.body !== undefined) {
       patch.body = input.body;
       patch.editedAt = deps.clock.now();
+      // Edits re-run the style check without AI so the warnings stay current (section 3.4, step 4a).
+      patch.styleHits = input.body === null ? [] : checkStyle(input.body);
     }
     await tx.update(outputs).set(patch).where(eq(outputs.id, outputId));
     if (input.body !== undefined) await syncCitations(tx, deps, outputId, input.body);
@@ -313,4 +384,275 @@ export async function exportPdf(
     .replace(/[^\p{L}\p{N} ._-]+/gu, "")
     .trim();
   return { bytes, filename: `${name}.pdf` };
+}
+
+// ---------- Drafting (section 3.4) ----------
+
+type DraftFactRow = PromptFact & { id: FactId };
+
+/** Confirmed facts with their item's link and usage, in key order. */
+async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftFactRow[]> {
+  const rows = await deps.db
+    .select({ id: facts.id, no: facts.no, text: facts.text, link: profileItems.link, usage: profileItems.usage })
+    .from(facts)
+    .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
+    .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")))
+    .orderBy(asc(facts.no));
+  return rows.map((r) => ({ id: r.id, key: factKey(r.no), text: r.text, link: r.link, usage: r.usage }));
+}
+
+function mustAnswerRefusal(output: Pick<OutputRow, "question">): AppError {
+  return new AppError({
+    code: "must_answer",
+    message: `"${output.question ?? "This question"}" is yours to answer. Write it yourself, or set a standard answer in Profile.`,
+  });
+}
+
+/** Everything one output's prompt needs, read fresh at the moment of drafting. */
+async function draftContext(
+  deps: Deps,
+  { opportunityId, output }: { opportunityId: OpportunityId; output: OutputRow },
+) {
+  const [{ opportunity, job }, { contact }, all] = await Promise.all([
+    loadOpportunity(deps, opportunityId),
+    loadContact(deps),
+    loadDraftFacts(deps),
+  ]);
+  const allowed = allowedFacts({ kind: output.kind, facts: all });
+  const prompt = buildDraftPrompt({
+    kind: output.kind,
+    opportunityType: opportunity.type,
+    posting: { title: job.title, company: job.company, description: job.description },
+    candidateName: contact.fullName,
+    facts: allowed,
+    question: output.question,
+  });
+  const check = (body: string) =>
+    checkDraft({
+      body,
+      facts: allowed,
+      allowedKeys: allowed.map((f) => f.key),
+      posting: { company: job.company, title: job.title },
+      contact,
+    });
+  return { opportunity, allowed, prompt, check };
+}
+
+const StyleRewriteReply = z.object({ rewrites: z.array(z.string()) });
+
+function parseRewrites(text: string, count: number): string[] | null {
+  try {
+    const parsed = StyleRewriteReply.safeParse(JSON.parse(cleanModelText(text)));
+    return parsed.success && parsed.data.rewrites.length === count ? parsed.data.rewrites : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Swap whole sentences in `body`. Each original is matched to its first unused span. */
+function replaceSentences(body: string, swaps: ReadonlyMap<string, string>): string {
+  const used = new Set<number>();
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const span of sentenceSpans(body)) {
+    const next = swaps.get(span.text);
+    if (next === undefined || used.has(span.start)) continue;
+    used.add(span.start);
+    edits.push({ start: span.start, end: span.end, text: next });
+  }
+  let out = body;
+  for (const e of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return out;
+}
+
+/** Draft one output: prompt, check, one retry, quarantine, one style rewrite, save. */
+async function draftOne(
+  deps: Deps,
+  ctx: TaskContext,
+  { outputId, confirmOverCap, label }: { outputId: OutputId; confirmOverCap: boolean; label: string },
+): Promise<void> {
+  const { output, status } = await loadOutput(deps, outputId);
+  assertEditable(status);
+  if (output.mustAnswer !== null) throw mustAnswerRefusal(output);
+  const { allowed, prompt, check } = await draftContext(deps, { opportunityId: output.opportunityId, output });
+  const ai = (p: typeof prompt) =>
+    runAi(deps, {
+      tier: "writing",
+      purpose: "draft",
+      taskId: ctx.taskId,
+      prompt: p,
+      maxOutputTokens: DRAFT_MAX_TOKENS[output.kind],
+      confirmOverCap,
+    });
+
+  // Steps 2 to 4: draft, check, retry once with the violations, then quarantine what still fails.
+  const first = await ai(prompt);
+  let body = cleanModelText(first.text);
+  let aiCallId = first.aiCallId;
+  let result = check(body);
+  if (!result.ok) {
+    await ctx.step(`Checking ${label} against your facts`);
+    const retry = await ai(buildRetryPrompt({ prompt, draft: body, violations: result.violations }));
+    body = cleanModelText(retry.text);
+    aiCallId = retry.aiCallId;
+    result = check(body);
+    if (!result.ok) body = quarantineViolations({ body, violations: result.violations });
+  }
+
+  // Step 4a: one rewrite of the flagged sentences. A rewrite that fails checkDraft is discarded.
+  const hits = checkStyle(body);
+  if (hits.length > 0) {
+    await ctx.step(`Tidying the wording of ${label}`);
+    const sentences = [...new Set(hits.map((h) => h.sentence))].map((sentence) => ({
+      sentence,
+      hits: hits.filter((h) => h.sentence === sentence),
+    }));
+    const reply = await ai(buildStyleRewritePrompt({ sentences, facts: allowed }));
+    const rewrites = parseRewrites(reply.text, sentences.length) ?? [];
+    const swaps = new Map<string, string>();
+    rewrites.forEach((rewrite, i) => {
+      const original = sentences[i]?.sentence;
+      const text = rewrite.trim();
+      if (original !== undefined && text !== "" && check(text).ok) swaps.set(original, text);
+    });
+    body = replaceSentences(body, swaps);
+  }
+
+  // Step 5: save body, ai_call_id, generated_at, style hits and fresh citation snapshots.
+  const byKey = new Map<string, DraftFactRow>(allowed.map((f) => [f.key, f]));
+  const cited = parseCitations(body).flatMap((key) => {
+    const fact = byKey.get(key);
+    return fact ? [fact] : [];
+  });
+  await deps.db.transaction(async (tx) => {
+    await tx
+      .update(outputs)
+      .set({ body, aiCallId, generatedAt: deps.clock.now(), editedAt: null, styleHits: checkStyle(body) })
+      .where(eq(outputs.id, outputId));
+    await tx.delete(outputFacts).where(eq(outputFacts.outputId, outputId));
+    if (cited.length) {
+      await tx
+        .insert(outputFacts)
+        .values(cited.map((f) => ({ outputId, factKey: f.key, userId: deps.userId, factId: f.id, factText: f.text })));
+    }
+  });
+}
+
+/** Which outputs a draft request targets: one output, some kinds, or every included file. */
+async function draftTargets(
+  deps: Deps,
+  {
+    opportunityId,
+    kinds,
+    outputIds,
+  }: { opportunityId: OpportunityId; kinds?: readonly OutputKind[]; outputIds?: readonly OutputId[] },
+): Promise<OutputRow[]> {
+  const rows = (await loadOutputs(deps.db, opportunityId)).map((o) => o.row);
+  if (outputIds !== undefined) return rows.filter((r) => outputIds.includes(r.id));
+  const wanted: readonly OutputKind[] = kinds ?? FILE_KINDS;
+  return rows.filter((r) => r.included && wanted.includes(r.kind));
+}
+
+/**
+ * `POST /api/opportunities/:id/draft`: refuse frozen and must-answer targets, check the cap
+ * against an estimate for every target, then start a `draft` task (section 3.4).
+ */
+export async function startDraft(
+  deps: Deps,
+  {
+    opportunityId,
+    kinds,
+    outputIds,
+    confirmOverCap = false,
+  }: {
+    opportunityId: OpportunityId;
+    kinds?: readonly OutputKind[];
+    outputIds?: readonly OutputId[];
+    confirmOverCap?: boolean;
+  },
+): Promise<TaskDto> {
+  const { opportunity } = await loadOpportunity(deps, opportunityId);
+  assertEditable(opportunity.status);
+  const targets = await draftTargets(deps, {
+    opportunityId,
+    ...(kinds ? { kinds } : {}),
+    ...(outputIds ? { outputIds } : {}),
+  });
+  const [first, ...rest] = targets;
+  if (!first) {
+    throw new AppError({ code: "invalid_input", message: "Nothing to draft. Tick a file, then draft again." });
+  }
+  const mustAnswer = targets.find((t) => t.mustAnswer !== null);
+  if (mustAnswer) throw mustAnswerRefusal(mustAnswer);
+
+  const running = await latestTask(deps, { kind: "draft", inputMatches: { opportunityId } });
+  if (running?.task.status === "running") {
+    throw new AppError({
+      code: "invalid_input",
+      message: "A draft is already running for this job. Wait for it to finish.",
+    });
+  }
+
+  const config = await requireAiConfig(deps);
+  let estimate = 0;
+  for (const output of targets) {
+    const { prompt } = await draftContext(deps, { opportunityId, output });
+    estimate += estimateUsd({ model: config.models.writing, prompt, maxOutputTokens: DRAFT_MAX_TOKENS[output.kind] });
+  }
+  await checkCap(deps, { capUsd: config.capUsd, estimateUsd: estimate, confirmOverCap });
+
+  const input: DraftTaskInput = { opportunityId, outputIds: [first.id, ...rest.map((t) => t.id)] };
+  return startTask(deps, {
+    kind: "draft",
+    input,
+    run: async (ctx) => {
+      for (const [i, outputId] of input.outputIds.entries()) {
+        const output = targets.find((t) => t.id === outputId);
+        const label = output ? outputKindLabel(output.kind).toLowerCase() : "output";
+        const of = input.outputIds.length > 1 ? ` (${i + 1} of ${input.outputIds.length})` : "";
+        await ctx.step(`Drafting ${label}${of}`);
+        await draftOne(deps, ctx, { outputId, confirmOverCap, label });
+      }
+      return { outputIds: input.outputIds };
+    },
+  });
+}
+
+/** The request body form of `startDraft`, with `outputId` checked against the opportunity. */
+export async function draft(
+  deps: Deps,
+  { opportunityId, kinds, outputId, confirmOverCap }: { opportunityId: OpportunityId } & DraftInput,
+): Promise<TaskDto> {
+  if (outputId !== undefined) {
+    const { output } = await loadOutput(deps, outputId);
+    if (output.opportunityId !== opportunityId) throw notFound("That file or answer");
+  }
+  return startDraft(deps, {
+    opportunityId,
+    ...(kinds ? { kinds } : {}),
+    ...(outputId ? { outputIds: [outputId] } : {}),
+    confirmOverCap: confirmOverCap ?? false,
+  });
+}
+
+/** Retry handler for `draft` tasks: start again from the stored input. */
+export async function retryDraft(deps: Deps, input: unknown, { confirmOverCap }: { confirmOverCap: boolean }) {
+  const parsed = DraftTaskInput.safeParse(input);
+  if (!parsed.success) {
+    throw new AppError({
+      code: "invalid_input",
+      message: "This task's input is unreadable. Start a new draft instead.",
+    });
+  }
+  return startDraft(deps, { ...parsed.data, confirmOverCap });
+}
+
+/** "Mark up to date": refresh this output's snapshots to the facts' current text. */
+export async function markOutputCurrent(deps: Deps, { outputId }: { outputId: OutputId }): Promise<WorkspaceDto> {
+  const { output, status } = await loadOutput(deps, outputId);
+  assertEditable(status);
+  await deps.db.execute(sql`
+    UPDATE ${outputFacts} SET fact_text = f.text
+    FROM ${facts} f
+    WHERE ${outputFacts.outputId} = ${outputId} AND ${outputFacts.factId} = f.id`);
+  return getWorkspace(deps, { opportunityId: output.opportunityId });
 }
