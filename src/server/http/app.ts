@@ -5,6 +5,7 @@ import { boardRoutes } from "./routes/board";
 import { jobRoutes } from "./routes/jobs";
 import { profileRoutes } from "./routes/profile";
 import { settingsRoutes } from "./routes/settings";
+import { sourceRoutes } from "./routes/sources";
 import { taskRoutes } from "./routes/tasks";
 import { workspaceRoutes } from "./routes/workspace";
 
@@ -17,6 +18,7 @@ export function createApp(deps: Deps) {
     .route("/", boardRoutes(deps))
     .route("/", workspaceRoutes(deps))
     .route("/", settingsRoutes(deps))
+    .route("/", sourceRoutes(deps))
     .route("/", taskRoutes(deps));
 
   app.onError((err, c) => {

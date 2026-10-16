@@ -1,0 +1,59 @@
+{
+  "apiVersion": "2",
+  "documentationUrl": "https://jobicy.com/jobs-rss-feed",
+  "friendlyNotice": "Please link back to jobicy.com when you show these listings.",
+  "jobCount": 3,
+  "xRayHash": "a1b2c3",
+  "clientKey": "fixture",
+  "lastUpdate": "2026-10-15 10:00:00",
+  "jobs": [
+    {
+      "id": 120001,
+      "url": "https://jobicy.com/jobs/120001-react-developer",
+      "jobSlug": "120001-react-developer",
+      "jobTitle": "React Developer",
+      "companyName": "Globex",
+      "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2026/10/globex.png",
+      "jobIndustry": ["Programming"],
+      "jobType": ["full-time"],
+      "jobGeo": "Anywhere",
+      "jobLevel": "Senior",
+      "jobExcerpt": "Globex is hiring a React developer to build dashboards.",
+      "jobDescription": "<p>Globex is hiring a React developer to build dashboards for logistics teams.</p><ul><li>React, TypeScript</li><li>4+ years of experience</li></ul>",
+      "pubDate": "2026-10-14 08:00:00",
+      "annualSalaryMin": "60000",
+      "annualSalaryMax": "80000",
+      "salaryCurrency": "USD"
+    },
+    {
+      "id": 120002,
+      "url": "https://jobicy.com/jobs/120002-python-engineer",
+      "jobSlug": "120002-python-engineer",
+      "jobTitle": "Python Engineer",
+      "companyName": "Initech",
+      "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2026/10/initech.png",
+      "jobIndustry": ["Programming", "Data Science &amp; Analytics"],
+      "jobType": ["full-time"],
+      "jobGeo": "APAC",
+      "jobLevel": "Midweight",
+      "jobExcerpt": "Initech needs a Python engineer for its data pipelines.",
+      "jobDescription": "<p>Initech needs a Python engineer for its data pipelines. Remote across APAC.</p>",
+      "pubDate": "2026-10-13 08:00:00"
+    },
+    {
+      "id": 120003,
+      "url": "https://jobicy.com/jobs/120003-account-executive",
+      "jobSlug": "120003-account-executive",
+      "jobTitle": "Account Executive",
+      "companyName": "Umbrella",
+      "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2026/10/umbrella.png",
+      "jobIndustry": ["Sales"],
+      "jobType": ["full-time"],
+      "jobGeo": "USA",
+      "jobLevel": "Any",
+      "jobExcerpt": "Close new business for Umbrella.",
+      "jobDescription": "<p>Close new business across North America.</p>",
+      "pubDate": "2026-10-12 08:00:00"
+    }
+  ]
+}

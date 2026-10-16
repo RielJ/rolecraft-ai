@@ -1,0 +1,87 @@
+{
+  "about": "Job titles as boards publish them, with the role-filter level expected for each family pick (PLAN.md section 3.7a). src/domain/roles.test.ts runs every case.",
+  "cases": [
+    { "title": "Senior Frontend Engineer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    {
+      "title": "Sr. Software Engineer, Backend (Go)",
+      "families": ["engineering"],
+      "fit": "keep",
+      "family": "engineering"
+    },
+    {
+      "title": "Full Stack Developer - React/Node",
+      "families": ["engineering"],
+      "fit": "keep",
+      "family": "engineering"
+    },
+    {
+      "title": "Staff Software Engineer, Payments",
+      "families": ["engineering"],
+      "fit": "keep",
+      "family": "engineering"
+    },
+    { "title": "Senior iOS Engineer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "Android Developer (Kotlin)", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "Site Reliability Engineer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "Engineering Manager, Platform", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "WordPress Developer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "Principal Backend Engineer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
+    { "title": "UX Engineer", "families": ["engineering"], "fit": "unsure", "family": "engineering" },
+    { "title": "Design Systems Engineer", "families": ["engineering"], "fit": "unsure", "family": "engineering" },
+    { "title": "Designer/Developer", "families": ["engineering"], "fit": "unsure", "family": "engineering" },
+    { "title": "Developer Relations Manager", "families": ["engineering"], "fit": "unsure", "family": "marketing" },
+    { "title": "Developer Advocate", "families": ["engineering"], "fit": "unsure", "family": "marketing" },
+    { "title": "Technical Wizard", "families": ["engineering"], "fit": "unsure", "family": "unknown" },
+    { "title": "Founding Team Member", "families": ["engineering"], "fit": "unsure", "family": "unknown" },
+    { "title": "Software Sales Representative", "families": ["engineering"], "fit": "unsure", "family": "sales" },
+    { "title": "Product Designer", "families": ["engineering"], "fit": "drop", "family": "design" },
+    { "title": "Senior Product Designer", "families": ["engineering"], "fit": "drop", "family": "design" },
+    { "title": "Account Executive, Mid-Market", "families": ["engineering"], "fit": "drop", "family": "sales" },
+    { "title": "Customer Success Manager", "families": ["engineering"], "fit": "drop", "family": "support" },
+    { "title": "Senior Recruiter", "families": ["engineering"], "fit": "drop", "family": "people" },
+    { "title": "Staff Accountant", "families": ["engineering"], "fit": "drop", "family": "finance" },
+    { "title": "Executive Assistant to the CEO", "families": ["engineering"], "fit": "drop", "family": "ops" },
+    { "title": "Content Marketing Manager", "families": ["engineering"], "fit": "drop", "family": "marketing" },
+    { "title": "Data Scientist", "families": ["engineering"], "fit": "drop", "family": "data" },
+    { "title": "Product Manager, Growth", "families": ["engineering"], "fit": "unsure", "family": "product" },
+    { "title": "Product Designer", "families": ["design"], "fit": "keep", "family": "design" },
+    { "title": "Senior UX Researcher", "families": ["design"], "fit": "keep", "family": "design" },
+    { "title": "Frontend Designer", "families": ["design"], "fit": "unsure", "family": "design" },
+    { "title": "Graphic Designer", "families": ["design"], "fit": "keep", "family": "design" },
+    { "title": "Senior Frontend Engineer", "families": ["design"], "fit": "drop", "family": "engineering" },
+    { "title": "QA Automation Engineer", "families": ["qa"], "fit": "keep", "family": "qa" },
+    { "title": "Manual QA Tester", "families": ["qa"], "fit": "keep", "family": "qa" },
+    { "title": "DevOps Engineer", "families": ["devops"], "fit": "keep", "family": "devops" },
+    { "title": "Cloud Infrastructure Engineer", "families": ["devops"], "fit": "keep", "family": "devops" },
+    { "title": "Security Engineer", "families": ["security"], "fit": "keep", "family": "security" },
+    { "title": "Data Analyst", "families": ["data"], "fit": "keep", "family": "data" },
+    { "title": "Machine Learning Engineer", "families": ["data"], "fit": "keep", "family": "data" },
+    { "title": "Virtual Assistant", "families": ["ops"], "fit": "keep", "family": "ops" },
+    { "title": "Technical Support Specialist", "families": ["support"], "fit": "keep", "family": "support" },
+    { "title": "Sales Development Representative (SDR)", "families": ["sales"], "fit": "keep", "family": "sales" },
+    { "title": "Bookkeeper", "families": ["finance"], "fit": "keep", "family": "finance" },
+    { "title": "Talent Acquisition Partner", "families": ["people"], "fit": "keep", "family": "people" },
+    { "title": "Senior Product Manager", "families": ["product"], "fit": "keep", "family": "product" },
+    {
+      "title": "Software Engineering Intern",
+      "families": ["engineering"],
+      "excludeWords": ["intern"],
+      "fit": "drop",
+      "family": "engineering"
+    },
+    {
+      "title": "Junior Developer",
+      "families": ["engineering"],
+      "excludeWords": ["junior", "intern"],
+      "fit": "drop",
+      "family": "engineering"
+    },
+    {
+      "title": "International Sales Engineer",
+      "families": ["sales"],
+      "excludeWords": ["intern"],
+      "fit": "keep",
+      "family": "sales"
+    }
+  ]
+}

@@ -2,8 +2,10 @@ import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@t
 import { OpportunityId } from "@/shared/api";
 import { TopBar } from "./components/top-bar";
 import { BoardPage } from "./routes/board";
+import { MatchesPage } from "./routes/matches";
 import { ProfilePage } from "./routes/profile";
 import { SettingsPage } from "./routes/settings";
+import { SourcesPage } from "./routes/sources";
 import { WorkspacePage } from "./routes/workspace";
 import { Toaster } from "./ui/sonner";
 
@@ -34,6 +36,8 @@ const indexRoute = createRoute({
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/board", component: BoardPage });
 const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: "/profile", component: ProfilePage });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage });
+const matchesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/matches", component: MatchesPage });
+const sourcesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/sources", component: SourcesPage });
 
 export const workspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -51,7 +55,15 @@ export const workspaceRoute = createRoute({
   ),
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, boardRoute, profileRoute, settingsRoute, workspaceRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  matchesRoute,
+  boardRoute,
+  profileRoute,
+  sourcesRoute,
+  settingsRoute,
+  workspaceRoute,
+]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

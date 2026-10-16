@@ -14,6 +14,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -26,6 +27,7 @@ import type {
   JobId,
   OpportunityId,
   OutputId,
+  SourceId,
   StandardAnswers,
   StyleHit,
   TaskId,
@@ -36,6 +38,7 @@ import {
   AI_PURPOSES,
   AI_TIERS,
   type AiProvider,
+  ATS_SOURCE_KINDS,
   DISMISS_REASONS,
   ELIGIBILITIES,
   ELIGIBILITY_SOURCES,
@@ -51,6 +54,11 @@ import {
   PAY_PERIODS,
   PROFILE_ITEM_KINDS,
   RATE_TYPES,
+  type RoleFamily,
+  SOURCE_KINDS,
+  SOURCE_STATUSES,
+  type SourceKind,
+  type SourceStatus,
   TASK_KINDS,
   TASK_STATUSES,
   USER_SENIORITIES,
@@ -104,7 +112,7 @@ export const users = pgTable(
     location: text().notNull().default("Philippines"),
     links: text().array().notNull().default(sql`'{}'::text[]`),
     targetTitles: text().array().notNull().default(sql`'{}'::text[]`),
-    roleFamilies: text().array().notNull().default(sql`'{}'::text[]`),
+    roleFamilies: text().array().notNull().default(sql`'{}'::text[]`).$type<RoleFamily[]>(),
     excludeTitleWords: text().array().notNull().default(sql`'{}'::text[]`),
     seniority: text().$type<(typeof USER_SENIORITIES)[number]>(),
     yearsExperience: smallint(),
@@ -230,6 +238,68 @@ export const jobs = pgTable(
     index("jobs_search").using("gin", t.search),
     index("jobs_open").on(t.userId, t.firstSeenAt.desc()).where(sql`closed_at IS NULL`),
     index("jobs_closed").on(t.closedAt).where(sql`closed_at IS NOT NULL`),
+  ],
+);
+
+/** Built-in boards and company boards. Sync may update only the `last_*` columns (section 2). */
+export const sources = pgTable(
+  "sources",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<SourceId>(),
+    userId: userRef(),
+    kind: text().notNull().$type<SourceKind>(),
+    /** Company slug for ATS kinds, NULL for built-ins. */
+    board: text(),
+    label: text().notNull(),
+    enabled: boolean().notNull().default(true),
+    /** NULL means use users.target_titles. */
+    keywords: text().array(),
+    createdAt: createdAt(),
+    // Written only by sync (column grants in drizzle/0004_sync_role.sql).
+    lastRunAt: timestamp({ withTimezone: true }),
+    lastOkAt: timestamp({ withTimezone: true }),
+    lastStatus: text().$type<SourceStatus>(),
+    lastCount: integer(),
+    lastOkCount: integer(),
+    /** Sure drops from the role filter (section 3.7a). */
+    lastDropped: integer(),
+    lastError: text(),
+  },
+  (t) => [
+    check("sources_kind", oneOf("kind", SOURCE_KINDS)),
+    check("sources_last_status", sql`last_status IS NULL OR ${oneOf("last_status", SOURCE_STATUSES)}`),
+    check("sources_board", sql`(${oneOf("kind", ATS_SOURCE_KINDS)}) = (board IS NOT NULL)`),
+    unique("sources_user_kind_board").on(t.userId, t.kind, t.board).nullsNotDistinct(),
+  ],
+);
+
+/** Where a job was seen. A job closes when all of its listings are missing. */
+export const jobListings = pgTable(
+  "job_listings",
+  {
+    sourceId: uuid()
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" })
+      .$type<SourceId>(),
+    externalId: text().notNull(),
+    userId: userRef(),
+    jobId: uuid()
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" })
+      .$type<JobId>(),
+    /** Attribution link back to the board. */
+    listingUrl: text().notNull(),
+    /** The listing whose content fills the job. */
+    isPrimary: boolean().notNull(),
+    firstSeenAt: timestamp({ withTimezone: true }).notNull(),
+    lastSeenAt: timestamp({ withTimezone: true }).notNull(),
+    /** Set when a run says it is gone. */
+    missingSince: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sourceId, t.externalId] }),
+    uniqueIndex("job_listings_one_primary").on(t.jobId).where(sql`is_primary`),
+    index("job_listings_job").on(t.jobId),
   ],
 );
 

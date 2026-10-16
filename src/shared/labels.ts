@@ -9,6 +9,8 @@ import type {
   OutputKind,
   ProfileItemKind,
   RateType,
+  RoleFamily,
+  SourceStatus,
 } from "./enums";
 
 /** Shown on every contract (decision 19). The app tracks nothing about it. */
@@ -208,6 +210,61 @@ export function eligibilityLabel(verdict: Eligibility): string {
       return "Unclear";
     default: {
       const _exhaustive: never = verdict;
+      return _exhaustive;
+    }
+  }
+}
+
+export function roleFamilyLabel(family: RoleFamily): string {
+  switch (family) {
+    case "engineering":
+      return "Engineering";
+    case "design":
+      return "Design";
+    case "product":
+      return "Product";
+    case "data":
+      return "Data";
+    case "qa":
+      return "QA and testing";
+    case "devops":
+      return "DevOps and infrastructure";
+    case "security":
+      return "Security";
+    case "sales":
+      return "Sales";
+    case "marketing":
+      return "Marketing";
+    case "support":
+      return "Support and success";
+    case "ops":
+      return "Operations";
+    case "people":
+      return "People and recruiting";
+    case "finance":
+      return "Finance";
+    default: {
+      const _exhaustive: never = family;
+      return _exhaustive;
+    }
+  }
+}
+
+/** A source's last run, in a few words. The error text, if any, is shown under it. */
+export function sourceStatusLabel(status: SourceStatus): string {
+  switch (status) {
+    case "ok":
+      return "OK";
+    case "failed":
+      return "Failed";
+    case "rate_limited":
+      return "Rate limited";
+    case "suspicious_empty":
+      return "Returned nothing";
+    case "skipped":
+      return "Skipped, ran recently";
+    default: {
+      const _exhaustive: never = status;
       return _exhaustive;
     }
   }

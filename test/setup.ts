@@ -7,6 +7,7 @@ import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
 import { createHttpClient, type HttpClient } from "@/server/adapters/http";
 import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
 import { createChromiumPdf, type PdfRenderer } from "@/server/adapters/pdf";
+import { createSourceAdapters } from "@/server/adapters/sources";
 import { createDb, type Db } from "@/server/db/client";
 import { migrateDb } from "@/server/db/migrate";
 import type { Deps } from "@/server/services/context";
@@ -67,17 +68,20 @@ export function offlineHttp(): HttpClient {
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http">> = {},
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources">> = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
+  const http = over.http ?? offlineHttp();
   return {
     db,
     userId: await ensureUser(db),
     pdf: over.pdf ?? pdf,
     ai: { anthropic: fake, openai: fake },
     keyStore: over.keyStore ?? testKeyStore(),
-    http: over.http ?? offlineHttp(),
+    http,
+    // Sources read through the same injected client, so a test's fake fetch serves both.
+    sources: over.sources ?? createSourceAdapters(http),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
     fake,
   };

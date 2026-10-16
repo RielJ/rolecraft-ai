@@ -7,6 +7,8 @@ import type { AiClients } from "./adapters/ai/types";
 import { createHttpClient } from "./adapters/http";
 import { createFileKeyStore } from "./adapters/key-store";
 import { createChromiumPdf } from "./adapters/pdf";
+import { createSourceAdapters } from "./adapters/sources";
+import { createFixtureSources } from "./adapters/sources/fixture";
 import { createDb } from "./db/client";
 import { migrateDb } from "./db/migrate";
 import { parseEnv } from "./env";
@@ -30,7 +32,11 @@ const ai: AiClients = fake
   : { anthropic: createAnthropicClient(), openai: createOpenAiClient() };
 const keyStore = createFileKeyStore({ dir: env.HB_DATA_DIR });
 
-const deps: Deps = { db, userId, pdf, ai, keyStore, http: createHttpClient(), clock: { now: () => new Date() } };
+const http = createHttpClient();
+const sources =
+  env.HB_SOURCES === "fixture" ? createFixtureSources({ dir: env.HB_SOURCES_DIR }) : createSourceAdapters(http);
+
+const deps: Deps = { db, userId, pdf, ai, keyStore, http, sources, clock: { now: () => new Date() } };
 
 const server = new Hono()
   .route("/", createApp(deps))

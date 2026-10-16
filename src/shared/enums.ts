@@ -124,3 +124,37 @@ export type StyleRule = z.infer<typeof StyleRule>;
 export const OUTDATED_REASONS = ["edited", "deleted", "unconfirmed", "letters_only"] as const;
 export const OutdatedReason = z.enum(OUTDATED_REASONS);
 export type OutdatedReason = z.infer<typeof OutdatedReason>;
+
+// ---------- Sources and sync (PLAN.md section 2, `sources`; section 3.1) ----------
+
+/** Built-in boards: keyword boards and feeds that return a window of recent postings. */
+export const BUILTIN_SOURCE_KINDS = ["jobicy", "himalayas", "remoteok", "weworkremotely", "remotive"] as const;
+/** Company boards on an ATS: the whole board comes back on every run. */
+export const ATS_SOURCE_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters", "recruitee", "workable"] as const;
+export const SOURCE_KINDS = [...BUILTIN_SOURCE_KINDS, ...ATS_SOURCE_KINDS] as const;
+export const SourceKind = z.enum(SOURCE_KINDS);
+export type SourceKind = z.infer<typeof SourceKind>;
+export type AtsSourceKind = (typeof ATS_SOURCE_KINDS)[number];
+
+export const SOURCE_STATUSES = ["ok", "failed", "rate_limited", "suspicious_empty", "skipped"] as const;
+export const SourceStatus = z.enum(SOURCE_STATUSES);
+export type SourceStatus = z.infer<typeof SourceStatus>;
+
+/** Role families for the role filter (section 3.7a). */
+export const ROLE_FAMILIES = [
+  "engineering",
+  "design",
+  "product",
+  "data",
+  "qa",
+  "devops",
+  "security",
+  "sales",
+  "marketing",
+  "support",
+  "ops",
+  "people",
+  "finance",
+] as const;
+export const RoleFamily = z.enum(ROLE_FAMILIES);
+export type RoleFamily = z.infer<typeof RoleFamily>;

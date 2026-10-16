@@ -15,6 +15,9 @@ import {
   OutputKind,
   ProfileItemKind,
   RateType,
+  RoleFamily,
+  SourceKind,
+  SourceStatus,
   StyleRule,
   TaskKind,
   TaskStatus,
@@ -36,6 +39,8 @@ export const OutputId = z.uuid().brand<"OutputId">();
 export type OutputId = z.infer<typeof OutputId>;
 export const TaskId = z.uuid().brand<"TaskId">();
 export type TaskId = z.infer<typeof TaskId>;
+export const SourceId = z.uuid().brand<"SourceId">();
+export type SourceId = z.infer<typeof SourceId>;
 export const AiCallId = z.uuid().brand<"AiCallId">();
 export type AiCallId = z.infer<typeof AiCallId>;
 
@@ -60,6 +65,7 @@ export const ERROR_CODES = [
   "key_rejected",
   "ai_unavailable",
   "refresh_running",
+  "source_exists",
   "unreadable_file",
   "internal",
 ] as const;
@@ -150,9 +156,32 @@ export const ProfileItemDto = z.object({
 });
 export type ProfileItemDto = z.infer<typeof ProfileItemDto>;
 
+/** Drop repeats that differ only in case; the first spelling wins. */
+const uniqueCaseless = (values: string[]) => [...new Map(values.map((v) => [v.toLowerCase(), v])).values()];
+
+const ExcludeWord = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .regex(/^[^,]+$/, "One word or phrase per entry, without commas.");
+
+/** What the role filter reads (section 3.7a). No families picked means only exclude words drop. */
+export const Targeting = z.object({
+  /** Keywords for built-in boards whose own keywords are blank ("frontend engineer"). */
+  targetTitles: z.array(z.string().trim().min(1).max(100)).max(30).transform(uniqueCaseless),
+  roleFamilies: z
+    .array(RoleFamily)
+    .max(RoleFamily.options.length)
+    .transform((families) => [...new Set(families)]),
+  excludeTitleWords: z.array(ExcludeWord).max(50).transform(uniqueCaseless),
+});
+export type Targeting = z.infer<typeof Targeting>;
+
 export const ProfileDto = z.object({
   contact: Contact,
   standardAnswers: StandardAnswers,
+  targeting: Targeting,
   cv: ProfileItemDto.nullable(),
   addons: z.array(ProfileItemDto),
   facts: z.array(FactDto),
@@ -166,6 +195,7 @@ export type ProfileDto = z.infer<typeof ProfileDto>;
 export const UpdateProfileInput = z.object({
   contact: Contact.optional(),
   standardAnswers: StandardAnswers.optional(),
+  targeting: Targeting.partial().optional(),
 });
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>;
 
@@ -589,3 +619,94 @@ export const TextExport = z.object({ text: z.string() });
 export type TextExport = z.infer<typeof TextExport>;
 
 export const FileKindParam = FileKind;
+
+// ---------- Sources and refresh (section 3.1) ----------
+
+export const SourceDto = z.object({
+  id: SourceId,
+  kind: SourceKind,
+  /** Company slug for company boards, null for built-ins. */
+  board: z.string().nullable(),
+  label: z.string(),
+  enabled: z.boolean(),
+  /** Null means the profile's target titles. */
+  keywords: z.array(z.string()).nullable(),
+  /** Built-in boards filter on keywords; company boards return the whole board. */
+  builtin: z.boolean(),
+  lastRunAt: z.string().nullable(),
+  lastOkAt: z.string().nullable(),
+  lastStatus: SourceStatus.nullable(),
+  lastCount: z.number().int().nullable(),
+  lastDropped: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+});
+export type SourceDto = z.infer<typeof SourceDto>;
+
+export const SourceList = z.object({ sources: z.array(SourceDto) });
+export type SourceList = z.infer<typeof SourceList>;
+
+/** `POST /api/sources`: a company's careers link. The board is checked before it is saved. */
+export const AddSourceInput = z.object({ url: z.string().trim().min(1).max(2000) });
+export type AddSourceInput = z.infer<typeof AddSourceInput>;
+
+const Keyword = z.string().trim().min(1).max(100);
+
+export const UpdateSourceInput = z
+  .object({
+    enabled: z.boolean().optional(),
+    /** Null goes back to the profile's target titles. */
+    keywords: z.array(Keyword).max(30).nullable().optional(),
+  })
+  .refine((v) => v.enabled !== undefined || v.keywords !== undefined, { message: "Send enabled, keywords, or both." });
+export type UpdateSourceInput = z.infer<typeof UpdateSourceInput>;
+
+/** One source's part of a refresh (section 3.1 step 10). */
+export const RefreshSourceResult = z.object({
+  sourceId: SourceId,
+  label: z.string(),
+  status: SourceStatus,
+  /** Postings the source returned, before the keyword and role filters. */
+  fetched: z.number().int(),
+  /** Postings the role filter dropped as surely not your role. */
+  dropped: z.number().int(),
+  added: z.number().int(),
+  updated: z.number().int(),
+  closed: z.number().int(),
+  reopened: z.number().int(),
+  error: z.string().nullable(),
+});
+export type RefreshSourceResult = z.infer<typeof RefreshSourceResult>;
+
+export const RefreshResult = z.object({
+  sources: z.array(RefreshSourceResult),
+  /** Closed jobs older than 60 days with no board entry, deleted. */
+  pruned: z.number().int(),
+  /** The AI eligibility pass arrives in a later slice. */
+  aiPass: z.object({ kind: z.literal("not_run") }),
+});
+export type RefreshResult = z.infer<typeof RefreshResult>;
+
+/** `GET /api/refresh`: the newest refresh, for the top bar's progress and summary. */
+export const RefreshDto = z.object({
+  task: TaskDto.nullable(),
+  /** Set once the task is done. */
+  result: RefreshResult.nullable(),
+});
+export type RefreshDto = z.infer<typeof RefreshDto>;
+
+/** A row of the minimal Matches list (slice 6; slice 7 adds matching). */
+export const JobListItem = z.object({
+  id: JobId,
+  title: z.string(),
+  company: z.string(),
+  locationText: z.string(),
+  firstSeenAt: z.string(),
+  applyUrl: z.string().nullable(),
+  /** Where it was seen: source labels, primary first. */
+  seenOn: z.array(z.object({ label: z.string(), listingUrl: z.string() })),
+  opportunityId: OpportunityId.nullable(),
+});
+export type JobListItem = z.infer<typeof JobListItem>;
+
+export const JobList = z.object({ jobs: z.array(JobListItem) });
+export type JobList = z.infer<typeof JobList>;

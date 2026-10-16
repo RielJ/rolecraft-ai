@@ -1,18 +1,8 @@
 import { and, eq, isNull, ne, or } from "drizzle-orm";
-import {
-  applyUrlKey,
-  companyKey,
-  type DuplicateCandidate,
-  duplicateDiff,
-  isAutoMerge,
-  likelyDuplicates,
-  titleKey,
-} from "@/domain/dedup";
-import { classifyEligibility } from "@/domain/eligibility";
-import { extractSkills, minYears, seniority } from "@/domain/features";
-import { parseHours, toManila } from "@/domain/hours";
-import { type FxRates, monthlyInView, type Pay, parsePay } from "@/domain/pay";
-import { contentHash, descriptionKey } from "@/domain/text";
+import { applyUrlKey, type DuplicateCandidate, duplicateDiff, isAutoMerge, likelyDuplicates } from "@/domain/dedup";
+import { toManila } from "@/domain/hours";
+import { type FxRates, monthlyInView, type Pay } from "@/domain/pay";
+import { type Derived, derive, type JobFields } from "@/domain/posting";
 import type { AddJobResult, AddLinkInput, AddLinkResult, JobFacts, OpportunityId, PasteJobInput } from "@/shared/api";
 import { FILE_KINDS } from "@/shared/enums";
 import { blockedSite } from "@/shared/hosts";
@@ -28,65 +18,6 @@ type JobRow = typeof jobs.$inferSelect;
 
 /** Section 3.2 step 5: less description than this is too little to work from. */
 const MIN_DESCRIPTION_CHARS = 600;
-
-/** What a job is made from, however it arrived. */
-type JobFields = {
-  title: string;
-  company: string;
-  description: string;
-  locationText: string;
-  applyUrl: string | null;
-  postedAt: Date | null;
-  expiresAt: Date | null;
-  /** Pay the page gave as data; otherwise it is read from the description. */
-  pay: Pay | null;
-  restrictions: readonly string[] | null;
-};
-
-/** The stored columns derived from a job's fields (section 3.1 step 4): keys, features, pay, hours, eligibility. */
-function derive(fields: JobFields) {
-  const pay = fields.pay ?? parsePay(fields.description);
-  const eligibility = classifyEligibility({
-    description: fields.description,
-    locationText: fields.locationText,
-    structured: fields.restrictions === null ? null : { restrictions: fields.restrictions },
-  });
-  const payPhrase = pay?.phrase ?? null;
-  return {
-    title: fields.title,
-    company: fields.company,
-    titleKey: titleKey(fields.title),
-    companyKey: companyKey(fields.company),
-    applyUrl: fields.applyUrl,
-    applyUrlKey: fields.applyUrl === null ? null : applyUrlKey(fields.applyUrl),
-    locationText: fields.locationText,
-    description: fields.description,
-    contentHash: contentHash({
-      title: fields.title,
-      company: fields.company,
-      locationText: fields.locationText,
-      description: fields.description,
-      payPhrase,
-    }),
-    descriptionKey: descriptionKey(fields.description),
-    postedAt: fields.postedAt,
-    expiresAt: fields.expiresAt,
-    payMin: pay ? String(pay.min) : null,
-    payMax: pay?.max == null ? null : String(pay.max),
-    payCurrency: pay?.currency ?? null,
-    payPeriod: pay?.period ?? null,
-    payPhrase,
-    hours: parseHours(fields.description),
-    skills: extractSkills(`${fields.title}\n${fields.description}`),
-    seniority: seniority(fields.title),
-    minYears: minYears(fields.description),
-    eligibility: eligibility.verdict,
-    eligibilityPhrase: eligibility.phrase,
-    eligibilityBy: "rule" as const,
-  };
-}
-
-type Derived = ReturnType<typeof derive>;
 
 /** The job's opportunity, created Saved with its three file rows when the job has none yet. */
 async function ensureOpportunity(tx: Tx, deps: Deps, jobId: JobRow["id"]): Promise<OpportunityId> {

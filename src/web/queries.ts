@@ -10,12 +10,17 @@ import {
   type DraftInput,
   type FactId,
   type ItemId,
+  JobList,
   type OpportunityId,
   type OutputId,
   type PasteJobInput,
   ProfileDto,
+  RefreshDto,
   type SaveAiKeyInput,
   SettingsDto,
+  SourceDto,
+  type SourceId,
+  SourceList,
   TaskDto,
   type TaskId,
   TextExport,
@@ -32,6 +37,9 @@ export const keys = {
   board: ["board"] as const,
   workspace: (id: OpportunityId) => ["workspace", id] as const,
   settings: ["settings"] as const,
+  sources: ["sources"] as const,
+  jobs: ["jobs"] as const,
+  refresh: ["refresh"] as const,
 };
 
 /** How often the workspace polls while a draft task runs. */
@@ -323,3 +331,48 @@ export const useRemoveAiKey = () =>
 
 export const useUpdateSettings = () =>
   useSettingsMutation((json: UpdateSettingsInput) => unwrap(client.api.settings.$patch({ json }), SettingsDto));
+
+// ---------- Sources, refresh and matches ----------
+
+export function useSources() {
+  return useQuery({ queryKey: keys.sources, queryFn: () => unwrap(client.api.sources.$get(), SourceList) });
+}
+
+function useSourceMutation<I, O>(run: (input: I) => Promise<O>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: run, onSettled: () => qc.invalidateQueries({ queryKey: keys.sources }) });
+}
+
+/** Add a company board from its careers link. The server checks the board before saving. */
+export const useAddSource = () =>
+  useSourceMutation((url: string) => unwrap(client.api.sources.$post({ json: { url } }), SourceDto));
+
+export const useUpdateSource = () =>
+  useSourceMutation(({ id, ...json }: { id: SourceId; enabled?: boolean; keywords?: string[] | null }) =>
+    unwrap(client.api.sources[":id"].$patch({ param: { id }, json }), SourceDto),
+  );
+
+export const useDeleteSource = () =>
+  useSourceMutation((id: SourceId) => unwrap(client.api.sources[":id"].$delete({ param: { id } }), SourceList));
+
+/** Open jobs from every source, for the plain Matches list. */
+export function useJobs() {
+  return useQuery({ queryKey: keys.jobs, queryFn: () => unwrap(client.api.jobs.$get(), JobList) });
+}
+
+/** The newest refresh. Polls while it runs; the top bar shows its step. */
+export function useRefresh() {
+  return useQuery({
+    queryKey: keys.refresh,
+    queryFn: () => unwrap(client.api.refresh.$get(), RefreshDto),
+    refetchInterval: (query) => (query.state.data?.task?.status === "running" ? TASK_POLL_MS : false),
+  });
+}
+
+export function useStartRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(client.api.refresh.$post(), TaskDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.refresh }),
+  });
+}

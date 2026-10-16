@@ -9,9 +9,18 @@ import {
   type ProfileDto,
   type ProfileItemDto,
   type StandardAnswers,
+  type Targeting,
 } from "@/shared/api";
-import { ADDON_KINDS, AddonKind, ITEM_USAGES, ItemUsage, MUST_ANSWERS } from "@/shared/enums";
-import { itemKindLabel, itemUsageLabel, mustAnswerLabel } from "@/shared/labels";
+import {
+  ADDON_KINDS,
+  AddonKind,
+  ITEM_USAGES,
+  ItemUsage,
+  MUST_ANSWERS,
+  ROLE_FAMILIES,
+  type RoleFamily,
+} from "@/shared/enums";
+import { itemKindLabel, itemUsageLabel, mustAnswerLabel, roleFamilyLabel } from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
 import {
   useConfirmAllFacts,
@@ -40,6 +49,7 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -145,6 +155,103 @@ function StandardAnswersForm({ answers }: { answers: StandardAnswers }) {
       ))}
       <Button type="submit" className="justify-self-start" disabled={update.isPending}>
         {update.isPending ? "Saving…" : "Save answers"}
+      </Button>
+    </form>
+  );
+}
+
+const lines = (text: string) =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+/**
+ * What Refresh keeps (section 3.7a). Target titles are the keywords for built-in boards; role
+ * families and exclude words drop postings that are surely not your role. Pasted and linked
+ * jobs skip the filter.
+ */
+function TargetingForm({ targeting }: { targeting: Targeting }) {
+  const id = useId();
+  const update = useUpdateProfile();
+  const [titles, setTitles] = useState(targeting.targetTitles.join("\n"));
+  const [families, setFamilies] = useState<ReadonlySet<RoleFamily>>(new Set(targeting.roleFamilies));
+  const [exclude, setExclude] = useState(targeting.excludeTitleWords.join("\n"));
+
+  function toggle(family: RoleFamily, on: boolean) {
+    setFamilies((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(family);
+      else next.delete(family);
+      return next;
+    });
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    update.mutate(
+      {
+        targeting: {
+          targetTitles: lines(titles),
+          roleFamilies: ROLE_FAMILIES.filter((f) => families.has(f)),
+          excludeTitleWords: lines(exclude),
+        },
+      },
+      { onSuccess: () => toast("Job targeting saved. The next Refresh uses it."), onError },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
+      <div>
+        <h2 id={`${id}-h`} className="font-semibold text-lg">
+          Job targeting
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          Refresh keeps postings that fit. A posting is dropped only when it is surely another kind of role; anything
+          unclear is kept.
+        </p>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={`${id}-titles`}>Target titles, one per line</Label>
+        <Textarea id={`${id}-titles`} className="min-h-20" value={titles} onChange={(e) => setTitles(e.target.value)} />
+        <p className="text-muted-foreground text-xs">
+          For example "Frontend engineer". Built-in boards keep postings whose title or tags have one of these words.
+          Blank keeps every posting.
+        </p>
+      </div>
+      <fieldset className="grid gap-3">
+        <legend className="mb-2 font-medium text-sm">Role families</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {ROLE_FAMILIES.map((family) => (
+            <div key={family} className="flex items-center gap-2">
+              <Checkbox
+                id={`${id}-fam-${family}`}
+                checked={families.has(family)}
+                onCheckedChange={(checked) => toggle(family, checked === true)}
+              />
+              <Label htmlFor={`${id}-fam-${family}`} className="font-normal">
+                {roleFamilyLabel(family)}
+              </Label>
+            </div>
+          ))}
+        </div>
+        <p className="text-muted-foreground text-xs">None picked means only the exclude words drop postings.</p>
+      </fieldset>
+      <div className="grid gap-2">
+        <Label htmlFor={`${id}-exclude`}>Exclude title words, one per line</Label>
+        <Textarea
+          id={`${id}-exclude`}
+          className="min-h-16"
+          value={exclude}
+          onChange={(e) => setExclude(e.target.value)}
+        />
+        <p className="text-muted-foreground text-xs">
+          For example "Intern". A title with one of these is always dropped.
+        </p>
+      </div>
+      <Button type="submit" className="justify-self-start" disabled={update.isPending}>
+        {update.isPending ? "Saving…" : "Save targeting"}
       </Button>
     </form>
   );
@@ -890,7 +997,7 @@ export function ProfilePage() {
       </div>
     );
   }
-  const { contact, standardAnswers, cv, addons, facts, aiReady } = profile.data;
+  const { contact, standardAnswers, targeting, cv, addons, facts, aiReady } = profile.data;
   return (
     <div className="grid gap-10">
       <h1 className="font-semibold text-2xl tracking-tight">Profile</h1>
@@ -902,6 +1009,8 @@ export function ProfilePage() {
       <Addons addons={addons} facts={facts} />
       <Separator />
       <StandardAnswersForm answers={standardAnswers} />
+      <Separator />
+      <TargetingForm targeting={targeting} />
     </div>
   );
 }

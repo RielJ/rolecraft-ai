@@ -13,6 +13,9 @@ const EnvSchema = z.object({
   HB_DATA_DIR: z.string().min(1).default("./data"),
   /** `fake` swaps in the scriptable AI provider for tests and Playwright. */
   HB_AI: z.enum(["live", "fake"]).default("live"),
+  /** `fixture` runs the real source adapters over files in HB_SOURCES_DIR instead of the network. */
+  HB_SOURCES: z.enum(["live", "fixture"]).default("live"),
+  HB_SOURCES_DIR: z.string().min(1).default("./test/fixtures/sources"),
 });
 export type Env = z.infer<typeof EnvSchema>;
 

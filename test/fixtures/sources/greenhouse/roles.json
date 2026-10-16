@@ -1,0 +1,65 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://boards.greenhouse.io/roles/jobs/5001",
+      "internal_job_id": 6001,
+      "location": { "name": "Remote" },
+      "metadata": null,
+      "id": 5001,
+      "updated_at": "2026-10-01T10:00:00-04:00",
+      "requisition_id": "R-1",
+      "title": "Senior Frontend Engineer",
+      "company_name": "Roles Inc",
+      "first_published": "2026-09-30T09:00:00-04:00",
+      "content": "&lt;p&gt;Build the web app in React.&lt;/p&gt;",
+      "departments": [],
+      "offices": []
+    },
+    {
+      "absolute_url": "https://boards.greenhouse.io/roles/jobs/5002",
+      "internal_job_id": 6002,
+      "location": { "name": "Remote" },
+      "metadata": null,
+      "id": 5002,
+      "updated_at": "2026-10-01T10:00:00-04:00",
+      "requisition_id": "R-2",
+      "title": "Product Designer",
+      "company_name": "Roles Inc",
+      "first_published": "2026-09-30T09:00:00-04:00",
+      "content": "&lt;p&gt;Own the end-to-end experience of our mobile app. Portfolio required.&lt;/p&gt;",
+      "departments": [],
+      "offices": []
+    },
+    {
+      "absolute_url": "https://boards.greenhouse.io/roles/jobs/5003",
+      "internal_job_id": 6003,
+      "location": { "name": "Remote" },
+      "metadata": null,
+      "id": 5003,
+      "updated_at": "2026-10-01T10:00:00-04:00",
+      "requisition_id": "R-3",
+      "title": "UX Engineer",
+      "company_name": "Roles Inc",
+      "first_published": "2026-09-30T09:00:00-04:00",
+      "content": "&lt;p&gt;Prototype interfaces in code.&lt;/p&gt;",
+      "departments": [],
+      "offices": []
+    },
+    {
+      "absolute_url": "https://boards.greenhouse.io/roles/jobs/5004",
+      "internal_job_id": 6004,
+      "location": { "name": "Remote" },
+      "metadata": null,
+      "id": 5004,
+      "updated_at": "2026-10-01T10:00:00-04:00",
+      "requisition_id": "R-4",
+      "title": "Technical Wizard",
+      "company_name": "Roles Inc",
+      "first_published": "2026-09-30T09:00:00-04:00",
+      "content": "&lt;p&gt;Make magic happen across the company.&lt;/p&gt;",
+      "departments": [],
+      "offices": []
+    }
+  ],
+  "meta": { "total": 4 }
+}

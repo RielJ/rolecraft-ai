@@ -30,6 +30,7 @@ export default defineConfig({
       DATABASE_URL: E2E_DATABASE_URL,
       HB_STATIC_DIR: "./dist",
       HB_AI: "fake",
+      HB_SOURCES: "fixture",
       HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
     },
     stdout: "pipe",

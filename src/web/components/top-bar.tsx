@@ -3,10 +3,13 @@ import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { AddJobDialog } from "./add-job-dialog";
+import { RefreshButton } from "./refresh-button";
 
 const NAV = [
+  { to: "/matches", label: "Matches" },
   { to: "/board", label: "Board" },
   { to: "/profile", label: "Profile" },
+  { to: "/sources", label: "Sources" },
   { to: "/settings", label: "Settings" },
 ] as const;
 
@@ -29,10 +32,13 @@ export function TopBar() {
             </Link>
           ))}
         </nav>
-        <Button className="ml-auto" size="sm" onClick={() => setAdding(true)}>
-          <PlusIcon aria-hidden />
-          Add job
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <RefreshButton />
+          <Button size="sm" onClick={() => setAdding(true)}>
+            <PlusIcon aria-hidden />
+            Add job
+          </Button>
+        </div>
       </div>
       <AddJobDialog open={adding} onOpenChange={setAdding} />
     </header>

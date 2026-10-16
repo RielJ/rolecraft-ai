@@ -20,6 +20,7 @@ import {
   type ProfileItemDto,
   SplitTaskInput,
   type StandardAnswers,
+  type Targeting,
   type TaskDto,
   type UpdateFactInput,
   type UpdateProfileInput,
@@ -47,6 +48,7 @@ export async function ensureUser(db: Db): Promise<UserId> {
 export async function loadContact(deps: Pick<Deps, "db" | "userId">): Promise<{
   contact: Contact;
   standardAnswers: StandardAnswers;
+  targeting: Targeting;
 }> {
   const [user] = await deps.db.select().from(users).where(eq(users.id, deps.userId));
   if (!user) throw notFound("Your profile");
@@ -59,6 +61,11 @@ export async function loadContact(deps: Pick<Deps, "db" | "userId">): Promise<{
       links: user.links,
     },
     standardAnswers: user.standardAnswers,
+    targeting: {
+      targetTitles: user.targetTitles,
+      roleFamilies: user.roleFamilies,
+      excludeTitleWords: user.excludeTitleWords,
+    },
   };
 }
 
@@ -80,7 +87,7 @@ async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
 }
 
 export async function getProfile(deps: Deps): Promise<ProfileDto> {
-  const [{ contact, standardAnswers }, items, rows, aiConfig] = await Promise.all([
+  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig] = await Promise.all([
     loadContact(deps),
     deps.db
       .select()
@@ -110,6 +117,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
   return {
     contact,
     standardAnswers,
+    targeting,
     cv: dtos.find((i) => i.kind === "cv") ?? null,
     addons: dtos.filter((i) => i.kind !== "cv"),
     facts: rows.map(({ no, seenRev, itemRev, ...row }) => ({ ...row, key: factKey(no), inLatest: seenRev >= itemRev })),
@@ -129,6 +137,9 @@ export async function updateProfile(deps: Deps, input: UpdateProfileInput): Prom
       Object.entries({ ...current, ...input.standardAnswers }).filter(([, v]) => v !== undefined && v.trim() !== ""),
     );
   }
+  if (input.targeting?.targetTitles) patch.targetTitles = input.targeting.targetTitles;
+  if (input.targeting?.roleFamilies) patch.roleFamilies = input.targeting.roleFamilies;
+  if (input.targeting?.excludeTitleWords) patch.excludeTitleWords = input.targeting.excludeTitleWords;
   if (Object.keys(patch).length) await deps.db.update(users).set(patch).where(eq(users.id, deps.userId));
   return getProfile(deps);
 }

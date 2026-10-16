@@ -22,6 +22,20 @@
       "when": 1792185738299,
       "tag": "0002_ai_calls_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792192926038,
+      "tag": "0003_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792192950759,
+      "tag": "0004_sync_role",
+      "breakpoints": true
     }
   ]
 }
