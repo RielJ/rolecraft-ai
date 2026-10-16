@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ApiErrorBody } from "@/shared/api";
 import { AppError, type Deps } from "../services/context";
+import { boardRoutes } from "./routes/board";
 import { jobRoutes } from "./routes/jobs";
 import { profileRoutes } from "./routes/profile";
 import { settingsRoutes } from "./routes/settings";
@@ -13,6 +14,7 @@ export function createApp(deps: Deps) {
     .get("/health", (c) => c.json({ ok: true }))
     .route("/", profileRoutes(deps))
     .route("/", jobRoutes(deps))
+    .route("/", boardRoutes(deps))
     .route("/", workspaceRoutes(deps))
     .route("/", settingsRoutes(deps))
     .route("/", taskRoutes(deps));

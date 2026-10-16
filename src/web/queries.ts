@@ -4,6 +4,7 @@ import {
   AddJobResult,
   type AddonInput,
   BoardItemDto,
+  type ChangeStatusInput,
   type DraftInput,
   type FactId,
   type ItemId,
@@ -16,6 +17,7 @@ import {
   TaskDto,
   type TaskId,
   TextExport,
+  type UpdateOpportunityInput,
   type UpdateOutputInput,
   type UpdateProfileInput,
   type UpdateSettingsInput,
@@ -131,6 +133,41 @@ export function useAddPastedJob() {
   });
 }
 
+/** Put an item in its new state, keeping every other row as it was. */
+function patchBoard(items: BoardItemDto[] | undefined, next: BoardItemDto): BoardItemDto[] | undefined {
+  return items?.map((item) => (item.opportunityId === next.opportunityId ? next : item));
+}
+
+/**
+ * Move an opportunity on the board. The row moves at once; a failure puts it back, and the
+ * caller toasts the reason (section 4, Board).
+ */
+export function useChangeStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ opportunityId, ...json }: { opportunityId: OpportunityId } & ChangeStatusInput) =>
+      unwrap(client.api.opportunities[":id"].status.$post({ param: { id: opportunityId }, json }), BoardItemDto),
+    onMutate: async ({ opportunityId, ...change }) => {
+      await qc.cancelQueries({ queryKey: keys.board });
+      const before = qc.getQueryData<BoardItemDto[]>(keys.board);
+      const item = before?.find((i) => i.opportunityId === opportunityId);
+      if (item) {
+        const outcome = change.status === "closed" ? change.outcome : null;
+        qc.setQueryData(keys.board, patchBoard(before, { ...item, status: change.status, outcome, followUp: null }));
+      }
+      return { before };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.before) qc.setQueryData(keys.board, context.before);
+    },
+    onSuccess: (item) => qc.setQueryData(keys.board, (items: BoardItemDto[] | undefined) => patchBoard(items, item)),
+    onSettled: (_item, _error, { opportunityId }) => {
+      void qc.invalidateQueries({ queryKey: keys.board });
+      void qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) });
+    },
+  });
+}
+
 // ---------- Workspace ----------
 
 export function useWorkspace(id: OpportunityId) {
@@ -169,6 +206,12 @@ export const useAddQuestion = (opportunityId: OpportunityId) =>
 export const useDeleteQuestion = (opportunityId: OpportunityId) =>
   useWorkspaceMutation(opportunityId, (id: OutputId) =>
     unwrap(client.api.outputs[":id"].$delete({ param: { id } }), WorkspaceDto),
+  );
+
+/** Notes, job or contract, and contract terms. Allowed on applied jobs too. */
+export const useUpdateOpportunity = (opportunityId: OpportunityId) =>
+  useWorkspaceMutation(opportunityId, (json: UpdateOpportunityInput) =>
+    unwrap(client.api.opportunities[":id"].$patch({ param: { id: opportunityId }, json }), WorkspaceDto),
   );
 
 export const useMarkOutputCurrent = (opportunityId: OpportunityId) =>

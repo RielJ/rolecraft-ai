@@ -1,5 +1,20 @@
 import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
-import type { ItemUsage, MustAnswer, OpportunityStatus, OpportunityType, OutputKind, ProfileItemKind } from "./enums";
+import type {
+  ItemUsage,
+  MustAnswer,
+  OpportunityStatus,
+  OpportunityType,
+  Outcome,
+  OutputKind,
+  ProfileItemKind,
+  RateType,
+} from "./enums";
+
+/** Shown on every contract (decision 19). The app tracks nothing about it. */
+export const CONTRACTOR_CAUTION = "US clients usually need a W-8BEN; payment and tax setup come up at interview.";
+
+/** An Applied opportunity with no change for this many days shows the follow-up hint (decision 18). */
+export const FOLLOW_UP_DAYS = 14;
 
 export function outputKindLabel(kind: OutputKind): string {
   switch (kind) {
@@ -83,6 +98,36 @@ export function statusLabel({ type, status }: { type: OpportunityType; status: O
       return "Closed";
     default: {
       const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+export function outcomeLabel(outcome: Outcome): string {
+  switch (outcome) {
+    case "accepted":
+      return "Accepted";
+    case "rejected":
+      return "Rejected";
+    case "no_response":
+      return "No response";
+    case "withdrawn":
+      return "Withdrawn";
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+export function rateTypeLabel(rateType: RateType): string {
+  switch (rateType) {
+    case "hourly":
+      return "Hourly";
+    case "fixed":
+      return "Fixed price";
+    default: {
+      const _exhaustive: never = rateType;
       return _exhaustive;
     }
   }

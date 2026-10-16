@@ -6,11 +6,14 @@ import {
   FileKind,
   ItemUsage,
   MustAnswer,
+  OpenStatus,
   OpportunityStatus,
   OpportunityType,
+  Outcome,
   OutdatedReason,
   OutputKind,
   ProfileItemKind,
+  RateType,
   StyleRule,
   TaskKind,
   TaskStatus,
@@ -226,16 +229,83 @@ export const AddJobResult = z.discriminatedUnion("kind", [
 ]);
 export type AddJobResult = z.infer<typeof AddJobResult>;
 
+// ---------- Board (decisions 16 to 19) ----------
+
+/** A contract's terms (decision 16). Every field is optional until the user fills it in. */
+export const ContractTerms = z.object({
+  rateAmount: z.number().nullable(),
+  rateType: RateType.nullable(),
+  /** ISO 4217 code, e.g. USD. */
+  rateCurrency: z.string().nullable(),
+  platform: z.string().nullable(),
+});
+export type ContractTerms = z.infer<typeof ContractTerms>;
+
+/** Where an opportunity sits on the board. Closed always carries its outcome. */
+export const BoardStatus = z.discriminatedUnion("status", [
+  z.object({ status: OpenStatus }),
+  z.object({ status: z.literal("closed"), outcome: Outcome }),
+]);
+export type BoardStatus = z.infer<typeof BoardStatus>;
+
+/** `POST /api/opportunities/:id/status`. Closed without an outcome is a 400. */
+export const ChangeStatusInput = BoardStatus;
+export type ChangeStatusInput = BoardStatus;
+
 export const BoardItemDto = z.object({
   opportunityId: OpportunityId,
   type: OpportunityType,
   status: OpportunityStatus,
+  outcome: Outcome.nullable(),
   title: z.string(),
   company: z.string(),
   savedAt: z.string(),
+  /** When the status last changed. */
+  statusChangedAt: z.string(),
   ready: z.boolean(),
+  notes: z.string(),
+  contract: ContractTerms.nullable(),
+  /** Set on Applied rows with no change for FOLLOW_UP_DAYS or more: the quiet "follow up or close?" hint. */
+  followUp: z.object({ days: z.number().int() }).nullable(),
 });
 export type BoardItemDto = z.infer<typeof BoardItemDto>;
+
+/** Largest rate the column (`numeric(12,2)`) holds, rounded down to a readable bound. */
+export const MAX_RATE = 999_999_999;
+
+export const ContractTermsInput = z.object({
+  rateAmount: z
+    .number()
+    .positive("The rate must be more than zero.")
+    .max(MAX_RATE, "That rate is too large.")
+    .nullable()
+    .optional(),
+  rateType: RateType.nullable().optional(),
+  rateCurrency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/, "Use a three-letter currency code, such as USD or PHP.")
+    .nullable()
+    .optional(),
+  platform: z.string().trim().max(100).nullable().optional(),
+});
+export type ContractTermsInput = z.infer<typeof ContractTermsInput>;
+
+/** `PATCH /api/opportunities/:id`: notes, job or contract, contract terms. Allowed on frozen jobs too. */
+export const UpdateOpportunityInput = z
+  .object({
+    notes: z.string().max(20_000).optional(),
+    type: OpportunityType.optional(),
+    contract: ContractTermsInput.optional(),
+  })
+  .refine((v) => v.notes !== undefined || v.type !== undefined || v.contract !== undefined, {
+    message: "Send notes, type, contract, or a mix.",
+  })
+  .refine((v) => v.type !== "job" || v.contract === undefined, {
+    message: "Jobs have no rate or platform. Switch it to a contract first.",
+    path: ["contract"],
+  });
+export type UpdateOpportunityInput = z.infer<typeof UpdateOpportunityInput>;
 
 // ---------- Workspace ----------
 
@@ -387,9 +457,13 @@ export const WorkspaceDto = z.object({
     id: OpportunityId,
     type: OpportunityType,
     status: OpportunityStatus.nullable(),
+    outcome: Outcome.nullable(),
     frozen: z.boolean(),
     /** True only when ready was marked and the gate still passes on current data. */
     ready: z.boolean(),
+    notes: z.string(),
+    /** Null for jobs; the terms (possibly blank) for contracts. */
+    contract: ContractTerms.nullable(),
   }),
   job: z.object({
     id: JobId,

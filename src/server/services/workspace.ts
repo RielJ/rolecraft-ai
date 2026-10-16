@@ -16,6 +16,7 @@ import { checkStyle } from "@/domain/style";
 import { sentenceSpans } from "@/domain/text";
 import {
   type AddQuestionInput,
+  type ContractTerms,
   type DraftInput,
   DraftTaskInput,
   type FactId,
@@ -51,6 +52,19 @@ type OutputRow = typeof outputs.$inferSelect;
 /** A cited fact as it is now; null when the fact was deleted. */
 type CurrentFact = { text: string; status: FactStatus; usage: ItemUsage };
 type Citation = { factKey: FactKey; factText: string; deleted: boolean; current: CurrentFact | null };
+
+/** Contract terms as the API shows them, or null for a job. `numeric` arrives from Postgres as text. */
+export function contractTerms(
+  row: Pick<typeof opportunities.$inferSelect, "type" | "rateAmount" | "rateType" | "rateCurrency" | "platform">,
+): ContractTerms | null {
+  if (row.type === "job") return null;
+  return {
+    rateAmount: row.rateAmount === null ? null : Number(row.rateAmount),
+    rateType: row.rateType,
+    rateCurrency: row.rateCurrency,
+    platform: row.platform,
+  };
+}
 
 function isFrozen(status: OpportunityStatus | null): boolean {
   return FROZEN_STATUSES.some((s) => s === status);
@@ -196,8 +210,11 @@ export async function getWorkspace(
       id: opportunity.id,
       type: opportunity.type,
       status: opportunity.status,
+      outcome: opportunity.outcome,
       frozen,
       ready: opportunity.readyAt !== null && gate.ok,
+      notes: opportunity.notes,
+      contract: contractTerms(opportunity),
     },
     job: {
       id: job.id,

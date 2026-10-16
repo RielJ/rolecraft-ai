@@ -1,11 +1,10 @@
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { applyUrlKey, companyKey, titleKey } from "@/domain/dedup";
 import { contentHash, descriptionKey } from "@/domain/text";
-import type { AddJobResult, BoardItemDto, PasteJobInput } from "@/shared/api";
+import type { AddJobResult, PasteJobInput } from "@/shared/api";
 import { FILE_KINDS } from "@/shared/enums";
 import { jobs, opportunities, outputs } from "../db/schema";
 import type { Deps } from "./context";
-import { isReady } from "./workspace";
 
 /**
  * Add a pasted job (section 3.2 step 6). Creates the job, its Saved opportunity and its three
@@ -79,33 +78,4 @@ export async function addPastedJob(deps: Deps, input: PasteJobInput): Promise<Ad
     );
     return { kind: "created", opportunityId: opportunity.id };
   });
-}
-
-/** Board list. Slice 1 shows a plain list; status columns arrive in slice 4. */
-export async function listBoard(deps: Deps): Promise<BoardItemDto[]> {
-  const rows = await deps.db
-    .select({
-      opportunityId: opportunities.id,
-      type: opportunities.type,
-      status: opportunities.status,
-      title: jobs.title,
-      company: jobs.company,
-      savedAt: opportunities.createdAt,
-    })
-    .from(opportunities)
-    .innerJoin(jobs, eq(jobs.id, opportunities.jobId))
-    .where(and(eq(opportunities.userId, deps.userId), isNotNull(opportunities.status)))
-    .orderBy(desc(opportunities.createdAt));
-
-  const items: BoardItemDto[] = [];
-  for (const row of rows) {
-    if (row.status === null) continue;
-    items.push({
-      ...row,
-      status: row.status,
-      savedAt: row.savedAt.toISOString(),
-      ready: await isReady(deps, { opportunityId: row.opportunityId }),
-    });
-  }
-  return items;
 }

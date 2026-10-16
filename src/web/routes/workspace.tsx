@@ -1,17 +1,35 @@
-import { CheckIcon, ExternalLinkIcon, SparklesIcon, Trash2Icon } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { CheckIcon, ExternalLinkIcon, InfoIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { type FormEvent, type ReactElement, useId, useState } from "react";
 import { toast } from "sonner";
-import type { GateBlocker, OpportunityId, OutputDto, OutputId, WorkspaceDto } from "@/shared/api";
-import { mustAnswerLabel, outputKindLabel, statusLabel } from "@/shared/labels";
+import type {
+  ContractTerms,
+  ContractTermsInput,
+  GateBlocker,
+  OpportunityId,
+  OutputDto,
+  OutputId,
+  WorkspaceDto,
+} from "@/shared/api";
+import { OpportunityType, RATE_TYPES, RateType } from "@/shared/enums";
+import {
+  CONTRACTOR_CAUTION,
+  mustAnswerLabel,
+  outcomeLabel,
+  outputKindLabel,
+  rateTypeLabel,
+  statusLabel,
+} from "@/shared/labels";
 import { errorMessage } from "../api";
 import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
 import { NeedsInput } from "../components/needs-input";
 import { OutdatedNotice, OutputEditor } from "../components/output-editor";
 import {
   useAddQuestion,
+  useChangeStatus,
   useDeleteQuestion,
   useMarkOutputCurrent,
   useMarkReady,
+  useUpdateOpportunity,
   useUpdateOutput,
   useWorkspace,
 } from "../queries";
@@ -21,6 +39,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 
 const onError = (error: unknown) => toast.error(errorMessage(error));
 
@@ -320,6 +339,86 @@ function Questions({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions })
   );
 }
 
+/**
+ * A field that keeps its own text while focused and saves on blur when the text changed. It
+ * shows the server value again after saving, so a refused value snaps back.
+ */
+function BlurField({
+  value,
+  onCommit,
+  render,
+}: {
+  value: string;
+  onCommit: (text: string) => void;
+  render: (props: {
+    value: string;
+    onChange: (event: { target: { value: string } }) => void;
+    onBlur: () => void;
+  }) => ReactElement;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return render({
+    value: draft ?? value,
+    onChange: (event) => setDraft(event.target.value),
+    onBlur: () => {
+      if (draft !== null && draft !== value) onCommit(draft);
+      setDraft(null);
+    },
+  });
+}
+
+/** Notes for this job (decision 18). Saved when the field loses focus. */
+function Notes({ ws }: { ws: WorkspaceDto }) {
+  const id = useId();
+  const update = useUpdateOpportunity(ws.opportunity.id);
+  return (
+    <section className="grid gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={id}>Notes</Label>
+        <span aria-live="polite" className="text-muted-foreground text-xs">
+          {update.isPending ? "Saving…" : update.isSuccess ? "Saved" : ""}
+        </span>
+      </div>
+      <BlurField
+        value={ws.opportunity.notes}
+        onCommit={(notes) => update.mutate({ notes }, { onError })}
+        render={(field) => (
+          <Textarea
+            id={id}
+            {...field}
+            className="min-h-24 text-sm"
+            placeholder="Who you spoke to, what comes next. Saved when you click away."
+          />
+        )}
+      />
+    </section>
+  );
+}
+
+/** Mark applied is not gated (section 3.5): people apply through forms that need none of the files. */
+function MarkApplied({ ws }: { ws: WorkspaceDto }) {
+  const change = useChangeStatus();
+  if (ws.opportunity.status !== "saved") return null;
+  const label = ws.opportunity.type === "contract" ? "Mark proposal sent" : "Mark applied";
+  return (
+    <div className="grid gap-1.5">
+      <Button
+        variant="outline"
+        disabled={change.isPending}
+        onClick={() =>
+          change.mutate(
+            { opportunityId: ws.opportunity.id, status: "applied" },
+            { onSuccess: () => toast("Moved to Applied. Files and answers now stay as you sent them."), onError },
+          )
+        }
+      >
+        {label}
+      </Button>
+      <p className="text-muted-foreground text-xs">Keeps the files and answers exactly as you send them.</p>
+    </div>
+  );
+}
+
 function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void }) {
   const ready = useMarkReady(ws.opportunity.id);
   return (
@@ -339,7 +438,9 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
             Mark ready
           </Button>
         )}
+        <MarkApplied ws={ws} />
       </div>
+      <Notes ws={ws} />
       <section aria-labelledby="facts-rail" className="grid gap-2">
         <h2 id="facts-rail" className="font-medium text-sm">
           Your confirmed facts
@@ -360,6 +461,123 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
         )}
       </section>
     </aside>
+  );
+}
+
+/** "" means not set; anything else must parse as a positive number or the server refuses it. */
+function rateFrom(text: string): number | null {
+  const trimmed = text.trim().replace(/,/g, "");
+  return trimmed === "" ? null : Number(trimmed);
+}
+
+/** Rate, rate type, currency and platform (decision 16), saved field by field. */
+function ContractFields({ ws, terms }: { ws: WorkspaceDto; terms: ContractTerms }) {
+  const id = useId();
+  const update = useUpdateOpportunity(ws.opportunity.id);
+  const save = (contract: ContractTermsInput) => update.mutate({ contract }, { onError });
+  return (
+    <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${id}-rate`}>Rate</Label>
+        <BlurField
+          value={terms.rateAmount === null ? "" : String(terms.rateAmount)}
+          onCommit={(text) => {
+            const rateAmount = rateFrom(text);
+            // NaN would travel as JSON null and clear the rate, so refuse it here.
+            if (Number.isNaN(rateAmount)) toast.error("The rate must be a number, such as 35 or 1200.50.");
+            else save({ rateAmount });
+          }}
+          render={(field) => (
+            <Input id={`${id}-rate`} {...field} inputMode="decimal" className="w-28 tabular-nums" placeholder="0.00" />
+          )}
+        />
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${id}-currency`}>Currency</Label>
+        <BlurField
+          value={terms.rateCurrency ?? ""}
+          onCommit={(text) => save({ rateCurrency: text.trim() === "" ? null : text })}
+          render={(field) => (
+            <Input
+              id={`${id}-currency`}
+              {...field}
+              maxLength={3}
+              autoCapitalize="characters"
+              className="w-20 uppercase"
+              placeholder="USD"
+            />
+          )}
+        />
+      </div>
+      <div className="grid gap-1.5">
+        <span id={`${id}-type`} className="font-medium text-sm leading-none">
+          Rate type
+        </span>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          aria-labelledby={`${id}-type`}
+          value={terms.rateType ?? ""}
+          onValueChange={(value) => {
+            const rateType = RateType.safeParse(value);
+            if (rateType.success) save({ rateType: rateType.data });
+          }}
+        >
+          {RATE_TYPES.map((t) => (
+            <ToggleGroupItem key={t} value={t} disabled={update.isPending}>
+              {rateTypeLabel(t)}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${id}-platform`}>Platform</Label>
+        <BlurField
+          value={terms.platform ?? ""}
+          onCommit={(text) => save({ platform: text })}
+          render={(field) => (
+            <Input id={`${id}-platform`} {...field} className="w-44" placeholder="e.g. Upwork, or direct" />
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Job or contract, the contract's terms, and the contractor caution (decision 19). */
+function KindAndTerms({ ws }: { ws: WorkspaceDto }) {
+  const update = useUpdateOpportunity(ws.opportunity.id);
+  const { contract } = ws.opportunity;
+  return (
+    <div className="grid gap-3">
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        aria-label="Job or contract"
+        value={ws.opportunity.type}
+        onValueChange={(value) => {
+          const type = OpportunityType.safeParse(value);
+          if (type.success && type.data !== ws.opportunity.type) update.mutate({ type: type.data }, { onError });
+        }}
+      >
+        <ToggleGroupItem value="job" disabled={update.isPending}>
+          Job
+        </ToggleGroupItem>
+        <ToggleGroupItem value="contract" disabled={update.isPending}>
+          Contract
+        </ToggleGroupItem>
+      </ToggleGroup>
+      {contract && (
+        <>
+          <ContractFields ws={ws} terms={contract} />
+          <p className="flex max-w-[68ch] items-start gap-2 text-muted-foreground text-sm">
+            <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+            {CONTRACTOR_CAUTION}
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -390,31 +608,35 @@ function Workspace({ ws }: { ws: WorkspaceDto }) {
     row?.querySelector<HTMLElement>("textarea")?.focus();
   }
 
-  const kindStatus = ws.opportunity.status
-    ? statusLabel({ type: ws.opportunity.type, status: ws.opportunity.status })
+  const { status, outcome } = ws.opportunity;
+  const kindStatus = status
+    ? [statusLabel({ type: ws.opportunity.type, status }), outcome && outcomeLabel(outcome)].filter(Boolean).join(": ")
     : null;
 
   return (
     <div className="grid gap-8">
-      <header className="grid gap-1">
-        <h1 className="font-semibold text-2xl tracking-tight">{ws.job.title}</h1>
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-          <span>{ws.job.company}</span>
-          {kindStatus && <Badge variant="secondary">{kindStatus}</Badge>}
-          {ws.job.applyUrl && (
-            <a
-              href={ws.job.applyUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-sm underline-offset-4 hover:text-foreground hover:underline"
-            >
-              Apply link <ExternalLinkIcon className="size-3.5" aria-hidden />
-            </a>
+      <header className="grid gap-4">
+        <div className="grid gap-1">
+          <h1 className="font-semibold text-2xl tracking-tight">{ws.job.title}</h1>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+            <span>{ws.job.company}</span>
+            {kindStatus && <Badge variant="secondary">{kindStatus}</Badge>}
+            {ws.job.applyUrl && (
+              <a
+                href={ws.job.applyUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-sm underline-offset-4 hover:text-foreground hover:underline"
+              >
+                Apply link <ExternalLinkIcon className="size-3.5" aria-hidden />
+              </a>
+            )}
+          </p>
+          {ws.opportunity.frozen && (
+            <p className="text-sm">This job is marked applied, so its files and answers stay as you sent them.</p>
           )}
-        </p>
-        {ws.opportunity.frozen && (
-          <p className="text-sm">This job is marked applied, so its files and answers stay as you sent them.</p>
-        )}
+        </div>
+        <KindAndTerms ws={ws} />
       </header>
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="grid content-start gap-10">

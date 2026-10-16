@@ -60,6 +60,18 @@ export type Outcome = z.infer<typeof Outcome>;
 export const DISMISS_REASONS = ["wrong_stack", "too_senior", "pay", "location", "other"] as const;
 
 export const RATE_TYPES = ["hourly", "fixed"] as const;
+export const RateType = z.enum(RATE_TYPES);
+export type RateType = z.infer<typeof RateType>;
+
+/** Board statuses other than Closed, which needs an outcome (decision 17). */
+export const OPEN_STATUSES = [
+  "saved",
+  "applied",
+  "interviewing",
+  "offer",
+] as const satisfies readonly OpportunityStatus[];
+export const OpenStatus = z.enum(OPEN_STATUSES);
+export type OpenStatus = z.infer<typeof OpenStatus>;
 
 export const OUTPUT_KINDS = ["resume", "letter", "message", "answer"] as const;
 export const OutputKind = z.enum(OUTPUT_KINDS);
