@@ -3,7 +3,8 @@ import { serveStatic } from "hono/bun";
 import { createAnthropicClient } from "./adapters/ai/anthropic";
 import { createFakeAi } from "./adapters/ai/fake";
 import { createOpenAiClient } from "./adapters/ai/openai";
-import type { AiClients } from "./adapters/ai/types";
+import { createPiClient } from "./adapters/ai/pi";
+import type { AiClients, AiSource } from "./adapters/ai/types";
 import { createHttpClient } from "./adapters/http";
 import { createFileKeyStore } from "./adapters/key-store";
 import { createChromiumPdf } from "./adapters/pdf";
@@ -26,17 +27,42 @@ const userId = await ensureUser(db);
 const interrupted = await markInterrupted(db);
 if (interrupted > 0) console.info(JSON.stringify({ level: "info", msg: "tasks interrupted", count: interrupted }));
 const pdf = createChromiumPdf({ executablePath: env.HB_CHROMIUM_PATH });
-const fake = env.HB_AI === "fake" ? createFakeAi() : null;
-const ai: AiClients = fake
-  ? { anthropic: fake, openai: fake }
-  : { anthropic: createAnthropicClient(), openai: createOpenAiClient() };
+function buildAi(): { ai: AiClients; aiSource: AiSource } {
+  switch (env.HB_AI) {
+    case "fake": {
+      const fake = createFakeAi();
+      return { ai: { anthropic: fake, openai: fake }, aiSource: { kind: "key" } };
+    }
+    case "live":
+      return { ai: { anthropic: createAnthropicClient(), openai: createOpenAiClient() }, aiSource: { kind: "key" } };
+    case "pi": {
+      const pi = createPiClient({
+        bin: env.HB_PI_BIN,
+        thinking: { light: env.HB_PI_THINKING_LIGHT, writing: env.HB_PI_THINKING_WRITING },
+      });
+      // Not fatal: the user can sign in to pi while the app runs. Drafts say how until then.
+      void pi.authReady().then((ready) => {
+        if (!ready) console.warn(JSON.stringify({ level: "warn", msg: "pi is not signed in to anthropic" }));
+      });
+      return {
+        ai: { anthropic: pi, openai: pi },
+        aiSource: { kind: "pi", models: { light: env.HB_PI_MODEL_LIGHT, writing: env.HB_PI_MODEL_WRITING } },
+      };
+    }
+    default: {
+      const _exhaustive: never = env.HB_AI;
+      return _exhaustive;
+    }
+  }
+}
+const { ai, aiSource } = buildAi();
 const keyStore = createFileKeyStore({ dir: env.HB_DATA_DIR });
 
 const http = createHttpClient();
 const sources =
   env.HB_SOURCES === "fixture" ? createFixtureSources({ dir: env.HB_SOURCES_DIR }) : createSourceAdapters(http);
 
-const deps: Deps = { db, userId, pdf, ai, keyStore, http, sources, clock: { now: () => new Date() } };
+const deps: Deps = { db, userId, pdf, ai, aiSource, keyStore, http, sources, clock: { now: () => new Date() } };
 
 const server = new Hono()
   .route("/", createApp(deps))

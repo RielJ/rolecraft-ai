@@ -1,5 +1,5 @@
 import type { ErrorCode, UserId } from "@/shared/api";
-import type { AiClients } from "../adapters/ai/types";
+import type { AiClients, AiSource } from "../adapters/ai/types";
 import type { HttpClient } from "../adapters/http";
 import type { KeyStore } from "../adapters/key-store";
 import type { PdfRenderer } from "../adapters/pdf";
@@ -15,6 +15,8 @@ export type Deps = {
   userId: UserId;
   pdf: PdfRenderer;
   ai: AiClients;
+  /** Saved API key (default) or the local pi runner (decision 48). */
+  aiSource: AiSource;
   keyStore: KeyStore;
   /** The polite fetch queue (adapters/http.ts); tests inject one that never reaches the network. */
   http: HttpClient;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PI_THINKING_LEVELS } from "./adapters/ai/pi";
 
 const DEFAULT_DB = "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay";
 
@@ -11,8 +12,19 @@ const EnvSchema = z.object({
   HB_STATIC_DIR: z.string().min(1).default("./dist"),
   /** App data directory. The AI key file lives here (open question 3). Compose mounts the appdata volume. */
   HB_DATA_DIR: z.string().min(1).default("./data"),
-  /** `fake` swaps in the scriptable AI provider for tests and Playwright. */
-  HB_AI: z.enum(["live", "fake"]).default("live"),
+  /**
+   * `live` uses the API key saved in Settings. `pi` runs AI through the local pi CLI and its own
+   * sign-in (decision 48). `fake` swaps in the scriptable provider for tests and Playwright.
+   */
+  HB_AI: z.enum(["live", "pi", "fake"]).default("live"),
+  /** The pi binary for `HB_AI=pi`. */
+  HB_PI_BIN: z.string().min(1).default("pi"),
+  /** Anthropic models pi runs for each tier. */
+  HB_PI_MODEL_LIGHT: z.string().min(1).default("claude-haiku-5-5"),
+  HB_PI_MODEL_WRITING: z.string().min(1).default("claude-opus-5-5"),
+  /** Thinking level per tier; thinking tokens bill as output, so light calls skip it. */
+  HB_PI_THINKING_LIGHT: z.enum(PI_THINKING_LEVELS).default("off"),
+  HB_PI_THINKING_WRITING: z.enum(PI_THINKING_LEVELS).default("low"),
   /** `fixture` runs the real source adapters over files in HB_SOURCES_DIR instead of the network. */
   HB_SOURCES: z.enum(["live", "fixture"]).default("live"),
   HB_SOURCES_DIR: z.string().min(1).default("./test/fixtures/sources"),

@@ -532,6 +532,34 @@ function MoneySection({ money }: { money: Money }) {
   );
 }
 
+/** HB_AI=pi (decision 48): pi signs in on its own, so there is no key to paste or models to pick. */
+function PiRunner({ models }: { models: { light: string; writing: string } }) {
+  const id = useId();
+  return (
+    <section className="grid max-w-2xl gap-3" aria-labelledby={`${id}-h`}>
+      <h2 id={`${id}-h`} className="font-semibold text-lg">
+        AI runs through pi on this machine
+      </h2>
+      <p className="text-muted-foreground text-sm">
+        This copy was started with <code className="font-mono">HB_AI=pi</code>, so drafting uses pi&apos;s own sign-in
+        and no key is stored. If a draft says pi is not signed in, run <code className="font-mono">pi</code> and use{" "}
+        <code className="font-mono">/login</code>.
+      </p>
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
+        <dt className="text-muted-foreground">Writing</dt>
+        <dd className="font-mono">{models.writing}</dd>
+        <dt className="text-muted-foreground">Light</dt>
+        <dd className="font-mono">{models.light}</dd>
+      </dl>
+      <p className="text-muted-foreground text-sm">
+        Change them with <code className="font-mono">HB_PI_MODEL_WRITING</code> and{" "}
+        <code className="font-mono">HB_PI_MODEL_LIGHT</code>. Spend below is the list-price cost pi reports, which a pi
+        subscription does not bill.
+      </p>
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const settings = useSettings();
   if (settings.isPending) return <p className="text-muted-foreground">Loading settings…</p>;
@@ -549,11 +577,11 @@ export function SettingsPage() {
   return (
     <div className="grid gap-10">
       <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
-      <KeyForm ai={ai} />
+      {ai.piModels ? <PiRunner models={ai.piModels} /> : <KeyForm ai={ai} />}
       <Separator />
       <SpendForm key={String(ai.monthlyCapUsd)} settings={settings.data} />
       <Separator />
-      <ModelsForm key={`${ai.provider}:${ai.modelLight}:${ai.modelWriting}`} ai={ai} />
+      {!ai.piModels && <ModelsForm key={`${ai.provider}:${ai.modelLight}:${ai.modelWriting}`} ai={ai} />}
       <EligibilityToggle ai={ai} />
       <Separator />
       <MoneySection money={money} />

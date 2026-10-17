@@ -68,7 +68,7 @@ export function offlineHttp(): HttpClient {
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources">> = {},
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource">> = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
@@ -78,6 +78,7 @@ export async function testDeps(
     userId: await ensureUser(db),
     pdf: over.pdf ?? pdf,
     ai: { anthropic: fake, openai: fake },
+    aiSource: over.aiSource ?? { kind: "key" },
     keyStore: over.keyStore ?? testKeyStore(),
     http,
     // Sources read through the same injected client, so a test's fake fetch serves both.

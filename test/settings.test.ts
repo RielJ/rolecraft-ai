@@ -40,6 +40,8 @@ describe("AI key", () => {
     expect(settings).toEqual({
       money: { viewCurrency: "PHP", fxRates: [], missingRates: [] },
       ai: {
+        via: "key",
+        piModels: null,
         provider: null,
         keyHint: null,
         modelLight: null,
@@ -215,6 +217,7 @@ describe("provider adapters over HTTP", () => {
       badClient.complete({
         key: "k",
         model: "nope",
+        tier: "writing",
         system: "s",
         messages: [{ role: "user", content: "hi" }],
         maxOutputTokens: 10,
@@ -238,6 +241,7 @@ describe("provider adapters over HTTP", () => {
     const res = await client.complete({
       key: "k",
       model: "claude-sonnet-5-5",
+      tier: "writing",
       system: "s",
       messages: [{ role: "user", content: "hi" }],
       maxOutputTokens: 10,
@@ -273,6 +277,7 @@ describe("provider adapters over HTTP", () => {
     const res = await okClient.complete({
       key: "k",
       model: "gpt-6.1-sol",
+      tier: "writing",
       system: "s",
       messages: [{ role: "user", content: "hi" }],
       maxOutputTokens: 10,

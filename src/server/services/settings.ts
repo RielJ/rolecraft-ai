@@ -34,6 +34,8 @@ export async function getSettings(deps: Deps): Promise<SettingsDto> {
   return {
     money: { viewCurrency: user.viewCurrency, fxRates, missingRates },
     ai: {
+      via: deps.aiSource.kind,
+      piModels: deps.aiSource.kind === "pi" ? deps.aiSource.models : null,
       provider: user.aiProvider,
       keyHint: user.aiKeyHint,
       modelLight: user.modelLight,
@@ -51,6 +53,12 @@ export async function getSettings(deps: Deps): Promise<SettingsDto> {
  * last four characters. A rejected key saves nothing.
  */
 export async function saveAiKey(deps: Deps, { provider, key }: SaveAiKeyInput): Promise<SettingsDto> {
+  if (deps.aiSource.kind === "pi") {
+    throw new AppError({
+      code: "invalid_input",
+      message: "This copy runs AI through pi (HB_AI=pi), so it uses no key. Restart with HB_AI=live to use a key.",
+    });
+  }
   try {
     await deps.ai[provider].checkKey({ key });
   } catch (err) {

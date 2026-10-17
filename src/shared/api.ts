@@ -510,6 +510,10 @@ export const SettingsDto = z.object({
     missingRates: z.array(z.string()),
   }),
   ai: z.object({
+    /** `pi`: AI runs through the local pi CLI and its own sign-in (decision 48); no key is used. */
+    via: z.enum(["key", "pi"]),
+    /** The models pi runs, when `via` is `pi`. */
+    piModels: z.object({ light: z.string(), writing: z.string() }).nullable(),
     provider: AiProvider.nullable(),
     /** The last four characters of the saved key, or null. The key itself never leaves the server. */
     keyHint: z.string().nullable(),

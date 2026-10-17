@@ -182,7 +182,7 @@ hanapbuhay/
         extract.ts          # PDF (unpdf) and DOCX (mammoth) to text
         pdf.ts              # HTML template -> PDF
         key-store.ts        # read/write the AI key file
-        ai/  types.ts  anthropic.ts  openai.ts  fake.ts  pricing.ts
+        ai/  types.ts  anthropic.ts  openai.ts  pi.ts  fake.ts  pricing.ts
         sources/  types.ts  index.ts  fixture.ts
                   jobicy.ts himalayas.ts remoteok.ts weworkremotely.ts remotive.ts
                   greenhouse.ts lever.ts ashby.ts smartrecruiters.ts recruitee.ts workable.ts
@@ -649,6 +649,10 @@ Pasted and linked jobs can be edited later (title, company, description); the de
 6. User edits are not checked for invented claims; the user is the authority on their own life. Placeholders in user edits still count for the gate.
 
 Question answers work the same way, one output at a time. **Suggest questions** (`startTask({ kind: 'suggest_questions' })`, light tier) finds questions in the posting text and inserts them as `kind = 'answer'`, `included = false`. Each question, typed or suggested, goes through `classifyQuestion`, which sets `must_answer` from patterns such as `salary|compensation|pay expectation|expected rate`, `visa|sponsorship|authori[sz]ed to work|right to work|work permit`, `notice period`, `start date|when can you start|earliest start`, `references|referees`.
+
+### 3.4a Local pi runner (decision 48)
+
+`HB_AI=pi` swaps both provider clients for `adapters/ai/pi.ts`. Each call spawns `pi -p --mode json -nt -ne -ns -nc -np --no-session --offline --model anthropic/<model> --thinking <level> --system-prompt <prompt.system>` and writes the messages to stdin, so a long CV never reaches argv. The answer is the text of the last assistant `message_end`. A `stopReason` of `error` maps its leading HTTP status through `failureKind`, a non-zero exit or a timeout is `unavailable`, and the reported `usage` (input plus cache tokens, output, `cost.total`) goes into `ai_calls`. `loadAiConfig` returns the pi models (`HB_PI_MODEL_LIGHT`, default `claude-haiku-5-5`; `HB_PI_MODEL_WRITING`, default `claude-opus-5-5`) and the user's cap without reading the key file. Settings shows "AI runs through pi on this machine" with those models instead of the key form, and saving a key returns 400. Boot runs `pi auth check --provider anthropic --json --no-refresh` and logs a warning when pi is not signed in. The app never reads pi's credential file.
 
 ### 3.5 The "Needs your input" gate
 
