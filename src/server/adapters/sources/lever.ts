@@ -16,7 +16,9 @@ import {
 
 /**
  * Lever job boards (https://github.com/lever/postings-api). `GET /v0/postings/<company>?mode=json`
- * returns every published posting as an array, so the source is complete. Lever has
+ * returns every published posting as an array, so the source is complete. A big board (Veeva has
+ * about 950 postings, 13 MB) is over the 2 MB cap in one response, so it is read in pages of
+ * `LEVER_PAGE_SIZE` with `skip` and `limit` until a short page. Lever has
  * `workplaceType` and an optional structured `salaryRange`. The API does not name the company,
  * so the board's slug becomes the label and the company.
  */
@@ -55,6 +57,11 @@ const Job = z.object({
   applyUrl: z.string().nullish(),
 });
 const Board = z.array(Job);
+
+/** Postings per request. A page of 100 long postings is about 1.3 MB, so 50 keeps well under the cap. */
+export const LEVER_PAGE_SIZE = 50;
+/** At most this many pages a run (5,000 postings). A board past it is read as incomplete. */
+export const LEVER_MAX_PAGES = 100;
 
 const INTERVALS: Readonly<Record<string, PayPeriod>> = {
   "per-hour-wage": "hour",
@@ -107,8 +114,17 @@ export function createLeverAdapter(http: HttpClient): SourceAdapter {
     },
     async fetch({ board }) {
       if (board === null) throw new SourceError({ kind: "failed", message: "This Lever source has no board." });
-      const body = await getBody({ http, url: `${API}/${board}?mode=json`, name: NAME });
-      const jobs = readJson({ body, schema: Board, name: NAME });
+      const jobs: z.infer<typeof Board> = [];
+      let complete = false;
+      for (let page = 0; page < LEVER_MAX_PAGES; page++) {
+        const url = `${API}/${board}?mode=json&skip=${page * LEVER_PAGE_SIZE}&limit=${LEVER_PAGE_SIZE}`;
+        const batch = readJson({ body: await getBody({ http, url, name: NAME }), schema: Board, name: NAME });
+        jobs.push(...batch);
+        if (batch.length < LEVER_PAGE_SIZE) {
+          complete = true;
+          break;
+        }
+      }
       const company = labelFromSlug(board);
       const postings: Posting[] = jobs.map((job) => {
         const range = job.salaryRange;
@@ -130,7 +146,8 @@ export function createLeverAdapter(http: HttpClient): SourceAdapter {
             .filter(Boolean),
         };
       });
-      return { complete: true, postings, unread: [] };
+      // Stopped at the page cap: the rest of the board was not read, so nothing may close.
+      return { complete, postings, unread: [] };
     },
   };
 }
