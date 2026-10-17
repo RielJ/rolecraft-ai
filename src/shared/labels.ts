@@ -1,4 +1,4 @@
-import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
+import type { BoardMetricsDto, GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type {
   BuiltinSourceKind,
   DismissReason,
@@ -381,3 +381,43 @@ export const BUILTIN_SOURCE_NOTES: Readonly<Record<BuiltinSourceKind, string>> =
   weworkremotely: "Remote jobs from its RSS feed. You apply on We Work Remotely.",
   remotive: "Remote jobs shown 24 hours after posting. Read at most every six hours.",
 };
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** "Refreshed 3 days ago" for the top bar (decision 11), or "Not refreshed yet". */
+export function refreshedLabel({ at, now }: { at: Date | null; now: Date }): string {
+  if (at === null) return "Not refreshed yet";
+  const ms = now.getTime() - at.getTime();
+  if (ms < MINUTE_MS) return "Refreshed just now";
+  if (ms < HOUR_MS) return `Refreshed ${count(Math.floor(ms / MINUTE_MS), "minute")} ago`;
+  if (ms < DAY_MS) return `Refreshed ${count(Math.floor(ms / HOUR_MS), "hour")} ago`;
+  return `Refreshed ${count(Math.floor(ms / DAY_MS), "day")} ago`;
+}
+
+/** "40 min", "5 hours", "2 days": rounded, for a median that is an upper bound anyway. */
+export function durationLabel(ms: number): string {
+  if (ms < HOUR_MS) return `${Math.max(1, Math.round(ms / MINUTE_MS))} min`;
+  if (ms < DAY_MS) return count(Math.round(ms / HOUR_MS), "hour");
+  return count(Math.round(ms / DAY_MS), "day");
+}
+
+/**
+ * The Board's metrics line (decision 52): "Last 30 days: 12 applied · 2 reached Interviewing (17%)
+ * · median 40 min from saved to ready". Saved to Ready includes idle time, so it is worded as
+ * elapsed time, not work time.
+ */
+export function metricsLine(m: BoardMetricsDto): string {
+  const applied =
+    m.rate === null
+      ? "no applications sent"
+      : `${m.applied} applied · ${m.interviewing} reached Interviewing (${Math.round(m.rate * 100)}%)`;
+  const ready =
+    m.medianSavedToReadyMs === null
+      ? "no jobs marked ready"
+      : `median ${durationLabel(m.medianSavedToReadyMs)} from saved to ready`;
+  return `Last ${m.windowDays} days: ${applied} · ${ready}`;
+}

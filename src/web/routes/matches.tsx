@@ -474,6 +474,8 @@ export function MatchesPage() {
         </Toggle>
         <Toggle variant="outline" size="sm" pressed={showExcluded} onPressedChange={setShowExcluded}>
           Excluded
+          {/* Open jobs that exclude the Philippines, shown or not (decision 53). Part of the name. */}
+          {counts && <span className="text-muted-foreground tabular-nums">{counts.excludedOpen}</span>}
         </Toggle>
         <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground" onClick={() => setSheet("click")}>
           Shortcuts <Kbd>?</Kbd>

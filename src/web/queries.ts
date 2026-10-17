@@ -6,6 +6,7 @@ import {
   AddLinkResult,
   type AddonInput,
   BoardItemDto,
+  BoardMetricsDto,
   type ChangeStatusInput,
   type DraftInput,
   type FactId,
@@ -42,6 +43,8 @@ import { client, toApiError, unwrap } from "./api";
 export const keys = {
   profile: ["profile"] as const,
   board: ["board"] as const,
+  // Under "board", so every move or Ready that invalidates the board refetches the line too.
+  boardMetrics: ["board", "metrics"] as const,
   workspace: (id: OpportunityId) => ["workspace", id] as const,
   settings: ["settings"] as const,
   sources: ["sources"] as const,
@@ -148,6 +151,14 @@ export const useDeleteFact = () =>
 
 export function useBoard() {
   return useQuery({ queryKey: keys.board, queryFn: () => unwrap(client.api.board.$get(), z.array(BoardItemDto)) });
+}
+
+/** The Board's metrics line for the last 30 days (decision 52). */
+export function useBoardMetrics() {
+  return useQuery({
+    queryKey: keys.boardMetrics,
+    queryFn: () => unwrap(client.api.board.metrics.$get(), BoardMetricsDto),
+  });
 }
 
 /** A new job changes the board, and its pay currency may need a rate in Settings. */

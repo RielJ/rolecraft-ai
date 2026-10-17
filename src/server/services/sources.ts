@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 import {
   type AddSourceInput,
   type RefreshDto,
@@ -163,12 +163,35 @@ export async function latestRefresh(deps: Pick<Deps, "db" | "userId">): Promise<
     .where(and(eq(tasks.userId, deps.userId), eq(tasks.kind, "refresh")))
     .orderBy(desc(tasks.createdAt))
     .limit(1);
-  if (!latest) return { task: null, result: null };
+  if (!latest) return { task: null, result: null, lastRefreshedAt: null };
   // Status first, result second: a task finishes with one UPDATE of both, so a task read as done
   // always has its result. The other order can see a refresh that ended in between as done with
   // no result, and the Refresh button would never sum it up.
   const task = await getTask(deps, { taskId: latest.id });
   const [row] = await deps.db.select({ result: tasks.result }).from(tasks).where(eq(tasks.id, latest.id));
   const parsed = RefreshResult.safeParse(row?.result);
-  return { task, result: parsed.success ? parsed.data : null };
+  // Read after the status for the same reason: a task read as done is always counted here.
+  return { task, result: parsed.success ? parsed.data : null, lastRefreshedAt: await lastRefreshed(deps) };
+}
+
+/**
+ * When the newest refresh that finished without failing ended: the top bar's "Refreshed 3 days
+ * ago" (decision 11). A failed or interrupted refresh did not refresh the feed, so it does not
+ * count; a refresh whose sources partly failed still finished.
+ */
+async function lastRefreshed(deps: Pick<Deps, "db" | "userId">): Promise<string | null> {
+  const [row] = await deps.db
+    .select({ finishedAt: tasks.finishedAt })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.userId, deps.userId),
+        eq(tasks.kind, "refresh"),
+        eq(tasks.status, "done"),
+        isNotNull(tasks.finishedAt),
+      ),
+    )
+    .orderBy(desc(tasks.finishedAt))
+    .limit(1);
+  return row?.finishedAt?.toISOString() ?? null;
 }

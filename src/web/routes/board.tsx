@@ -4,12 +4,12 @@ import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "re
 import { toast } from "sonner";
 import type { BoardItemDto, ChangeStatusInput, ContractTerms, OpportunityId } from "@/shared/api";
 import { OPEN_STATUSES, OPPORTUNITY_STATUSES, type OpportunityStatus, OUTCOMES } from "@/shared/enums";
-import { outcomeLabel, rateTypeLabel, statusLabel } from "@/shared/labels";
+import { metricsLine, outcomeLabel, rateTypeLabel, statusLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { AddJobDialog } from "../components/add-job-dialog";
 import { SetupChecklist } from "../components/setup-checklist";
 import { cn } from "../lib/utils";
-import { useBoard, useChangeStatus } from "../queries";
+import { useBoard, useBoardMetrics, useChangeStatus } from "../queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -275,6 +275,16 @@ function BoardSkeleton() {
   );
 }
 
+/**
+ * One quiet line for the last 30 days (decision 52). Saved to Ready is worded as elapsed time:
+ * it includes idle time, so it is an upper bound, not time spent working.
+ */
+function MetricsLine() {
+  const metrics = useBoardMetrics();
+  if (!metrics.data) return null;
+  return <p className="text-muted-foreground text-sm tabular-nums">{metricsLine(metrics.data)}</p>;
+}
+
 export function BoardPage() {
   const board = useBoard();
   const change = useChangeStatus();
@@ -326,17 +336,20 @@ export function BoardPage() {
           <SetupChecklist />
         </div>
       ) : (
-        <div className={COLUMNS_GRID}>
-          {OPPORTUNITY_STATUSES.map((status) => (
-            <Column
-              key={status}
-              status={status}
-              items={board.data.filter((item) => item.status === status)}
-              arrived={arrived}
-              moved={moved}
-              onMove={move}
-            />
-          ))}
+        <div className="grid gap-4">
+          <MetricsLine />
+          <div className={COLUMNS_GRID}>
+            {OPPORTUNITY_STATUSES.map((status) => (
+              <Column
+                key={status}
+                status={status}
+                items={board.data.filter((item) => item.status === status)}
+                arrived={arrived}
+                moved={moved}
+                onMove={move}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

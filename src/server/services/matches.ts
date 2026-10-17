@@ -201,9 +201,10 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
 
   const score = matcher(t.profile);
   const payFilter = payFilterOf(t, query.payAtLeast);
-  const counts = { open: rows.length, excluded: 0, unsure: 0, belowPay: 0, search: 0 };
+  const counts = { open: rows.length, excluded: 0, excludedOpen: 0, unsure: 0, belowPay: 0, search: 0 };
   const shown: (MatchItem & { rank: number; seenAt: number })[] = [];
   for (const row of rows) {
+    if (row.eligibility === "excluded") counts.excludedOpen++;
     if (!row.hit) {
       counts.search++;
       continue;

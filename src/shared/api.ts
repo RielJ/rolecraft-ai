@@ -412,6 +412,22 @@ export const BoardItemDto = z.object({
 });
 export type BoardItemDto = z.infer<typeof BoardItemDto>;
 
+/** `GET /api/board/metrics`: the Board's metrics line (decisions 51 and 52), from `src/domain/metrics.ts`. */
+export const BoardMetricsDto = z.object({
+  windowDays: z.number().int(),
+  /** Applications sent in the window. */
+  applied: z.number().int(),
+  /** Of those, how many reached Interviewing (or Offer). */
+  interviewing: z.number().int(),
+  /** `interviewing / applied`, 0 to 1; null with no applications. */
+  rate: z.number().nullable(),
+  /** Jobs marked ready in the window. */
+  readyCount: z.number().int(),
+  /** Median Saved to Ready in milliseconds, idle time included; null with no Ready times. */
+  medianSavedToReadyMs: z.number().nullable(),
+});
+export type BoardMetricsDto = z.infer<typeof BoardMetricsDto>;
+
 /** Largest rate the column (`numeric(12,2)`) holds, rounded down to a readable bound. */
 export const MAX_RATE = 999_999_999;
 
@@ -779,6 +795,8 @@ export const RefreshDto = z.object({
   task: TaskDto.nullable(),
   /** Set once the task is done. */
   result: RefreshResult.nullable(),
+  /** When the newest refresh that finished without failing ended. Null before any (decision 11). */
+  lastRefreshedAt: z.string().nullable(),
 });
 export type RefreshDto = z.infer<typeof RefreshDto>;
 
@@ -838,6 +856,8 @@ export const MatchList = z.object({
     open: z.number().int(),
     /** Of those, hidden because they exclude the Philippines and `excluded` is off. */
     excluded: z.number().int(),
+    /** Open jobs not yet saved or dismissed that exclude the Philippines, whatever the filters (decision 53). */
+    excludedOpen: z.number().int(),
     /** Hidden because the role is unclear and `unsure` is off. */
     unsure: z.number().int(),
     /** Hidden by the pay filter. */

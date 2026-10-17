@@ -1,6 +1,8 @@
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { boardMetrics } from "@/domain/metrics";
 import type {
   BoardItemDto,
+  BoardMetricsDto,
   ChangeStatusInput,
   OpportunityId,
   UpdateOpportunityInput,
@@ -78,6 +80,25 @@ export async function listBoard(deps: Deps): Promise<BoardItemDto[]> {
     if (item) items.push(item);
   }
   return items;
+}
+
+/**
+ * The Board's metrics line (decision 52): every opportunity's dated status history and Ready time,
+ * read by `src/domain/metrics.ts` at the injected clock's now. Dismissed rows keep their history,
+ * so a job applied to and later moved off the board still counts.
+ */
+export async function getBoardMetrics(deps: Deps): Promise<BoardMetricsDto> {
+  const rows = await deps.db
+    .select({ history: opportunities.history, readyAt: opportunities.readyAt })
+    .from(opportunities)
+    .where(eq(opportunities.userId, deps.userId));
+  return boardMetrics({
+    now: deps.clock.now(),
+    opportunities: rows.map(({ history, readyAt }) => ({
+      history: history.map((entry) => ({ at: new Date(entry.at), to: entry.to })),
+      readyAt,
+    })),
+  });
 }
 
 async function boardItem(deps: Deps, opportunityId: OpportunityId): Promise<BoardItemDto> {

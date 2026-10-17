@@ -3,7 +3,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { RefreshResult } from "@/shared/api";
-import { sourceStatusLabel } from "@/shared/labels";
+import { refreshedLabel, sourceStatusLabel } from "@/shared/labels";
 import { keys, useRefresh } from "../queries";
 import { Button } from "../ui/button";
 import {
@@ -55,6 +55,38 @@ function aiPassSummary(pass: RefreshResult["aiPass"]): string {
   }
 }
 
+const FINISHED = new Intl.DateTimeFormat("en-PH", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "Asia/Manila",
+});
+
+/** The time now, moved on once a minute, so "Refreshed 5 minutes ago" ages without a reload. */
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
+/**
+ * "Refreshed 3 days ago" next to the button, so a stale feed is visible (decision 11). It reads the
+ * newest refresh that finished, so it moves on as soon as a running one is done.
+ */
+function RefreshAge({ at }: { at: string | null }) {
+  const now = useMinuteClock();
+  const className = "hidden whitespace-nowrap text-muted-foreground text-xs tabular-nums lg:inline";
+  if (at === null) return <span className={className}>{refreshedLabel({ at: null, now })}</span>;
+  const finished = new Date(at);
+  return (
+    <time dateTime={at} title={`Last refresh finished ${FINISHED.format(finished)}`} className={className}>
+      {refreshedLabel({ at: finished, now })}
+    </time>
+  );
+}
+
 /**
  * Starts a refresh and shows its step while it runs. When it finishes, the job list and the
  * sources page reload and a toast sums it up. A second press while one runs says so.
@@ -104,17 +136,29 @@ export function RefreshButton() {
     </Button>
   );
 
-  if (!neverRefreshed) return button;
+  // Nothing until the newest refresh is known, so a loading bar never reads "Not refreshed yet".
+  const age = refresh.data && <RefreshAge at={refresh.data.lastRefreshedAt} />;
+  if (!neverRefreshed) {
+    return (
+      <>
+        {age}
+        {button}
+      </>
+    );
+  }
   return (
-    <Popover open={panelOpen} onOpenChange={setPanelOpen}>
-      <PopoverTrigger asChild>{button}</PopoverTrigger>
-      <PopoverContent aria-label="First refresh" align="end" className="w-96">
-        <PopoverHeader className="mb-1">
-          <PopoverTitle>Your first refresh</PopoverTitle>
-          <PopoverDescription>Refresh reads every board that is on. Turn off any you don't want.</PopoverDescription>
-        </PopoverHeader>
-        <SourcesPanel onClose={() => setPanelOpen(false)} />
-      </PopoverContent>
-    </Popover>
+    <>
+      {age}
+      <Popover open={panelOpen} onOpenChange={setPanelOpen}>
+        <PopoverTrigger asChild>{button}</PopoverTrigger>
+        <PopoverContent aria-label="First refresh" align="end" className="w-96">
+          <PopoverHeader className="mb-1">
+            <PopoverTitle>Your first refresh</PopoverTitle>
+            <PopoverDescription>Refresh reads every board that is on. Turn off any you don't want.</PopoverDescription>
+          </PopoverHeader>
+          <SourcesPanel onClose={() => setPanelOpen(false)} />
+        </PopoverContent>
+      </Popover>
+    </>
   );
 }

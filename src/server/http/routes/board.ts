@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { ChangeStatusInput, OpportunityId, UpdateOpportunityInput } from "@/shared/api";
-import { changeStatus, listBoard, updateOpportunity } from "../../services/board";
+import { changeStatus, getBoardMetrics, listBoard, updateOpportunity } from "../../services/board";
 import type { Deps } from "../../services/context";
 import { validate } from "../validate";
 
@@ -10,6 +10,7 @@ const OpportunityParam = z.object({ id: OpportunityId });
 export function boardRoutes(deps: Deps) {
   return new Hono()
     .get("/board", async (c) => c.json(await listBoard(deps)))
+    .get("/board/metrics", async (c) => c.json(await getBoardMetrics(deps)))
     .post(
       "/opportunities/:id/status",
       validate("param", OpportunityParam),
