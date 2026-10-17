@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
+import { LockIcon } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AddonInput,
   type Contact,
   type FactDto,
+  type GithubReadSummary,
   type OverCapDetails,
   type ProfileDto,
   type ProfileItemDto,
@@ -45,6 +47,7 @@ import {
   useKeepFact,
   usePasteCv,
   useProfile,
+  useReadGithub,
   useRetrySplit,
   useUpdateAddon,
   useUpdateFact,
@@ -427,11 +430,26 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
 
+type OverCapWords = { doing: string; noun: string; action: string };
+const SPLIT_WORDS: OverCapWords = {
+  doing: "Splitting this text into facts with AI",
+  noun: "This split",
+  action: "Split anyway",
+};
+const READ_WORDS: OverCapWords = {
+  doing: "Reading this link from GitHub with AI",
+  noun: "This read",
+  action: "Read anyway",
+};
+
 /**
  * Saving a CV or add-on with an AI key can return `402 over_cap`. `onError(again)` opens the
  * confirmation; "Split anyway" calls `again`, which repeats the request with `confirmOverCap`.
  */
-function useOverCap(): { onError: (again: () => void) => (error: unknown) => void; dialog: ReactNode } {
+function useOverCap(words: OverCapWords = SPLIT_WORDS): {
+  onError: (again: () => void) => (error: unknown) => void;
+  dialog: ReactNode;
+} {
   const [pending, setPending] = useState<{ details: OverCapDetails; again: () => void } | null>(null);
   const dialog = (
     <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
@@ -440,12 +458,12 @@ function useOverCap(): { onError: (again: () => void) => (error: unknown) => voi
           <AlertDialogTitle>Go over your monthly cap?</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="grid gap-2">
-              <p>Splitting this text into facts with AI would take this month's spend past the cap you set.</p>
+              <p>{words.doing} would take this month's spend past the cap you set.</p>
               {pending && (
                 <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-foreground tabular-nums">
                   <dt className="text-muted-foreground">Spent this month</dt>
                   <dd>{usd(pending.details.monthUsd)}</dd>
-                  <dt className="text-muted-foreground">This split, at most</dt>
+                  <dt className="text-muted-foreground">{words.noun}, at most</dt>
                   <dd>{usd(pending.details.estimateUsd)}</dd>
                   <dt className="text-muted-foreground">Your cap</dt>
                   <dd>{usd(pending.details.capUsd)}</dd>
@@ -465,7 +483,7 @@ function useOverCap(): { onError: (again: () => void) => (error: unknown) => voi
               setPending(null);
             }}
           >
-            Split anyway
+            {words.action}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -525,6 +543,93 @@ function SplitStatus({ item, what }: { item: ProfileItemDto; what: string }) {
       return _exhaustive;
     }
   }
+}
+
+// ---------- GitHub reads ----------
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the last read did, in one line: what it read, as whom, and what changed. */
+function readSummary(read: GithubReadSummary): string {
+  const as = `as ${read.user} (from ${read.userFrom})`;
+  const what = `Read ${plural(read.filesRead.length, "file")} and ${plural(read.commitsRead, "commit")} ${as}`;
+  const changes = [
+    read.added ? `${read.added} new` : null,
+    read.unchanged ? `${read.unchanged} unchanged` : null,
+    read.removed ? `${read.removed} removed` : null,
+    read.vanished ? `${read.vanished} to keep or delete` : null,
+  ].filter(Boolean);
+  const dropped = read.dropped.length
+    ? ` ${plural(read.dropped.length, "claim")} dropped: not backed by a file or commit it read.`
+    : "";
+  return `${what}: ${changes.length ? changes.join(", ") : "no facts"}.${dropped}`;
+}
+
+/** Read from GitHub / Re-read, the read task's progress, and what the last read did. */
+function GithubRead({ item, aiReady }: { item: ProfileItemDto; aiReady: boolean }) {
+  const read = useReadGithub();
+  const retry = useRetrySplit();
+  const overCap = useOverCap(READ_WORDS);
+  const github = item.github;
+  if (!github) return null;
+  const task = github.readTask;
+  const running = task?.status === "running" || read.isPending;
+  const start = (confirmOverCap: boolean) =>
+    read.mutate({ id: item.id, confirmOverCap }, { onError: overCap.onError(() => start(true)) });
+  const again = (confirmOverCap: boolean) => {
+    if (!task) return;
+    retry.mutate(
+      { id: task.id, confirmOverCap },
+      { onError: overCap.onError(() => again(true)), onSuccess: () => toast(`Reading ${github.label} again.`) },
+    );
+  };
+  const failed = task?.status === "failed" || task?.status === "interrupted";
+
+  return (
+    <div className="grid gap-1 text-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!aiReady || running || retry.isPending}
+          onClick={() => (failed ? again(false) : start(false))}
+        >
+          {failed ? "Retry the read" : github.lastRead ? "Re-read" : "Read from GitHub"}
+        </Button>
+        {github.private && (
+          <Badge variant="outline" className="gap-1">
+            <LockIcon aria-hidden className="size-3" />
+            Private repo
+          </Badge>
+        )}
+        {!aiReady && (
+          <span className="text-muted-foreground">
+            Reading a repo needs AI.{" "}
+            <Link to="/settings" className="underline underline-offset-4">
+              Set it up in Settings
+            </Link>
+            .
+          </span>
+        )}
+      </div>
+      {task?.status === "running" && (
+        <p className="text-muted-foreground" aria-live="polite">
+          {task.step || `Reading ${github.label}`}…
+        </p>
+      )}
+      {failed && (
+        <p role="alert" className="text-destructive">
+          {task?.status === "interrupted"
+            ? `Reading ${github.label} stopped because the app restarted.`
+            : (task?.error ?? `Reading ${github.label} failed.`)}
+        </p>
+      )}
+      {task?.status === "done" && github.lastRead && (
+        <p className="text-muted-foreground">{readSummary(github.lastRead)}</p>
+      )}
+      {overCap.dialog}
+    </div>
+  );
 }
 
 // ---------- CV ----------
@@ -733,9 +838,10 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
       ) : (
         <div className="grid min-w-0 flex-1 gap-1">
           <p className="text-sm">{fact.text}</p>
-          {(showSource || fact.usage === "letters_only") && (
-            <p className="flex flex-wrap gap-x-2 text-muted-foreground text-xs">
+          {(showSource || fact.usage === "letters_only" || fact.evidence) && (
+            <p className="flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
               {showSource && <span>From {fact.itemKind === "cv" ? "your CV" : fact.itemTitle}</span>}
+              {fact.evidence && <Evidence evidence={fact.evidence} />}
               {fact.usage === "letters_only" && <span>Letters and answers only</span>}
             </p>
           )}
@@ -760,6 +866,30 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
   );
 }
 
+/** Where a GitHub fact came from: the file or commit it cites, and a lock when the repo is private. */
+function Evidence({ evidence }: { evidence: NonNullable<FactDto["evidence"]> }) {
+  const label = evidence.kind === "file" ? evidence.path : `commit ${evidence.sha.slice(0, 7)}`;
+  return (
+    <>
+      <a
+        href={evidence.url}
+        target="_blank"
+        rel="noreferrer"
+        className="font-mono underline underline-offset-4"
+        aria-label={`Evidence: ${label} in ${evidence.repo}`}
+      >
+        {label}
+      </a>
+      {evidence.private && (
+        <Badge variant="outline" className="gap-1 px-1.5 py-0 text-[11px]">
+          <LockIcon aria-hidden className="size-3" />
+          Private
+        </Badge>
+      )}
+    </>
+  );
+}
+
 /** A confirmed fact the latest split of its item did not produce. */
 function VanishedRow({ fact }: { fact: FactDto }) {
   const keep = useKeepFact();
@@ -768,7 +898,14 @@ function VanishedRow({ fact }: { fact: FactDto }) {
   return (
     <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
       <span className="w-16 shrink-0 pt-0.5 font-mono text-muted-foreground text-xs tabular-nums">{fact.key}</span>
-      <p className="min-w-0 flex-1 text-sm">{fact.text}</p>
+      <div className="grid min-w-0 flex-1 gap-1">
+        <p className="text-sm">{fact.text}</p>
+        {fact.evidence && (
+          <p className="flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
+            <Evidence evidence={fact.evidence} />
+          </p>
+        )}
+      </div>
       <div className="flex gap-1">
         <Button size="sm" variant="secondary" disabled={busy} onClick={() => keep.mutate(fact.id, { onError })}>
           Keep
@@ -781,21 +918,35 @@ function VanishedRow({ fact }: { fact: FactDto }) {
   );
 }
 
-function vanishedHeading(item: ProfileItemDto): string {
+function vanishedHeading(item: ProfileItemDto, origin: FactDto["origin"]): string {
+  if (origin === "github") return `Not in the latest GitHub read of ${item.title}`;
   return item.kind === "cv" ? "Not in your latest CV" : `Not in the latest version of ${item.title}`;
 }
+
+const VANISHED_HINT: Record<FactDto["origin"], string> = {
+  text: "You confirmed these, but the text you saved last no longer has them. Keep them, or delete them.",
+  github: "You confirmed these, but the latest read of the repo did not find them again. Keep them, or delete them.",
+};
 
 function Facts({ profile }: { profile: ProfileDto }) {
   const confirmAll = useConfirmAllFacts();
   const { facts, skillsFound } = profile;
   const items = [...(profile.cv ? [profile.cv] : []), ...profile.addons];
-  // While an item is being split, its facts' `inLatest` is about to change; wait for the result.
-  const settled = new Set(items.filter((i) => i.splitTask?.status !== "running").map((i) => i.id));
+  // While an item is being split or read, its facts' `inLatest` is about to change; wait for the result.
+  const settled = new Set(
+    items.filter((i) => i.splitTask?.status !== "running" && i.github?.readTask?.status !== "running").map((i) => i.id),
+  );
   const isVanished = (f: FactDto) => f.status === "confirmed" && !f.inLatest && settled.has(f.itemId);
   const pending = facts.filter((f) => f.status === "pending");
   const confirmed = facts.filter((f) => f.status === "confirmed" && !isVanished(f));
   const vanished = items
-    .map((item) => ({ item, facts: facts.filter((f) => f.itemId === item.id && isVanished(f)) }))
+    .flatMap((item) =>
+      (["text", "github"] as const).map((origin) => ({
+        item,
+        origin,
+        facts: facts.filter((f) => f.itemId === item.id && f.origin === origin && isVanished(f)),
+      })),
+    )
     .filter((group) => group.facts.length > 0);
   const showSource = profile.addons.length > 0;
 
@@ -835,15 +986,13 @@ function Facts({ profile }: { profile: ProfileDto }) {
           </ul>
         </div>
       )}
-      {vanished.map(({ item, facts: group }) => (
-        <div key={item.id}>
+      {vanished.map(({ item, origin, facts: group }) => (
+        <div key={`${item.id}-${origin}`}>
           <h3 className="font-medium text-sm">
-            {vanishedHeading(item)} <span className="text-muted-foreground tabular-nums">{group.length}</span>
+            {vanishedHeading(item, origin)} <span className="text-muted-foreground tabular-nums">{group.length}</span>
           </h3>
-          <p className="text-muted-foreground text-sm">
-            You confirmed these, but the text you saved last no longer has them. Keep them, or delete them.
-          </p>
-          <ul className="mt-2 divide-y border-y" aria-label={vanishedHeading(item)}>
+          <p className="text-muted-foreground text-sm">{VANISHED_HINT[origin]}</p>
+          <ul className="mt-2 divide-y border-y" aria-label={vanishedHeading(item, origin)}>
             {group.map((f) => (
               <VanishedRow key={f.id} fact={f} />
             ))}
@@ -1120,7 +1269,17 @@ function hostOf(link: string): string {
   }
 }
 
-function AddonRow({ item, factCount, onEdit }: { item: ProfileItemDto; factCount: number; onEdit: () => void }) {
+function AddonRow({
+  item,
+  factCount,
+  aiReady,
+  onEdit,
+}: {
+  item: ProfileItemDto;
+  factCount: number;
+  aiReady: boolean;
+  onEdit: () => void;
+}) {
   const remove = useDeleteAddon();
   const [confirming, setConfirming] = useState(false);
   const meta = [itemKindLabel(item.kind), item.happenedOn, item.usage === "letters_only" ? "Letters only" : null]
@@ -1153,6 +1312,7 @@ function AddonRow({ item, factCount, onEdit }: { item: ProfileItemDto; factCount
         </div>
       </div>
       <SplitStatus item={item} what={item.title} />
+      <GithubRead item={item} aiReady={aiReady} />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1176,7 +1336,7 @@ function AddonRow({ item, factCount, onEdit }: { item: ProfileItemDto; factCount
   );
 }
 
-function Addons({ addons, facts }: { addons: ProfileItemDto[]; facts: FactDto[] }) {
+function Addons({ addons, facts, aiReady }: { addons: ProfileItemDto[]; facts: FactDto[]; aiReady: boolean }) {
   // `key` remounts the dialog's form for each open, so it starts from the item being edited.
   const [dialog, setDialog] = useState<{ item: ProfileItemDto | null; key: number } | null>(null);
   const open = (item: ProfileItemDto | null) => setDialog({ item, key: Date.now() });
@@ -1202,6 +1362,7 @@ function Addons({ addons, facts }: { addons: ProfileItemDto[]; facts: FactDto[] 
               key={item.id}
               item={item}
               factCount={facts.filter((f) => f.itemId === item.id).length}
+              aiReady={aiReady}
               onEdit={() => open(item)}
             />
           ))}
@@ -1245,7 +1406,7 @@ export function ProfilePage() {
       <CvForm key={cv?.rev ?? 0} cv={cv} contact={contact} aiReady={aiReady} />
       <Facts profile={profile.data} />
       <Separator />
-      <Addons addons={addons} facts={facts} />
+      <Addons addons={addons} facts={facts} aiReady={aiReady} />
       <Separator />
       <StandardAnswersForm answers={standardAnswers} />
       <Separator />

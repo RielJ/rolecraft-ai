@@ -1,0 +1,49 @@
+{
+  "owner": "juandc",
+  "repo": "jeep-route",
+  "private": false,
+  "description": "Jeepney route planner for Cebu City",
+  "defaultBranch": "main",
+  "files": {
+    "README.md": "# jeep-route\n\nPlans jeepney trips across Cebu City using 42 routes from the city's open data. Give it two places and it returns the fewest transfers and the fare.\n\n## Stack\n\n- TypeScript on Bun\n- Hono for the HTTP API\n- SQLite for route data\n\n## Run\n\n```\nbun install\nbun run dev\n```\n",
+    "package.json": "{\n  \"name\": \"jeep-route\",\n  \"type\": \"module\",\n  \"scripts\": { \"dev\": \"bun --watch src/server.ts\", \"test\": \"bun test\" },\n  \"dependencies\": { \"hono\": \"^4.6.0\" },\n  \"devDependencies\": { \"typescript\": \"^5.6.0\" }\n}\n",
+    "src/server.ts": "import { Hono } from \"hono\";\nimport { plan } from \"./planner\";\n\nconst app = new Hono();\napp.get(\"/plan\", (c) => {\n  const from = c.req.query(\"from\") ?? \"\";\n  const to = c.req.query(\"to\") ?? \"\";\n  return c.json(plan({ from, to }));\n});\nexport default app;\n",
+    "src/planner.ts": "import { db } from \"./db\";\nimport { fareFor } from \"./fares\";\n\n/** Breadth-first search over stops: the route with the fewest transfers wins. */\nexport function plan({ from, to }: { from: string; to: string }) {\n  const routes = db.query(\"select code, stops from routes\").all();\n  const best = fewestTransfers(routes, from, to);\n  return { legs: best, fare: fareFor(best) };\n}\n\nfunction fewestTransfers(routes: unknown[], from: string, to: string) {\n  // ...\n  return [] as string[];\n}\n",
+    "src/fares.ts": "/** LTFRB minimum fare of 13 pesos for the first 4 km, then 1.80 per km. */\nexport function fareFor(legs: string[]): number {\n  return legs.length * 13;\n}\n",
+    "src/db.ts": "import { Database } from \"bun:sqlite\";\nexport const db = new Database(\"routes.sqlite\");\n",
+    "test/planner.test.ts": "import { expect, test } from \"bun:test\";\ntest(\"plans\", () => expect(1).toBe(1));\n",
+    "logo.png": "binary"
+  },
+  "commits": [
+    {
+      "sha": "415e886aa2e8d7c07c28532d011f0a2861d7ca1e",
+      "message": "Add fare calculation using the LTFRB minimum fare",
+      "author": "juandc"
+    },
+    {
+      "sha": "30689165f9c50a1b009b7fe38bdfa08374f53f54",
+      "message": "Fix typo in README",
+      "author": "maria-s"
+    },
+    {
+      "sha": "da8a77d77f98e38a86a30dc20873e0beae21eef3",
+      "message": "Plan trips with the fewest transfers using breadth-first search",
+      "author": "juandc"
+    },
+    {
+      "sha": "ddf922c680bb8172023949e47cd867c7fc166d6e",
+      "message": "Load 42 routes from Cebu open data into SQLite",
+      "author": "juandc"
+    },
+    {
+      "sha": "ededbcb576ed2e44de1f5b6d79fcd50c7b807a0c",
+      "message": "Serve /plan over HTTP with Hono",
+      "author": "juandc"
+    },
+    {
+      "sha": "19a65a0519cee3c2273d526812cf9efcaed58407",
+      "message": "Initial commit",
+      "author": "juandc"
+    }
+  ]
+}

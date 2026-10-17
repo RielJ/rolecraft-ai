@@ -5,6 +5,8 @@ import { createFakeAi } from "./adapters/ai/fake";
 import { createOpenAiClient } from "./adapters/ai/openai";
 import { createPiClient } from "./adapters/ai/pi";
 import type { AiClients, AiSource } from "./adapters/ai/types";
+import { createGhReader, createPublicReader, type GithubReader } from "./adapters/github";
+import { createFixtureReader } from "./adapters/github-fixture";
 import { createHttpClient } from "./adapters/http";
 import { createFileKeyStore } from "./adapters/key-store";
 import { createChromiumPdf } from "./adapters/pdf";
@@ -67,7 +69,36 @@ const sources =
     ? createFixtureSources({ dir: env.HB_SOURCES_DIR, log: env.HB_SOURCES_LOG })
     : createSourceAdapters(http);
 
-const deps: Deps = { db, userId, pdf, ai, aiSource, keyStore, http, sources, clock: { now: () => new Date() } };
+function buildGithub(): GithubReader {
+  const user = env.HB_GITHUB_USER ?? null;
+  switch (env.HB_GITHUB) {
+    case "public":
+      return createPublicReader({ http, user });
+    case "gh":
+      // env.ts refuses HB_GITHUB=gh without HB_GITHUB_USER.
+      return createGhReader({ user: env.HB_GITHUB_USER ?? "", bin: env.HB_GH_BIN });
+    case "fixture":
+      return createFixtureReader({ dir: env.HB_GITHUB_DIR, user });
+    default: {
+      const _exhaustive: never = env.HB_GITHUB;
+      return _exhaustive;
+    }
+  }
+}
+const github = buildGithub();
+
+const deps: Deps = {
+  db,
+  userId,
+  pdf,
+  ai,
+  aiSource,
+  keyStore,
+  http,
+  sources,
+  github,
+  clock: { now: () => new Date() },
+};
 
 const server = new Hono()
   .route("/", createApp(deps))

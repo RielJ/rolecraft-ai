@@ -1,0 +1,48 @@
+{
+  "id": "sari-ledger-private",
+  "about": "A private Go project the user owns, read through gh. Its facts must carry the private flag.",
+  "link": "https://github.com/juandc/sari-ledger",
+  "user": "juandc",
+  "injected": [],
+  "snapshot": {
+    "owner": "juandc",
+    "repo": "sari-ledger",
+    "private": true,
+    "description": "Offline inventory and credit ledger for sari-sari stores",
+    "defaultBranch": "main",
+    "files": {
+      "README.md": "# sari-ledger\n\nAn offline-first inventory and credit (utang) ledger for neighborhood sari-sari stores. Runs on a cheap Android phone through Termux and syncs to a small server when there is signal.\n\nRecords sales, restocks and customer credit, and prints a daily summary in Tagalog or English.\n",
+      "go.mod": "module github.com/juandc/sari-ledger\n\ngo 1.23\n\nrequire (\n\tmodernc.org/sqlite v1.33.1\n\tgithub.com/go-chi/chi/v5 v5.1.0\n)\n",
+      "cmd/sari/main.go": "package main\n\nimport (\n\t\"log\"\n\t\"github.com/juandc/sari-ledger/internal/ledger\"\n)\n\nfunc main() {\n\tl, err := ledger.Open(\"sari.db\")\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\tdefer l.Close()\n}\n",
+      "internal/ledger/ledger.go": "package ledger\n\n// Ledger keeps sales, restocks and credit in one SQLite file. Every change is an append-only\n// entry, so a sync can replay what the server has not seen.\ntype Ledger struct{}\n\nfunc Open(path string) (*Ledger, error) { return &Ledger{}, nil }\nfunc (l *Ledger) Close() error { return nil }\n",
+      "internal/sync/sync.go": "package sync\n\n// Push sends entries newer than the server's cursor, in batches of 200.\nfunc Push() error { return nil }\n"
+    },
+    "commits": [
+      {
+        "sha": "d8d99658857490d0ad2a115c2e76d9bd8c110cd9",
+        "message": "Sync entries to the server in batches of 200",
+        "author": "juandc"
+      },
+      {
+        "sha": "db5b4a4c07a396597a99b92089c71ec3c4c25fd8",
+        "message": "Print the daily summary in Tagalog or English",
+        "author": "juandc"
+      },
+      {
+        "sha": "b6f760477c64c861f823703e23e478cbf1a02e99",
+        "message": "Track customer credit (utang) with due dates",
+        "author": "juandc"
+      },
+      {
+        "sha": "953be0ac49ecb681f48032951452736aa667fb88",
+        "message": "Store every change as an append-only entry in SQLite",
+        "author": "juandc"
+      },
+      {
+        "sha": "2c8e8e85aeb80120dc72600ab073a81d148d6d87",
+        "message": "Initial ledger with sales and restocks",
+        "author": "juandc"
+      }
+    ]
+  }
+}

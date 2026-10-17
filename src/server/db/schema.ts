@@ -20,6 +20,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type {
   AiCallId,
+  FactEvidence,
   FactId,
   FactKey,
   FxRateEntry,
@@ -42,6 +43,7 @@ import {
   DISMISS_REASONS,
   ELIGIBILITIES,
   ELIGIBILITY_SOURCES,
+  FACT_ORIGINS,
   FACT_STATUSES,
   ITEM_USAGES,
   JOB_ORIGINS,
@@ -150,6 +152,10 @@ export const profileItems = pgTable(
     usage: text().notNull().default("everywhere").$type<(typeof ITEM_USAGES)[number]>(),
     rev: integer().notNull().default(1),
     fileName: text(),
+    /** Bumped by each GitHub read of `link` (decision 55); 0 until the first read. */
+    githubRev: integer().notNull().default(0),
+    /** The repo's visibility at the last read; null until read. */
+    githubPrivate: boolean(),
     createdAt: createdAt(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -174,13 +180,18 @@ export const facts = pgTable(
       .$type<ItemId>(),
     text: text().notNull(),
     status: text().notNull().default("pending").$type<(typeof FACT_STATUSES)[number]>(),
+    /** `text` facts compare `seen_rev` with the item's `rev`, `github` facts with its `github_rev`. */
     seenRev: integer().notNull(),
+    origin: text().notNull().default("text").$type<(typeof FACT_ORIGINS)[number]>(),
+    evidence: jsonb().$type<FactEvidence>(),
     createdAt: createdAt(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check("facts_text", sql`length(btrim(text)) > 0`),
     check("facts_status", oneOf("status", FACT_STATUSES)),
+    check("facts_origin", oneOf("origin", FACT_ORIGINS)),
+    check("facts_evidence", sql`(origin = 'github') = (evidence IS NOT NULL)`),
     index("facts_user_status").on(t.userId, t.status),
     index("facts_item").on(t.itemId),
   ],

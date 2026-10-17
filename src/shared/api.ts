@@ -4,6 +4,7 @@ import {
   AiProvider,
   DismissReason,
   Eligibility,
+  FactOrigin,
   FactStatus,
   FileKind,
   ItemUsage,
@@ -77,6 +78,11 @@ export const ERROR_CODES = [
   /** Merging two jobs that are both on the board (section 3.8): close one instead. */
   "both_on_board",
   "unreadable_file",
+  /** GitHub's request limit is used up (decision 55). */
+  "github_rate_limited",
+  /** gh is signed in as someone other than HB_GITHUB_USER. */
+  "github_account",
+  "github_unavailable",
   "internal",
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -134,6 +140,28 @@ export const StandardAnswers = z.object({
 });
 export type StandardAnswers = z.infer<typeof StandardAnswers>;
 
+/**
+ * Where a fact read from GitHub came from (decision 55): a file or a commit that was actually read,
+ * with its link. `private` facts show a lock badge, and their links never reach an exported file.
+ */
+export const FactEvidence = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("file"),
+    path: z.string(),
+    url: z.string(),
+    repo: z.string(),
+    private: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("commit"),
+    sha: z.string(),
+    url: z.string(),
+    repo: z.string(),
+    private: z.boolean(),
+  }),
+]);
+export type FactEvidence = z.infer<typeof FactEvidence>;
+
 export const FactDto = z.object({
   id: FactId,
   key: FactKey,
@@ -143,10 +171,50 @@ export const FactDto = z.object({
   itemKind: ProfileItemKind,
   itemTitle: z.string(),
   usage: ItemUsage,
-  /** False when the item's latest split no longer produced it (`seen_rev < rev`): "Not in your latest CV". */
+  /**
+   * False when the item's latest split no longer produced it (`seen_rev < rev`): "Not in your
+   * latest CV". For a fact read from GitHub, the latest read instead.
+   */
   inLatest: z.boolean(),
+  /** `text`: split from the item's own text. `github`: read from the item's GitHub link. */
+  origin: FactOrigin,
+  /** Set exactly when `origin` is `github`. */
+  evidence: FactEvidence.nullable(),
 });
 export type FactDto = z.infer<typeof FactDto>;
+
+/** What the last finished GitHub read did (the `github_read` task's result). */
+export const GithubReadSummary = z.object({
+  /** The account whose commits were read, and where that name came from. */
+  user: z.string(),
+  userFrom: z.enum(["HB_GITHUB_USER", "profile link"]),
+  via: z.enum(["public", "gh", "fixture"]),
+  private: z.boolean(),
+  /** Repo text read, in estimated tokens, against the cap. */
+  tokens: z.number().int(),
+  cap: z.number().int(),
+  filesRead: z.array(z.string()),
+  commitsRead: z.number().int(),
+  added: z.number().int(),
+  unchanged: z.number().int(),
+  removed: z.number().int(),
+  vanished: z.number().int(),
+  /** Proposals dropped in code: the evidence they cite was not read, or they say what it does not. */
+  dropped: z.array(z.object({ text: z.string(), reason: z.string() })),
+});
+export type GithubReadSummary = z.infer<typeof GithubReadSummary>;
+
+/** A GitHub link on an add-on (decision 55). Null on the item when its link is anything else. */
+export const ItemGithubDto = z.object({
+  kind: z.enum(["repo", "pull"]),
+  /** `owner/repo` or `owner/repo#N`. */
+  label: z.string(),
+  /** From the last read; null until the first. */
+  private: z.boolean().nullable(),
+  readTask: TaskDto.nullable(),
+  lastRead: GithubReadSummary.nullable(),
+});
+export type ItemGithubDto = z.infer<typeof ItemGithubDto>;
 
 /** The CV or an add-on, with its latest split task so a reload can resume progress or offer Retry. */
 export const ProfileItemDto = z.object({
@@ -163,6 +231,7 @@ export const ProfileItemDto = z.object({
   /** CV only: the uploaded file's name. */
   fileName: z.string().nullable(),
   splitTask: TaskDto.nullable(),
+  github: ItemGithubDto.nullable(),
 });
 export type ProfileItemDto = z.infer<typeof ProfileItemDto>;
 
@@ -274,6 +343,10 @@ export type AddonInput = z.infer<typeof AddonInput>;
 /** What a split task needs to run again (stored in `tasks.input`). */
 export const SplitTaskInput = z.object({ itemId: ItemId });
 export type SplitTaskInput = z.infer<typeof SplitTaskInput>;
+
+/** What a GitHub read needs to run again (stored in `tasks.input`). */
+export const GithubReadTaskInput = z.object({ itemId: ItemId });
+export type GithubReadTaskInput = z.infer<typeof GithubReadTaskInput>;
 
 export const UpdateFactInput = z.object({ text: z.string().trim().min(1).max(2000) });
 export type UpdateFactInput = z.infer<typeof UpdateFactInput>;
@@ -797,6 +870,8 @@ export const RefreshDto = z.object({
   result: RefreshResult.nullable(),
   /** When the newest refresh that finished without failing ended. Null before any (decision 11). */
   lastRefreshedAt: z.string().nullable(),
+  /** Open jobs Matches can show before its filters: untouched, and not excluded unless overridden. */
+  openJobs: z.number().int().nonnegative(),
 });
 export type RefreshDto = z.infer<typeof RefreshDto>;
 

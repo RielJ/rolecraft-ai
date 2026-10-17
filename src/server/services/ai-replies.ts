@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AiEligibilityAnswer } from "@/domain/eligibility";
+import type { GithubProposal } from "@/domain/github-read";
 import { cleanModelText, MAX_SUGGESTED_QUESTIONS } from "@/domain/prompts";
 import { Eligibility } from "@/shared/enums";
 
@@ -50,4 +51,20 @@ export function parseQuestionsReply(text: string): string[] | null {
     if (out.length === MAX_SUGGESTED_QUESTIONS) break;
   }
   return out;
+}
+
+const GithubPicksReply = z.object({ files: z.array(z.string()) });
+
+/** The paths the AI picked, unvalidated (the reader checks them against the tree). Null when unreadable. */
+export function parseGithubPicksReply(text: string): string[] | null {
+  return parseReply(text, GithubPicksReply)?.files ?? null;
+}
+
+const GithubFactsReply = z.object({
+  facts: z.array(z.object({ text: z.string().max(2000), evidence: z.string().max(300) })),
+});
+
+/** `{ text, evidence }` proposals, unchecked (acceptGithubFacts drops the bad ones). Null when unreadable. */
+export function parseGithubFactsReply(text: string): GithubProposal[] | null {
+  return parseReply(text, GithubFactsReply)?.facts ?? null;
 }

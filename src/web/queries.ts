@@ -65,9 +65,11 @@ const TASK_POLL_MS = 1000;
 
 // ---------- Profile ----------
 
-/** True while the CV or an add-on is being split into facts. */
+/** True while the CV or an add-on is being split into facts, or an add-on is being read from GitHub. */
 export const splitRunning = (profile: ProfileDto | undefined): boolean =>
-  [profile?.cv, ...(profile?.addons ?? [])].some((item) => item?.splitTask?.status === "running");
+  [profile?.cv, ...(profile?.addons ?? [])].some(
+    (item) => item?.splitTask?.status === "running" || item?.github?.readTask?.status === "running",
+  );
 
 export function useProfile() {
   return useQuery({
@@ -89,6 +91,8 @@ function useProfileMutation<I>(run: (input: I) => Promise<ProfileDto>) {
       void qc.invalidateQueries({ queryKey: keys.board });
       // Confirmed facts and targeting set match levels, tags and the pay filter, on every read.
       void qc.invalidateQueries({ queryKey: keys.matches });
+      // The top bar counts what Matches can show.
+      void qc.invalidateQueries({ queryKey: keys.refresh });
       // The CV, facts and targeting are setup steps.
       void qc.invalidateQueries({ queryKey: keys.setup });
     },
@@ -122,6 +126,15 @@ export const useUpdateAddon = () =>
 
 export const useDeleteAddon = () =>
   useProfileMutation((id: ItemId) => unwrap(client.api.profile.addons[":id"].$delete({ param: { id } }), ProfileDto));
+
+/** Read an add-on's GitHub link into pending facts. The profile then polls the read task. */
+export const useReadGithub = () =>
+  useProfileMutation(({ id, confirmOverCap }: { id: ItemId; confirmOverCap?: boolean }) =>
+    unwrap(
+      client.api.profile.addons[":id"]["github-read"].$post({ param: { id }, json: { confirmOverCap } }),
+      ProfileDto,
+    ),
+  );
 
 /** Keep a fact that is not in the latest version of its CV or add-on. */
 export const useKeepFact = () =>
@@ -174,6 +187,7 @@ function useJobAdded() {
       qc.invalidateQueries({ queryKey: keys.board }),
       // A job added by link may be one Matches listed; saved jobs leave Matches.
       qc.invalidateQueries({ queryKey: keys.matches }),
+      qc.invalidateQueries({ queryKey: keys.refresh }),
       qc.invalidateQueries({ queryKey: keys.settings }),
       // Other jobs' duplicate hints are computed on read.
       qc.invalidateQueries({ queryKey: ["workspace"] }),
@@ -370,6 +384,8 @@ function useSettingsMutation<I>(run: (input: I) => Promise<SettingsDto>) {
       void qc.invalidateQueries({ queryKey: ["workspace"] });
       // The view currency and rates set the pay shown and the pay filter on Matches.
       void qc.invalidateQueries({ queryKey: keys.matches });
+      // The top bar counts what Matches can show.
+      void qc.invalidateQueries({ queryKey: keys.refresh });
       // The AI key is a setup step.
       void qc.invalidateQueries({ queryKey: keys.setup });
     },
@@ -460,7 +476,11 @@ function useMatchMutation<T, R>(fn: (input: T) => Promise<R>) {
   return useMutation({
     mutationFn: fn,
     onSettled: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: keys.matches }), qc.invalidateQueries({ queryKey: keys.board })]),
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.matches }),
+        qc.invalidateQueries({ queryKey: keys.refresh }),
+        qc.invalidateQueries({ queryKey: keys.board }),
+      ]),
   });
 }
 
@@ -506,6 +526,7 @@ export function useOverrideEligibility() {
       Promise.all([
         qc.invalidateQueries({ queryKey: keys.filtered }),
         qc.invalidateQueries({ queryKey: keys.matches }),
+        qc.invalidateQueries({ queryKey: keys.refresh }),
       ]),
   });
 }

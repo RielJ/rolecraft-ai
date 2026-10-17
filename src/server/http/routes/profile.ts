@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   AddonInput,
   type ApiErrorBody,
+  ConfirmOverCapInput,
   FactId,
   ItemId,
   MAX_CV_BYTES,
@@ -13,6 +14,7 @@ import {
   UploadCvForm,
 } from "@/shared/api";
 import type { Deps } from "../../services/context";
+import { readGithub } from "../../services/github";
 import {
   confirmAllFacts,
   confirmFact,
@@ -60,6 +62,18 @@ export function profileRoutes(deps: Deps) {
     )
     .put("/profile/addons/:id", validate("param", ItemParam), validate("json", AddonInput), async (c) =>
       c.json(await updateAddon(deps, { itemId: c.req.valid("param").id, ...c.req.valid("json") })),
+    )
+    .post(
+      "/profile/addons/:id/github-read",
+      validate("param", ItemParam),
+      validate("json", ConfirmOverCapInput),
+      async (c) =>
+        c.json(
+          await readGithub(deps, {
+            itemId: c.req.valid("param").id,
+            confirmOverCap: c.req.valid("json").confirmOverCap,
+          }),
+        ),
     )
     .delete("/profile/addons/:id", validate("param", ItemParam), async (c) =>
       c.json(await deleteAddon(deps, { itemId: c.req.valid("param").id })),

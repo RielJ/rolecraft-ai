@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { checkDraft, factKey, parseCitations, quarantineViolations, stripMarkers } from "@/domain/citations";
 import { checkGate, type GateOutput } from "@/domain/gate";
+import { isPrivateGithubUrl, stripPrivateGithubUrls } from "@/domain/github-link";
 import { classifyQuestion } from "@/domain/must-answer";
 import {
   allowedFacts,
@@ -50,6 +51,7 @@ import { facts, jobs, opportunities, outputFacts, outputs, profileItems } from "
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { parseQuestionsReply } from "./ai-replies";
 import { AppError, type Deps, notFound } from "./context";
+import { privateGithubRepos } from "./github";
 import { jobFacts } from "./jobs";
 import { loadContact } from "./profile";
 import { latestTask, startTask, type TaskContext } from "./tasks";
@@ -498,9 +500,15 @@ async function exportableText(deps: Deps, outputId: OutputId) {
   }
   const gate = await gateFor(deps, output.opportunityId);
   if (!gate.ok) throw needsInput(gate);
-  const { contact, standardAnswers } = await loadContact(deps);
+  const [{ contact, standardAnswers }, repos] = await Promise.all([loadContact(deps), privateGithubRepos(deps)]);
   const body = output.body ?? (output.mustAnswer ? standardAnswers[output.mustAnswer] : undefined) ?? "";
-  return { output, contact, text: stripMarkers(body).trim() };
+  // A private repo's facts may be drafted from, but its repo and commit URLs never leave the app
+  // (decision 55): not in the text, and not in the contact line of a PDF.
+  return {
+    output,
+    contact: { ...contact, links: contact.links.filter((link) => !isPrivateGithubUrl({ link, repos })) },
+    text: stripPrivateGithubUrls({ text: stripMarkers(body), repos }).trim(),
+  };
 }
 
 export async function exportText(deps: Deps, { outputId }: { outputId: OutputId }): Promise<{ text: string }> {
@@ -537,12 +545,27 @@ type DraftFactRow = PromptFact & { id: FactId };
 /** Confirmed facts with their item's link and usage, in key order. */
 async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftFactRow[]> {
   const rows = await deps.db
-    .select({ id: facts.id, no: facts.no, text: facts.text, link: profileItems.link, usage: profileItems.usage })
+    .select({
+      id: facts.id,
+      no: facts.no,
+      text: facts.text,
+      link: profileItems.link,
+      usage: profileItems.usage,
+      githubPrivate: profileItems.githubPrivate,
+      evidence: facts.evidence,
+    })
     .from(facts)
     .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
     .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")))
     .orderBy(asc(facts.no));
-  return rows.map((r) => ({ id: r.id, key: factKey(r.no), text: r.text, link: r.link, usage: r.usage }));
+  return rows.map((r) => ({
+    id: r.id,
+    key: factKey(r.no),
+    text: r.text,
+    // A private repo's link is not offered to the drafter; the export filter is the backstop.
+    link: r.githubPrivate === true || r.evidence?.private === true ? null : r.link,
+    usage: r.usage,
+  }));
 }
 
 function mustAnswerRefusal(output: Pick<OutputRow, "question">): AppError {

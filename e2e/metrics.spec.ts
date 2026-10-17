@@ -26,6 +26,7 @@ const banner = (page: Page) => page.getByRole("banner");
 test("the top bar shows the refresh age, and moves on when a Refresh finishes", async ({ page }) => {
   await page.goto("/");
   await expect(banner(page).getByText("Not refreshed yet")).toBeVisible();
+  await expect(banner(page).getByRole("link", { name: "No jobs" })).toBeVisible();
 
   // The first Refresh goes through the sources panel. No reload: the age appears on its own.
   await banner(page)
@@ -35,6 +36,17 @@ test("the top bar shows the refresh age, and moves on when a Refresh finishes", 
   await expect(page.getByText(/^Refresh done\./)).toBeVisible();
   await expect(banner(page).getByText("Refreshed just now")).toBeVisible();
   await expect(banner(page).getByText("Not refreshed yet")).toHaveCount(0);
+
+  // The job count sits right of the age and matches what Matches lists.
+  const count = banner(page).getByRole("link", { name: /^[\d,]+ jobs?$/ });
+  await expect(count).toBeVisible();
+  const shown = Number((await count.innerText()).replace(/\D/g, ""));
+  await expect(page.getByText(new RegExp(`^${shown} jobs?$`)).last()).toBeVisible();
+  const [ageBox, countBox] = [
+    await banner(page).getByText("Refreshed just now").boundingBox(),
+    await count.boundingBox(),
+  ];
+  expect(countBox?.x ?? 0).toBeGreaterThan((ageBox?.x ?? 0) + (ageBox?.width ?? 0));
 
   // The same refresh, finished three days ago.
   await withSql((sql) => sql`UPDATE tasks SET finished_at = now() - interval '3 days 1 hour' WHERE kind = 'refresh'`);

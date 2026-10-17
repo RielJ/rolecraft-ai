@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { RefreshResult } from "@/shared/api";
-import { refreshedLabel, sourceStatusLabel } from "@/shared/labels";
+import { jobCountLabel, refreshedLabel, sourceStatusLabel } from "@/shared/labels";
 import { keys, useRefresh } from "../queries";
 import { Button } from "../ui/button";
 import {
@@ -87,6 +88,19 @@ function RefreshAge({ at }: { at: string | null }) {
   );
 }
 
+/** How many jobs Matches can show, beside the refresh age. A link, so it doubles as a way there. */
+function JobCount({ count }: { count: number }) {
+  return (
+    <Link
+      to="/"
+      title="Open jobs in Matches, not counting excluded ones"
+      className="hidden whitespace-nowrap rounded-sm text-muted-foreground text-xs tabular-nums transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:inline"
+    >
+      {jobCountLabel(count)}
+    </Link>
+  );
+}
+
 /**
  * Starts a refresh and shows its step while it runs. When it finishes, the job list and the
  * sources page reload and a toast sums it up. A second press while one runs says so.
@@ -137,7 +151,12 @@ export function RefreshButton() {
   );
 
   // Nothing until the newest refresh is known, so a loading bar never reads "Not refreshed yet".
-  const age = refresh.data && <RefreshAge at={refresh.data.lastRefreshedAt} />;
+  const age = refresh.data && (
+    <>
+      <RefreshAge at={refresh.data.lastRefreshedAt} />
+      <JobCount count={refresh.data.openJobs} />
+    </>
+  );
   if (!neverRefreshed) {
     return (
       <>

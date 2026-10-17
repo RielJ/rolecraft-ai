@@ -23,11 +23,16 @@ import type { AiProviderClient } from "@/server/adapters/ai/types";
 import { parseEligibilityReply } from "@/server/services/ai-replies";
 import { Contact } from "@/shared/api";
 import { AiTier, Eligibility, ItemUsage, OpportunityType, OutputKind } from "@/shared/enums";
+import { type GithubOutcome, githubLine, loadGithubCases, runGithubCase } from "./github";
 
 /*
  * The evaluation set (decision 30, PLAN.md slice 10). Usage:
  *
  *   bun run eval --tier light --model <id> [--via key|pi]
+ *   bun run eval --tier light --github [--model <id>] [--via key|pi]
+ *
+ * `--github` runs only the GitHub set (eval/github.ts). With HB_AI=pi and no --via or --model, it
+ * runs through pi with HB_PI_MODEL_LIGHT (claude-haiku-5-5 by default), so it never needs a key.
  *
  * Eligibility: each posting goes through the app's rules first. Postings the rules leave unclear
  * go to the model with the app's prompt, and its answer counts only through the app's own
@@ -319,6 +324,85 @@ export function summaryLine(report: EvalReport): string {
   return `${report.model} (${report.tier}, via ${report.via}): ${parts.join(", ")}, ${cost}. ${exitCode(report) === 0 ? "PASS" : "FAIL"}`;
 }
 
+// ---------- GitHub set ----------
+
+export type GithubReport = {
+  model: string;
+  tier: AiTier;
+  via: string;
+  cases: GithubOutcome[];
+  inventedClaims: number;
+  injectedFacts: number;
+  errors: number;
+  costUsd: number | null;
+};
+
+export function githubExitCode(report: Pick<GithubReport, "inventedClaims" | "injectedFacts" | "errors">): 0 | 1 {
+  return report.inventedClaims + report.injectedFacts + report.errors === 0 ? 0 : 1;
+}
+
+export function githubSummaryLine(report: GithubReport): string {
+  const cost = report.costUsd === null ? "cost unknown" : `$${report.costUsd.toFixed(4)}`;
+  const parts = [
+    plural(report.inventedClaims, "invented claim"),
+    plural(report.injectedFacts, "injected fact"),
+    plural(report.errors, "failed case"),
+  ];
+  return `${report.model} (${report.tier}, via ${report.via}): ${parts.join(", ")}, ${cost}. ${githubExitCode(report) === 0 ? "PASS" : "FAIL"}`;
+}
+
+/** Run the GitHub set against one model, one case at a time. */
+export async function runGithubEval({
+  client,
+  key = "",
+  model,
+  tier,
+  via,
+  root = import.meta.dir,
+  onCase = () => {},
+}: {
+  client: AiProviderClient;
+  key?: string;
+  model: string;
+  tier: AiTier;
+  via: string;
+  root?: string;
+  onCase?: (line: string) => void;
+}): Promise<GithubReport> {
+  let cost: number | null = 0;
+  const call = async (prompt: Prompt, maxOutputTokens: number) => {
+    const completion = await client.complete({
+      key,
+      model,
+      tier,
+      system: prompt.system,
+      messages: prompt.messages,
+      maxOutputTokens,
+    });
+    const spent =
+      completion.costUsd ??
+      costUsd({ model, inputTokens: completion.inputTokens, outputTokens: completion.outputTokens });
+    cost = cost === null || spent === null ? null : cost + spent;
+    return completion.text;
+  };
+  const cases: GithubOutcome[] = [];
+  for (const c of await loadGithubCases(root)) {
+    const outcome = await runGithubCase({ call, model, c });
+    cases.push(outcome);
+    onCase(githubLine(outcome));
+  }
+  return {
+    model,
+    tier,
+    via,
+    cases,
+    inventedClaims: cases.reduce((n, o) => n + o.invented.length, 0),
+    injectedFacts: cases.reduce((n, o) => n + o.injected.length, 0),
+    errors: cases.filter((o) => o.error !== null).length,
+    costUsd: cost,
+  };
+}
+
 // ---------- CLI ----------
 
 const Args = z.object({
@@ -389,6 +473,7 @@ export async function main(argv: readonly string[], out: (line: string) => void 
         via: { type: "string" },
         provider: { type: "string" },
         "pi-provider": { type: "string" },
+        github: { type: "boolean" },
       },
       strict: true,
     }).values;
@@ -396,8 +481,15 @@ export async function main(argv: readonly string[], out: (line: string) => void 
     out(errorText(error));
     return 2;
   }
-  const { "pi-provider": piProvider, ...rest } = raw;
-  const args = Args.safeParse({ ...rest, piProvider, model: raw.model ?? "" });
+  const { "pi-provider": piProvider, github, ...rest } = raw;
+  // The GitHub set follows HB_AI=pi (decision 48): pi and its light model unless told otherwise.
+  const viaPi = github === true && process.env.HB_AI === "pi";
+  const args = Args.safeParse({
+    ...rest,
+    piProvider,
+    via: raw.via ?? (viaPi ? "pi" : undefined),
+    model: raw.model ?? (viaPi ? process.env.HB_PI_MODEL_LIGHT || "claude-haiku-5-5" : ""),
+  });
   if (!args.success) {
     out(z.prettifyError(args.error));
     return 2;
@@ -406,6 +498,15 @@ export async function main(argv: readonly string[], out: (line: string) => void 
   if (typeof client === "string") {
     out(client);
     return 2;
+  }
+  if (github === true) {
+    out(`Eval: ${args.data.model}, ${args.data.tier} tier, via ${client.via}`);
+    const cases = await loadGithubCases(import.meta.dir);
+    out(`GitHub: ${cases.length} recorded repos`);
+    const report = await runGithubEval({ ...client, model: args.data.model, tier: args.data.tier, onCase: out });
+    out("");
+    out(githubSummaryLine(report));
+    return githubExitCode(report);
   }
   const sets = await loadSets();
   const asked = sets.eligibility.filter(

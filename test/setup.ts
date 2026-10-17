@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
+import { createPublicReader } from "@/server/adapters/github";
 import { createHttpClient, type HttpClient } from "@/server/adapters/http";
 import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
 import { createChromiumPdf, type PdfRenderer } from "@/server/adapters/pdf";
@@ -68,7 +69,7 @@ export function offlineHttp(): HttpClient {
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource">> = {},
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource" | "github">> = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
@@ -83,6 +84,7 @@ export async function testDeps(
     http,
     // Sources read through the same injected client, so a test's fake fetch serves both.
     sources: over.sources ?? createSourceAdapters(http),
+    github: over.github ?? createPublicReader({ http, user: null }),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
     fake,
   };
@@ -92,6 +94,14 @@ export async function testDeps(
 export async function waitForSplits(profile: ProfileDto): Promise<void> {
   const items = [profile.cv, ...profile.addons];
   for (const item of items) if (item?.splitTask?.status === "running") await waitForTask(item.splitTask.id);
+}
+
+/** Wait for every GitHub read a profile response shows as running. */
+export async function waitForGithubReads(profile: ProfileDto): Promise<void> {
+  for (const item of profile.addons) {
+    const task = item.github?.readTask;
+    if (task?.status === "running") await waitForTask(task.id);
+  }
 }
 
 /** Raw SQL against the test database, for CHECK and row-level assertions. */

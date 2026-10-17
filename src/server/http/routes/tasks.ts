@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ConfirmOverCapInput, TaskId } from "@/shared/api";
 import type { Deps } from "../../services/context";
+import { retryGithubRead } from "../../services/github";
 import { retrySplit } from "../../services/profile";
 import { latestRefresh, startRefresh } from "../../services/sources";
 import { getTask, retryTask } from "../../services/tasks";
@@ -24,6 +25,7 @@ export function taskRoutes(deps: Deps) {
             handlers: {
               draft: (input, options) => retryDraft(deps, input, options),
               split: (input, options) => retrySplit(deps, input, options),
+              github_read: (input, options) => retryGithubRead(deps, input, options),
               suggest_questions: (input, options) => retrySuggestQuestions(deps, input, options),
               // A refresh retries from scratch; its input carries nothing.
               refresh: () => startRefresh(deps),

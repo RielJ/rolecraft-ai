@@ -1,5 +1,6 @@
 import type { ErrorCode, UserId } from "@/shared/api";
 import type { AiClients, AiSource } from "../adapters/ai/types";
+import type { GithubReader } from "../adapters/github";
 import type { HttpClient } from "../adapters/http";
 import type { KeyStore } from "../adapters/key-store";
 import type { PdfRenderer } from "../adapters/pdf";
@@ -22,10 +23,12 @@ export type Deps = {
   http: HttpClient;
   /** Job sources by kind, built on `http` (or on fixture files with `HB_SOURCES=fixture`). */
   sources: SourceAdapters;
+  /** Reads GitHub links on add-ons: public REST, `gh api` (HB_GITHUB=gh) or fixture snapshots. */
+  github: GithubReader;
   clock: Clock;
 };
 
-type Status = 400 | 402 | 404 | 409 | 422 | 500 | 503;
+type Status = 400 | 402 | 404 | 409 | 422 | 429 | 500 | 503;
 
 const STATUS: Record<ErrorCode, Status> = {
   invalid_input: 400,
@@ -44,6 +47,9 @@ const STATUS: Record<ErrorCode, Status> = {
   has_work: 409,
   both_on_board: 409,
   unreadable_file: 422,
+  github_rate_limited: 429,
+  github_account: 409,
+  github_unavailable: 503,
   internal: 500,
 };
 

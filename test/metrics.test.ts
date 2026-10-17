@@ -47,6 +47,7 @@ describe("refresh age", () => {
       task: null,
       result: null,
       lastRefreshedAt: null,
+      openJobs: 0,
     });
 
     const sql = testSql();
@@ -167,5 +168,24 @@ describe("board metrics", () => {
       readyCount: 2,
       medianSavedToReadyMs: (40 * MINUTE + 3 * 60 * MINUTE) / 2,
     });
+  });
+});
+
+describe("top bar job count", () => {
+  test("counts what Matches can show: open, untouched, and not excluded unless overridden", async () => {
+    await addJob("Open Engineer", "Fully remote and open worldwide.");
+    await addJob("Unclear Engineer", "Remote.");
+    await addJob("Locked", "US-only applicants, please.");
+    const overridden = await addJob("Locked Overridden", "US-only applicants, please.");
+    const closed = await addJob("Open Closed", "Fully remote and open worldwide.");
+    const saved = await addJob("Open Saved", "Fully remote and open worldwide.");
+    const dismissed = await addJob("Open Dismissed", "Fully remote and open worldwide.");
+    await testSql()`UPDATE jobs SET closed_at = ${START} WHERE id = ${closed}`;
+    await ok(await call("POST", `/jobs/${saved}/save`), SavedJob);
+    expect((await call("POST", `/jobs/${dismissed}/dismiss`, { reason: null })).status).toBeLessThan(300);
+    expect((await call("POST", "/filtered/overrides", { jobId: overridden })).status).toBeLessThan(300);
+
+    const { openJobs } = await ok(await call("GET", "/refresh"), RefreshDto);
+    expect(openJobs).toBe(3);
   });
 });

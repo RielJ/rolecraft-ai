@@ -398,6 +398,12 @@ export function refreshedLabel({ at, now }: { at: Date | null; now: Date }): str
   return `Refreshed ${count(Math.floor(ms / DAY_MS), "day")} ago`;
 }
 
+/** "No jobs", "1 job", "1,204 jobs": the top bar's count of what Matches can show. */
+export function jobCountLabel(n: number): string {
+  if (n === 0) return "No jobs";
+  return `${new Intl.NumberFormat("en-US").format(n)} ${n === 1 ? "job" : "jobs"}`;
+}
+
 /** "40 min", "5 hours", "2 days": rounded, for a median that is an upper bound anyway. */
 export function durationLabel(ms: number): string {
   if (ms < HOUR_MS) return `${Math.max(1, Math.round(ms / MINUTE_MS))} min`;

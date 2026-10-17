@@ -4,6 +4,7 @@ import { factKey } from "@/domain/citations";
 import { contactFromCv, fillContact } from "@/domain/contact";
 import { diffFacts } from "@/domain/facts-diff";
 import { skillsInFacts } from "@/domain/features";
+import { githubLabel, parseGithubLink } from "@/domain/github-link";
 import {
   buildSplitPrompt,
   buildSplitRetryPrompt,
@@ -17,6 +18,8 @@ import {
   type AddonInput,
   type Contact,
   type FactId,
+  GithubReadSummary,
+  type ItemGithubDto,
   type ItemId,
   type ProfileDto,
   type ProfileItemDto,
@@ -28,6 +31,7 @@ import {
   type UpdateProfileInput,
   type UserId,
 } from "@/shared/api";
+import type { FactOrigin } from "@/shared/enums";
 import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
 import type { Db } from "../db/client";
@@ -74,8 +78,26 @@ export async function loadContact(deps: Pick<Deps, "db" | "userId">): Promise<{
   };
 }
 
+/** The item's GitHub link, its read task and what the last finished read did; null for other links. */
+async function githubOf(deps: Deps, row: ItemRow): Promise<ItemGithubDto | null> {
+  const link = row.kind !== "cv" && row.link ? parseGithubLink(row.link) : null;
+  if (!link) return null;
+  const read = await latestTask(deps, { kind: "github_read", inputMatches: { itemId: row.id } });
+  const summary = GithubReadSummary.safeParse(read?.result);
+  return {
+    kind: link.kind,
+    label: githubLabel(link),
+    private: row.githubPrivate,
+    readTask: read?.task ?? null,
+    lastRead: summary.success ? summary.data : null,
+  };
+}
+
 async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
-  const split = await latestTask(deps, { kind: "split", inputMatches: { itemId: row.id } });
+  const [split, github] = await Promise.all([
+    latestTask(deps, { kind: "split", inputMatches: { itemId: row.id } }),
+    githubOf(deps, row),
+  ]);
   return {
     id: row.id,
     kind: row.kind,
@@ -88,6 +110,7 @@ async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
     rev: row.rev,
     fileName: row.fileName,
     splitTask: split?.task ?? null,
+    github,
   };
 }
 
@@ -106,10 +129,13 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
         text: facts.text,
         status: facts.status,
         seenRev: facts.seenRev,
+        origin: facts.origin,
+        evidence: facts.evidence,
         itemId: profileItems.id,
         itemKind: profileItems.kind,
         itemTitle: profileItems.title,
         itemRev: profileItems.rev,
+        itemGithubRev: profileItems.githubRev,
         usage: profileItems.usage,
       })
       .from(facts)
@@ -125,7 +151,12 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     targeting,
     cv: dtos.find((i) => i.kind === "cv") ?? null,
     addons: dtos.filter((i) => i.kind !== "cv"),
-    facts: rows.map(({ no, seenRev, itemRev, ...row }) => ({ ...row, key: factKey(no), inLatest: seenRev >= itemRev })),
+    facts: rows.map(({ no, seenRev, itemRev, itemGithubRev, ...row }) => ({
+      ...row,
+      key: factKey(no),
+      // Text facts follow the item's text versions, GitHub facts its reads.
+      inLatest: seenRev >= (row.origin === "github" ? itemGithubRev : itemRev),
+    })),
     skillsFound: skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) }),
     aiReady: aiConfig !== null,
   };
@@ -254,10 +285,11 @@ async function applySplit(
     if (!locked) return { kind: "skipped", reason: "item_deleted" } as const;
     if (locked.rev !== rev) return { kind: "skipped", reason: "newer_version" } as const;
 
+    // Facts read from GitHub are diffed by the GitHub read, never by a re-split of the text.
     const existing = await tx
       .select({ id: facts.id, text: facts.text, status: facts.status })
       .from(facts)
-      .where(eq(facts.itemId, itemId));
+      .where(and(eq(facts.itemId, itemId), eq(facts.origin, "text")));
     const diff = diffFacts({ existing, candidates });
     if (diff.unchanged.length) {
       await tx.update(facts).set({ seenRev: rev }).where(inArray(facts.id, diff.unchanged));
@@ -465,9 +497,9 @@ export async function deleteAddon(deps: Deps, { itemId }: { itemId: ItemId }): P
 
 // ---------- Facts (section 3.3, steps 3 and 4) ----------
 
-async function requireFact(deps: Deps, factId: FactId): Promise<{ itemId: ItemId }> {
+async function requireFact(deps: Deps, factId: FactId): Promise<{ itemId: ItemId; origin: FactOrigin }> {
   const [row] = await deps.db
-    .select({ itemId: facts.itemId })
+    .select({ itemId: facts.itemId, origin: facts.origin })
     .from(facts)
     .where(and(eq(facts.id, factId), eq(facts.userId, deps.userId)));
   if (!row) throw notFound("That fact");
@@ -490,10 +522,16 @@ export async function confirmAllFacts(deps: Deps): Promise<ProfileDto> {
 
 /** "Keep" on a fact that is not in the latest version of its item: it counts as seen again. */
 export async function keepFact(deps: Deps, { factId }: { factId: FactId }): Promise<ProfileDto> {
-  const { itemId } = await requireFact(deps, factId);
-  const [item] = await deps.db.select({ rev: profileItems.rev }).from(profileItems).where(eq(profileItems.id, itemId));
+  const { itemId, origin } = await requireFact(deps, factId);
+  const [item] = await deps.db
+    .select({ rev: profileItems.rev, githubRev: profileItems.githubRev })
+    .from(profileItems)
+    .where(eq(profileItems.id, itemId));
   if (!item) throw notFound("That fact's profile item");
-  await deps.db.update(facts).set({ seenRev: item.rev }).where(eq(facts.id, factId));
+  await deps.db
+    .update(facts)
+    .set({ seenRev: origin === "github" ? item.githubRev : item.rev })
+    .where(eq(facts.id, factId));
   return getProfile(deps);
 }
 

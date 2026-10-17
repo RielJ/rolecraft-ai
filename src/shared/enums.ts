@@ -25,6 +25,11 @@ export const FACT_STATUSES = ["pending", "confirmed"] as const;
 export const FactStatus = z.enum(FACT_STATUSES);
 export type FactStatus = z.infer<typeof FactStatus>;
 
+/** Where a fact came from: the item's own text, or a read of its GitHub link (decision 55). */
+export const FACT_ORIGINS = ["text", "github"] as const;
+export const FactOrigin = z.enum(FACT_ORIGINS);
+export type FactOrigin = z.infer<typeof FactOrigin>;
+
 export const USER_SENIORITIES = ["junior", "mid", "senior", "lead", "staff", "principal"] as const;
 export const UserSeniority = z.enum(USER_SENIORITIES);
 export type UserSeniority = z.infer<typeof UserSeniority>;
@@ -113,11 +118,11 @@ export const AI_TIERS = ["light", "writing"] as const;
 export const AiTier = z.enum(AI_TIERS);
 export type AiTier = z.infer<typeof AiTier>;
 
-export const AI_PURPOSES = ["split", "eligibility", "questions", "draft"] as const;
+export const AI_PURPOSES = ["split", "eligibility", "questions", "draft", "github"] as const;
 export const AiPurpose = z.enum(AI_PURPOSES);
 export type AiPurpose = z.infer<typeof AiPurpose>;
 
-export const TASK_KINDS = ["refresh", "split", "draft", "suggest_questions"] as const;
+export const TASK_KINDS = ["refresh", "split", "draft", "suggest_questions", "github_read"] as const;
 export const TaskKind = z.enum(TASK_KINDS);
 export type TaskKind = z.infer<typeof TaskKind>;
 

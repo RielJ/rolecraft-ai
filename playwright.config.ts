@@ -11,6 +11,9 @@ export const E2E_DATABASE_URL =
 /** Every fixture source request, one `host/path` line each (HB_SOURCES_LOG). Tests clear and read it. */
 export const E2E_SOURCES_LOG = join(tmpdir(), "hanapbuhay-e2e-sources.log");
 
+/** Recorded GitHub repos the server reads (HB_GITHUB=fixture). Tests copy snapshots here. */
+export const E2E_GITHUB_DIR = join(tmpdir(), "hanapbuhay-e2e-github");
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -35,6 +38,8 @@ export default defineConfig({
       HB_AI: "fake",
       HB_SOURCES: "fixture",
       HB_SOURCES_LOG: E2E_SOURCES_LOG,
+      HB_GITHUB: "fixture",
+      HB_GITHUB_DIR: E2E_GITHUB_DIR,
       HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
     },
     stdout: "pipe",

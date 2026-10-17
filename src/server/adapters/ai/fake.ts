@@ -61,6 +61,47 @@ function defaultQuestions(request: AiCompletionRequest): string {
   return JSON.stringify({ questions });
 }
 
+/** The body of the `<<< LABEL` data block, or "". */
+function dataBlock(prompt: string, label: string): string {
+  const start = prompt.indexOf(`\n<<< ${label}`);
+  if (start < 0) return "";
+  const body = prompt.slice(prompt.indexOf("\n", start + 1) + 1);
+  const end = body.indexOf("\n>>>");
+  return end < 0 ? body : body.slice(0, end);
+}
+
+/** GitHub picks: the first two tree paths not read yet that are not tests or docs. */
+function defaultGithubPicks(request: AiCompletionRequest): string {
+  const prompt = request.messages[0]?.content ?? "";
+  const already = new Set((/^Already read: (.*)$/m.exec(prompt)?.[1] ?? "").split(", "));
+  const files = dataBlock(prompt, "TREE")
+    .split("\n")
+    .filter((p) => p !== "" && !already.has(p) && !/(^|\/)(test|tests|docs)\//.test(p) && !/\.md$/i.test(p))
+    .slice(0, 2);
+  return JSON.stringify({ files });
+}
+
+/**
+ * GitHub facts: one per commit (its subject, citing its sha), plus the README's first plain
+ * sentence citing the README. Everything comes from the data, so every fact passes the checks.
+ */
+function defaultGithubFacts(request: AiCompletionRequest): string {
+  const prompt = request.messages[0]?.content ?? "";
+  const user = /^PERSON: (.*)$/m.exec(prompt)?.[1] ?? "";
+  const commits = dataBlock(prompt, `COMMITS BY ${user}`)
+    .split("\n")
+    .flatMap((line) => {
+      const m = /^([0-9a-f]{7,40}) (.+)$/.exec(line);
+      return m ? [{ text: m[2] ?? "", evidence: m[1] ?? "" }] : [];
+    });
+  const readmeLabel = /^<<< (FILE README[^\n(]*?)(?: \(cut short\))?$/m.exec(prompt)?.[1];
+  const readme = readmeLabel ? dataBlock(prompt, readmeLabel) : "";
+  const line = readme.split("\n").find((l) => l.trim() !== "" && !/^[#>!<[|`-]/.test(l.trim()));
+  const first = line ? sentenceSpans(line)[0]?.text.trim() : undefined;
+  const facts = [...(first && readmeLabel ? [{ text: first, evidence: readmeLabel.slice(5) }] : []), ...commits];
+  return JSON.stringify({ facts });
+}
+
 /** Which default writer answers a request, from what its last message asks for. */
 function defaultReply(request: AiCompletionRequest): string {
   const last = request.messages.at(-1)?.content ?? "";
@@ -68,6 +109,9 @@ function defaultReply(request: AiCompletionRequest): string {
   if (last.includes('{"verdict"')) return JSON.stringify({ verdict: "unclear", phrase: null });
   if (last.includes('{"questions"')) return defaultQuestions(request);
   if (last.includes('{"rewrites"')) return defaultRewrite(request);
+  if (last.includes('{"files"')) return defaultGithubPicks(request);
+  // Before the split check: the GitHub facts reply shape also starts with {"facts".
+  if (last.includes('"evidence"')) return defaultGithubFacts(request);
   if (last.includes('{"facts"')) return defaultSplit(request);
   return defaultDraft(request);
 }

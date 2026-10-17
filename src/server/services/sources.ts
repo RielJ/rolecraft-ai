@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import {
   type AddSourceInput,
   type RefreshDto,
@@ -12,7 +12,7 @@ import {
 import { BUILTIN_SOURCE_KINDS, type SourceKind } from "@/shared/enums";
 import { SOURCE_SITES } from "@/shared/labels";
 import { boardFromUrl, SourceError } from "../adapters/sources";
-import { sources, tasks } from "../db/schema";
+import { eligibilityOverrides, jobs, opportunities, sources, tasks } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 import { runRefresh } from "./sync";
 import { getTask, startTask } from "./tasks";
@@ -163,7 +163,7 @@ export async function latestRefresh(deps: Pick<Deps, "db" | "userId">): Promise<
     .where(and(eq(tasks.userId, deps.userId), eq(tasks.kind, "refresh")))
     .orderBy(desc(tasks.createdAt))
     .limit(1);
-  if (!latest) return { task: null, result: null, lastRefreshedAt: null };
+  if (!latest) return { task: null, result: null, lastRefreshedAt: null, openJobs: await openJobs(deps) };
   // Status first, result second: a task finishes with one UPDATE of both, so a task read as done
   // always has its result. The other order can see a refresh that ended in between as done with
   // no result, and the Refresh button would never sum it up.
@@ -171,7 +171,8 @@ export async function latestRefresh(deps: Pick<Deps, "db" | "userId">): Promise<
   const [row] = await deps.db.select({ result: tasks.result }).from(tasks).where(eq(tasks.id, latest.id));
   const parsed = RefreshResult.safeParse(row?.result);
   // Read after the status for the same reason: a task read as done is always counted here.
-  return { task, result: parsed.success ? parsed.data : null, lastRefreshedAt: await lastRefreshed(deps) };
+  const [lastRefreshedAt, open] = await Promise.all([lastRefreshed(deps), openJobs(deps)]);
+  return { task, result: parsed.success ? parsed.data : null, lastRefreshedAt, openJobs: open };
 }
 
 /**
@@ -194,4 +195,25 @@ async function lastRefreshed(deps: Pick<Deps, "db" | "userId">): Promise<string 
     .orderBy(desc(tasks.finishedAt))
     .limit(1);
   return row?.finishedAt?.toISOString() ?? null;
+}
+
+/**
+ * The top bar's job count: what Matches can show before its own filters. Open jobs that are not on
+ * the board or dismissed, and not excluded unless the user moved them to Matches (decision 53).
+ */
+async function openJobs(deps: Pick<Deps, "db" | "userId">): Promise<number> {
+  const [row] = await deps.db
+    .select({ n: count() })
+    .from(jobs)
+    .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
+    .leftJoin(eligibilityOverrides, eq(eligibilityOverrides.jobId, jobs.id))
+    .where(
+      and(
+        eq(jobs.userId, deps.userId),
+        isNull(jobs.closedAt),
+        isNull(opportunities.id),
+        or(ne(jobs.eligibility, "excluded"), isNotNull(eligibilityOverrides.jobId)),
+      ),
+    );
+  return row?.n ?? 0;
 }
