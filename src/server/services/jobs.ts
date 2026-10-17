@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { applyUrlKey, type DuplicateCandidate, duplicateDiff, isAutoMerge, likelyDuplicates } from "@/domain/dedup";
 import { toManila } from "@/domain/hours";
 import { type FxRates, monthlyInView, type Pay } from "@/domain/pay";
@@ -9,6 +9,7 @@ import type {
   AddLinkResult,
   JobFacts,
   JobId,
+  MergeResult,
   OpportunityId,
   PasteJobInput,
   SavedJob,
@@ -16,11 +17,12 @@ import type {
 } from "@/shared/api";
 import { type DismissReason, FILE_KINDS } from "@/shared/enums";
 import { blockedSite } from "@/shared/hosts";
-import { eligibilityLabel } from "@/shared/labels";
+import { eligibilityLabel, SOURCE_SITES } from "@/shared/labels";
 import { HttpError } from "../adapters/http";
 import { readPage } from "../adapters/page-reader";
 import type { Db } from "../db/client";
-import { jobs, opportunities, outputs, users } from "../db/schema";
+import { MERGE_SYNC_LOCK } from "../db/locks";
+import { jobListings, jobs, opportunities, outputs, sources, tasks, users } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -235,37 +237,89 @@ function candidateOf(row: JobRow): DuplicateCandidate {
 
 const MAX_DUPLICATES_SHOWN = 3;
 
+/** Section 3.8: the reason Merge is disabled, and the 409 message when it is called anyway. */
+export const BOTH_ON_BOARD = "Both are on your board. Close one instead.";
+
+function originName(origin: JobRow["origin"]): string {
+  switch (origin) {
+    case "link":
+      return "added by link";
+    case "paste":
+      return "pasted";
+    // Only when every listing is gone; a synced job normally names its board.
+    case "source":
+      return "job board";
+    default: {
+      const never: never = origin;
+      return never;
+    }
+  }
+}
+
+/** Where each job came from, for the hint's "(Greenhouse)": the primary listing's board first. */
+async function sourceNames(deps: Deps, rows: readonly JobRow[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (const row of rows) names.set(row.id, originName(row.origin));
+  if (rows.length === 0) return names;
+  const listings = await deps.db
+    .select({ jobId: jobListings.jobId, kind: sources.kind })
+    .from(jobListings)
+    .innerJoin(sources, eq(sources.id, jobListings.sourceId))
+    .where(
+      inArray(
+        jobListings.jobId,
+        rows.map((r) => r.id),
+      ),
+    )
+    .orderBy(desc(jobListings.isPrimary), asc(sources.label));
+  const named = new Set<string>();
+  for (const { jobId, kind } of listings) {
+    if (named.has(jobId)) continue;
+    named.add(jobId);
+    names.set(jobId, SOURCE_SITES[kind].name);
+  }
+  return names;
+}
+
 /** Open jobs that may be the same as `job` (section 3.8), computed on read. */
 async function possibleDuplicates(deps: Deps, job: JobRow): Promise<JobFacts["possibleDuplicates"]> {
-  const rows = await deps.db
-    .select({ job: jobs, opportunityId: opportunities.id })
-    .from(jobs)
-    .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
-    .where(
-      and(
-        eq(jobs.userId, deps.userId),
-        ne(jobs.id, job.id),
-        isNull(jobs.closedAt),
-        or(eq(jobs.companyKey, job.companyKey), eq(jobs.titleKey, job.titleKey)),
+  const [rows, [own]] = await Promise.all([
+    deps.db
+      .select({ job: jobs, opportunityId: opportunities.id, status: opportunities.status })
+      .from(jobs)
+      .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
+      .where(
+        and(
+          eq(jobs.userId, deps.userId),
+          ne(jobs.id, job.id),
+          isNull(jobs.closedAt),
+          or(eq(jobs.companyKey, job.companyKey), eq(jobs.titleKey, job.titleKey)),
+        ),
       ),
-    );
+    deps.db.select({ status: opportunities.status }).from(opportunities).where(eq(opportunities.jobId, job.id)),
+  ]);
   const self = candidateOf(job);
   const byId = new Map<string, (typeof rows)[number]>(rows.map((r) => [r.job.id, r]));
-  return likelyDuplicates({ job: self, candidates: rows.map((r) => candidateOf(r.job)) })
+  const shown = likelyDuplicates({ job: self, candidates: rows.map((r) => candidateOf(r.job)) })
     .slice(0, MAX_DUPLICATES_SHOWN)
     .flatMap((c) => {
       const row = byId.get(c.id);
-      if (!row) return [];
-      return [
-        {
-          jobId: row.job.id,
-          title: row.job.title,
-          company: row.job.company,
-          opportunityId: row.opportunityId,
-          diff: duplicateDiff({ job: self, other: c }),
-        },
-      ];
+      return row ? [{ row, candidate: c }] : [];
     });
+  const names = await sourceNames(
+    deps,
+    shown.map((s) => s.row.job),
+  );
+  const ownOnBoard = (own?.status ?? null) !== null;
+  return shown.map(({ row, candidate }) => ({
+    jobId: row.job.id,
+    title: row.job.title,
+    company: row.job.company,
+    opportunityId: row.opportunityId,
+    source: names.get(row.job.id) ?? originName(row.job.origin),
+    diff: duplicateDiff({ job: self, other: candidate }),
+    merge: ownOnBoard && row.status !== null ? { kind: "blocked", reason: BOTH_ON_BOARD } : { kind: "ready" },
+  }));
 }
 
 /** Verdict and phrase, PH-time hours, converted pay and duplicate hints for one job. */
@@ -378,4 +432,91 @@ export async function undoJob(deps: Deps, { jobId, action }: { jobId: JobId } & 
     // Outputs cascade with the opportunity.
     await tx.delete(opportunities).where(eq(opportunities.id, opportunity.id));
   });
+}
+
+// ---------- merge a likely duplicate (section 3.8) ----------
+
+type MergeSide = {
+  id: JobId;
+  opportunity: { id: OpportunityId; status: (typeof opportunities.$inferSelect)["status"] } | null;
+};
+
+/**
+ * `POST /api/jobs/:id/merge { into }` (section 3.8, decision 10). Keeps the job that has an
+ * opportunity, moves the other's listings to it as non-primary, and deletes the other, in one
+ * transaction as the app role (never `hb_sync`). With no opportunity on either, `into` is kept.
+ *
+ * A dismissed-only opportunity (no board status) counts as having one, so a job you dismissed
+ * stays dismissed. When the loser holds only a dismissal, that row goes with it: a dismissal never
+ * has files, history or notes, because a job on the board cannot be dismissed. Both on the board
+ * is `409 both_on_board`, and any merge while a refresh runs is `409 refresh_running`. The
+ * exclusive `MERGE_SYNC_LOCK` makes that check race-free against sync's shared hold on it.
+ */
+export async function mergeJob(deps: Deps, { jobId, into }: { jobId: JobId; into: JobId }): Promise<MergeResult> {
+  if (jobId === into) {
+    throw new AppError({ code: "invalid_input", message: "A job cannot be merged into itself." });
+  }
+  const now = deps.clock.now();
+  return deps.db.transaction(async (tx) => {
+    // First statement: wait for any sync transaction in flight, and keep new ones out until this
+    // commits (`locks.ts`). The refresh check below then sees every refresh that could apply.
+    await tx.execute(sql.raw(`SELECT pg_advisory_xact_lock(${MERGE_SYNC_LOCK})`));
+    const [running] = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.userId, deps.userId), eq(tasks.kind, "refresh"), eq(tasks.status, "running")));
+    if (running) {
+      throw new AppError({
+        code: "refresh_running",
+        message: "A refresh is running. Merge when it finishes.",
+        details: { taskId: running.id },
+      });
+    }
+
+    // Lock both rows (in id order, so two opposite merges cannot deadlock) before reading their state.
+    const locked = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.userId, deps.userId), inArray(jobs.id, [jobId, into])))
+      .orderBy(asc(jobs.id))
+      .for("update");
+    if (!locked.some((j) => j.id === jobId)) throw notFound("That job");
+    if (!locked.some((j) => j.id === into)) throw notFound("The job to merge into");
+
+    const opps = await tx
+      .select({ id: opportunities.id, jobId: opportunities.jobId, status: opportunities.status })
+      .from(opportunities)
+      .where(inArray(opportunities.jobId, [jobId, into]))
+      .for("update");
+    const side = (id: JobId) => {
+      const o = opps.find((x) => x.jobId === id);
+      return { id, opportunity: o ? { id: o.id, status: o.status } : null };
+    };
+    const { keep, drop } = pickKept({ source: side(jobId), target: side(into) });
+
+    await tx.update(jobListings).set({ jobId: keep.id, isPrimary: false }).where(eq(jobListings.jobId, drop.id));
+    // `opportunities.job_id` is ON DELETE RESTRICT: the loser's dismissal goes first.
+    if (drop.opportunity) await tx.delete(opportunities).where(eq(opportunities.id, drop.opportunity.id));
+    await tx.delete(jobs).where(eq(jobs.id, drop.id));
+    // A job is closed when all its listings are missing; the moved ones may reopen it.
+    const kept = await tx
+      .select({ missingSince: jobListings.missingSince })
+      .from(jobListings)
+      .where(eq(jobListings.jobId, keep.id));
+    if (kept.length > 0) {
+      const missing = kept.flatMap((l) => (l.missingSince ? [l.missingSince.getTime()] : []));
+      const closedAt = missing.length === kept.length ? new Date(Math.max(...missing)) : null;
+      await tx.update(jobs).set({ closedAt, updatedAt: now }).where(eq(jobs.id, keep.id));
+    }
+    return { jobId: keep.id, opportunityId: keep.opportunity?.id ?? null };
+  });
+}
+
+/** Board first, then any opportunity (a dismissal), then the merge target. */
+function pickKept({ source, target }: { source: MergeSide; target: MergeSide }): { keep: MergeSide; drop: MergeSide } {
+  const rank = (s: MergeSide) => (s.opportunity === null ? 0 : s.opportunity.status === null ? 1 : 2);
+  if (rank(source) === 2 && rank(target) === 2) {
+    throw new AppError({ code: "both_on_board", message: BOTH_ON_BOARD });
+  }
+  return rank(source) > rank(target) ? { keep: source, drop: target } : { keep: target, drop: source };
 }

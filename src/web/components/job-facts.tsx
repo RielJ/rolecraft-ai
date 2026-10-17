@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import type { JobFacts as JobFactsDto } from "@/shared/api";
+import type { JobFacts as JobFactsDto, PossibleDuplicate } from "@/shared/api";
 
 const DATE = new Intl.DateTimeFormat("en-PH", {
   month: "short",
@@ -67,9 +67,25 @@ export function JobFacts({ job }: { job: JobFactsDto }) {
   );
 }
 
+/** The two-line diff under a duplicate hint: what sets each job apart (section 3.8). */
+export function DuplicateDiffLines({ diff }: { diff: PossibleDuplicate["diff"] }) {
+  return (
+    <dl className="grid gap-0.5">
+      <div className="flex gap-2">
+        <dt className="w-16 shrink-0 text-muted-foreground">This job</dt>
+        <dd className="min-w-0 break-words">{diff.job}</dd>
+      </div>
+      <div className="flex gap-2">
+        <dt className="w-16 shrink-0 text-muted-foreground">That job</dt>
+        <dd className="min-w-0 break-words">{diff.other}</dd>
+      </div>
+    </dl>
+  );
+}
+
 /**
- * The quiet "possibly the same job" hint (section 3.8) with the two-line diff. Merging arrives
- * with the reading pane in slice 9.
+ * The quiet "possibly the same job" hint (section 3.8) with the two-line diff, as the workspace
+ * shows it. Merge lives in the Matches reading pane (`reading-pane.tsx`).
  */
 export function PossibleDuplicates({ duplicates }: { duplicates: JobFactsDto["possibleDuplicates"] }) {
   if (duplicates.length === 0) return null;
@@ -93,16 +109,7 @@ export function PossibleDuplicates({ duplicates }: { duplicates: JobFactsDto["po
                 <span className="text-foreground">{name}</span>
               )}
             </p>
-            <dl className="grid gap-0.5">
-              <div className="flex gap-2">
-                <dt className="w-16 shrink-0 text-muted-foreground">This job</dt>
-                <dd className="min-w-0 break-words">{d.diff.job}</dd>
-              </div>
-              <div className="flex gap-2">
-                <dt className="w-16 shrink-0 text-muted-foreground">That job</dt>
-                <dd className="min-w-0 break-words">{d.diff.other}</dd>
-              </div>
-            </dl>
+            <DuplicateDiffLines diff={d.diff} />
           </li>
         );
       })}

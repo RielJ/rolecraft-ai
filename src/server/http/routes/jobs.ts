@@ -1,8 +1,17 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { AddLinkInput, DismissInput, JobId, PasteJobInput, type SavedJob, UndoInput } from "@/shared/api";
+import {
+  AddLinkInput,
+  DismissInput,
+  JobId,
+  MergeInput,
+  type MergeResult,
+  PasteJobInput,
+  type SavedJob,
+  UndoInput,
+} from "@/shared/api";
 import type { Deps } from "../../services/context";
-import { addJobFromLink, addPastedJob, dismissJob, saveJob, undoJob } from "../../services/jobs";
+import { addJobFromLink, addPastedJob, dismissJob, mergeJob, saveJob, undoJob } from "../../services/jobs";
 import { validate } from "../validate";
 
 const JobParam = z.object({ id: JobId });
@@ -28,5 +37,12 @@ export function jobRoutes(deps: Deps) {
     .post("/jobs/:id/undo", validate("param", JobParam), validate("json", UndoInput), async (c) => {
       await undoJob(deps, { jobId: c.req.valid("param").id, action: c.req.valid("json").action });
       return c.json({ ok: true });
+    })
+    .post("/jobs/:id/merge", validate("param", JobParam), validate("json", MergeInput), async (c) => {
+      const merged: MergeResult = await mergeJob(deps, {
+        jobId: c.req.valid("param").id,
+        into: c.req.valid("json").into,
+      });
+      return c.json(merged);
     });
 }

@@ -180,3 +180,40 @@ test("Profile's seniority, years and minimum pay save, and the minimum pay start
   await expect(list(page).getByRole("option")).toHaveCount(5);
   await expect(page.getByText("From your profile")).toBeHidden();
 });
+
+test("the reading pane offers Merge for a likely duplicate, and merging leaves one job", async ({ page }) => {
+  await withSql(async (sql) => {
+    const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;
+    const dupes = [
+      { title: "Sr. Frontend Engineer (Remote)", company: "Acme Inc", text: "Build our design system in React." },
+      { title: "Frontend Engineer, Senior", company: "Acme", text: "Own the checkout UI in Vue." },
+    ];
+    for (const [i, d] of dupes.entries()) {
+      await sql`
+        INSERT INTO jobs (user_id, origin, title, company, title_key, company_key, description,
+          content_hash, description_key, first_seen_at)
+        VALUES (${user?.id ?? ""}, 'link', ${d.title}, ${d.company}, 'engineer frontend senior', 'acme',
+          ${d.text}, ${`dupe-${i}`}, ${`dupe-${i}`}, now() + make_interval(mins => ${i + 1}))`;
+    }
+  });
+
+  await page.goto("/");
+  // Newest first: "Frontend Engineer, Senior" is selected.
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Frontend Engineer, Senior");
+  const hint = pane(page).getByRole("list", { name: "Possible duplicates" });
+  await expect(hint).toContainText(
+    "Possibly the same job as Sr. Frontend Engineer (Remote) at Acme Inc (added by link) · Merge",
+  );
+  await hint.getByRole("button", { name: "Merge" }).click();
+
+  await expect(list(page)).not.toContainText("Frontend Engineer, Senior");
+  await expect(selected(page)).toContainText("Sr. Frontend Engineer (Remote)");
+  await expect(pane(page).getByRole("list", { name: "Possible duplicates" })).toBeHidden();
+  const left = await withSql(
+    (sql) =>
+      sql<
+        { title: string }[]
+      >`SELECT title FROM jobs WHERE company_key = 'acme' AND title_key = 'engineer frontend senior'`,
+  );
+  expect(left.map((r) => r.title)).toEqual(["Sr. Frontend Engineer (Remote)"]);
+});

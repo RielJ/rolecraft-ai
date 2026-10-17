@@ -104,6 +104,21 @@ describe("likelyDuplicates (section 3.8)", () => {
     expect(likelyDuplicates({ job, candidates: [copied, different] }).map((c) => c.id)).toEqual(["b"]);
   });
 
+  test("slice 9: 'Sr. Frontend Engineer (Remote)' at 'Acme Inc' and 'Frontend Engineer, Senior' at 'Acme' are suggested", () => {
+    const sr: DuplicateCandidate = {
+      ...candidate({ id: "sr", title: "Sr. Frontend Engineer (Remote)" }),
+      companyKey: companyKey("Acme Inc"),
+      description: "Build our design system in React and TypeScript.",
+    };
+    const senior: DuplicateCandidate = {
+      ...candidate({ id: "senior", title: "Frontend Engineer, Senior" }),
+      companyKey: companyKey("Acme"),
+      description: "Own the checkout UI. Vue experience is a plus. Work hours overlap with Manila.",
+    };
+    expect(likelyDuplicates({ job: sr, candidates: [senior] }).map((c) => c.id)).toEqual(["senior"]);
+    expect(likelyDuplicates({ job: senior, candidates: [sr] }).map((c) => c.id)).toEqual(["sr"]);
+  });
+
   test("the job itself and closed jobs are left out", () => {
     const closed = candidate({ id: "b", title: "Software Engineer", closedAt: new Date("2026-01-01T00:00:00Z") });
     expect(likelyDuplicates({ job, candidates: [job, closed] })).toEqual([]);

@@ -10,7 +10,15 @@ import { JobList, JobListSkeleton } from "../components/job-list";
 import { ReadingPane } from "../components/reading-pane";
 import { ShortcutSheet } from "../components/shortcut-sheet";
 import { setAddJobOpen } from "../components/top-bar";
-import { useDismissJob, useMatchDetail, useMatches, usePrefetchMatch, useSaveJob, useUndoJob } from "../queries";
+import {
+  useDismissJob,
+  useMatchDetail,
+  useMatches,
+  useMergeJob,
+  usePrefetchMatch,
+  useSaveJob,
+  useUndoJob,
+} from "../queries";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -173,6 +181,8 @@ export function MatchesPage() {
   const save = useSaveJob();
   const dismiss = useDismissJob();
   const undo = useUndoJob();
+  const merge = useMergeJob();
+  const [mergingInto, setMergingInto] = useState<JobId | null>(null);
 
   // Focus the list once there is something in it, so the keys work at once.
   const hasJobs = visible.length > 0;
@@ -259,6 +269,33 @@ export function MatchesPage() {
           },
         ),
       () => {},
+    );
+  }
+
+  /**
+   * Merge the shown job into a likely duplicate (section 3.8). The server keeps whichever has an
+   * opportunity, else the duplicate. If the shown job went, the kept one is selected when it is in
+   * the list; otherwise the next job is.
+   */
+  function mergeCurrent(into: JobId) {
+    if (!current || mergingInto) return;
+    const { id } = current;
+    setMergingInto(into);
+    merge.mutate(
+      { id, into },
+      {
+        onSuccess: ({ jobId }) => {
+          if (jobId === id) {
+            toast("Merged. This job now lists both postings.");
+            return;
+          }
+          leave(id);
+          if (visible.some((j) => j.id === jobId)) setSelectedId(jobId);
+          toast("Merged into the other job.");
+        },
+        onError: (error) => toast.error(`Could not merge. ${errorMessage(error)}`),
+        onSettled: () => setMergingInto(null),
+      },
     );
   }
 
@@ -478,6 +515,8 @@ export function MatchesPage() {
             stale={detail.isPlaceholderData || detail.isFetching}
             onSave={saveCurrent}
             onDismiss={() => setDismissing(true)}
+            onMerge={mergeCurrent}
+            merging={mergingInto}
           />
         </div>
       )}

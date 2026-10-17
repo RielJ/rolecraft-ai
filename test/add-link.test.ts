@@ -308,7 +308,10 @@ describe("dedup", () => {
         title: "Software Engineer",
         company: "Acme",
         opportunityId: b.opportunityId,
+        source: "pasted",
         diff: { job: "Asks for 5+ years, Go, Kafka · Pay not stated", other: "Asks for 2+ years, React · $40/hr" },
+        // Both pastes land on the board, so merge is blocked (section 3.8).
+        merge: { kind: "blocked", reason: "Both are on your board. Close one instead." },
       },
     ]);
     expect(wsB.job.possibleDuplicates.map((d) => d.jobId)).toEqual([wsA.job.id]);

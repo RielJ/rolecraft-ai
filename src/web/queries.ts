@@ -14,6 +14,7 @@ import {
   MatchDetail,
   MatchList,
   type MatchQueryInput,
+  MergeResult,
   type OpportunityId,
   type OutputId,
   type PasteJobInput,
@@ -428,6 +429,12 @@ export const useDismissJob = () =>
       client.api.jobs[":id"].dismiss.$post({ param: { id }, json: { reason } }),
       z.object({ ok: z.literal(true) }),
     ),
+  );
+
+/** Merge a job into a likely duplicate (section 3.8); the answer names the job that was kept. */
+export const useMergeJob = () =>
+  useMatchMutation(({ id, into }: { id: JobId; into: JobId }) =>
+    unwrap(client.api.jobs[":id"].merge.$post({ param: { id }, json: { into } }), MergeResult),
   );
 
 export const useUndoJob = () =>

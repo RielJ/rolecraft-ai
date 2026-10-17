@@ -1,9 +1,10 @@
+import { Link } from "@tanstack/react-router";
 import { CheckIcon, ExternalLinkIcon, MinusIcon } from "lucide-react";
-import type { ReactNode, Ref } from "react";
-import type { MatchDetail, MatchReason } from "@/shared/api";
+import { type ReactNode, type Ref, useId } from "react";
+import type { JobId, MatchDetail, MatchReason, PossibleDuplicate } from "@/shared/api";
 import { cn } from "@/web/lib/utils";
 import { Button } from "../ui/button";
-import { JobFacts, PossibleDuplicates } from "./job-facts";
+import { DuplicateDiffLines, JobFacts } from "./job-facts";
 import { LevelBadge, RoleUnclearChip } from "./job-list";
 
 function ReasonIcon({ sign }: { sign: MatchReason["sign"] }) {
@@ -57,6 +58,79 @@ function SeenOn({ seenOn }: { seenOn: MatchDetail["seenOn"] }) {
 }
 
 /**
+ * One duplicate hint (section 3.8): "Possibly the same job as Senior Engineer at Acme
+ * (Greenhouse) · Merge", then the two-line diff. When both jobs are on the board, Merge stays
+ * visible but disabled, with the reason next to it.
+ */
+function DuplicateHint({
+  duplicate: d,
+  merging,
+  onMerge,
+}: {
+  duplicate: PossibleDuplicate;
+  merging: boolean;
+  onMerge: (into: JobId) => void;
+}) {
+  const reasonId = useId();
+  const name = `${d.title} at ${d.company}`;
+  const blocked = d.merge.kind === "blocked" ? d.merge.reason : null;
+  return (
+    <li className="grid gap-1">
+      <p className="text-muted-foreground">
+        Possibly the same job as{" "}
+        {d.opportunityId ? (
+          <Link
+            to="/jobs/$opportunityId"
+            params={{ opportunityId: d.opportunityId }}
+            className="text-foreground underline underline-offset-4"
+          >
+            {name}
+          </Link>
+        ) : (
+          <span className="text-foreground">{name}</span>
+        )}{" "}
+        ({d.source}) ·{" "}
+        <Button
+          variant="link"
+          size="sm"
+          className="h-auto p-0 align-baseline"
+          disabled={blocked !== null || merging}
+          aria-describedby={blocked ? reasonId : undefined}
+          onClick={() => onMerge(d.jobId)}
+        >
+          {merging ? "Merging…" : "Merge"}
+        </Button>
+        {blocked && (
+          <span id={reasonId} className="ml-2">
+            {blocked}
+          </span>
+        )}
+      </p>
+      <DuplicateDiffLines diff={d.diff} />
+    </li>
+  );
+}
+
+function DuplicateHints({
+  duplicates,
+  merging,
+  onMerge,
+}: {
+  duplicates: readonly PossibleDuplicate[];
+  merging: JobId | null;
+  onMerge: (into: JobId) => void;
+}) {
+  if (duplicates.length === 0) return null;
+  return (
+    <ul aria-label="Possible duplicates" className="grid gap-3 text-sm">
+      {duplicates.map((d) => (
+        <DuplicateHint key={d.jobId} duplicate={d} merging={merging === d.jobId} onMerge={onMerge} />
+      ))}
+    </ul>
+  );
+}
+
+/**
  * The Matches reading pane (section 4): verdict phrase, PH-time hours, converted pay, match
  * reasons, attribution and the duplicate hint, then the posting. Nothing here animates: the pane
  * swaps content in place when the selection moves.
@@ -66,6 +140,8 @@ export function ReadingPane({
   stale,
   onSave,
   onDismiss,
+  onMerge,
+  merging,
   ref,
 }: {
   job: MatchDetail | null;
@@ -73,6 +149,10 @@ export function ReadingPane({
   stale: boolean;
   onSave: () => void;
   onDismiss: () => void;
+  /** Merge this job into a likely duplicate (`POST /api/jobs/:id/merge`). */
+  onMerge: (into: JobId) => void;
+  /** The duplicate a merge is running against, if any. */
+  merging: JobId | null;
   ref?: Ref<HTMLElement>;
 }): ReactNode {
   const postingUrl = job ? (job.applyUrl ?? job.seenOn[0]?.listingUrl ?? null) : null;
@@ -132,7 +212,7 @@ export function ReadingPane({
           )}
 
           <SeenOn seenOn={job.seenOn} />
-          <PossibleDuplicates duplicates={job.facts.possibleDuplicates} />
+          <DuplicateHints duplicates={job.facts.possibleDuplicates} merging={merging} onMerge={onMerge} />
 
           <div className="whitespace-pre-wrap border-t pt-5 font-serif text-[0.95rem] leading-relaxed">
             {job.description}

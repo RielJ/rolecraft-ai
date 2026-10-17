@@ -42,6 +42,7 @@ const STATUS: Record<ErrorCode, Status> = {
   source_exists: 409,
   on_board: 409,
   has_work: 409,
+  both_on_board: 409,
   unreadable_file: 422,
   internal: 500,
 };

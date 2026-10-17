@@ -74,6 +74,8 @@ export const ERROR_CODES = [
   "on_board",
   /** Undoing a save after work started on the job. */
   "has_work",
+  /** Merging two jobs that are both on the board (section 3.8): close one instead. */
+  "both_on_board",
   "unreadable_file",
   "internal",
 ] as const;
@@ -323,10 +325,25 @@ export const PossibleDuplicate = z.object({
   company: z.string(),
   /** Set when the other job is on the board, so the hint can link to it. */
   opportunityId: OpportunityId.nullable(),
+  /** Where the other job came from: the board it was seen on, "added by link" or "pasted". */
+  source: z.string(),
   /** One line per job: requirements, location or pay that differ. */
   diff: z.object({ job: z.string(), other: z.string() }),
+  /** Whether the two can be merged; blocked when both are on the board (section 3.8). */
+  merge: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("ready") }),
+    z.object({ kind: z.literal("blocked"), reason: z.string() }),
+  ]),
 });
 export type PossibleDuplicate = z.infer<typeof PossibleDuplicate>;
+
+/** `POST /api/jobs/:id/merge`: merge the job into `into` (section 3.8). */
+export const MergeInput = z.object({ into: JobId });
+export type MergeInput = z.infer<typeof MergeInput>;
+
+/** The job that was kept, and its opportunity when it has one. */
+export const MergeResult = z.object({ jobId: JobId, opportunityId: OpportunityId.nullable() });
+export type MergeResult = z.infer<typeof MergeResult>;
 
 /** The job as the header shows it: values arrive converted and worded (section 1, "How API types reach the SPA"). */
 export const JobFacts = z.object({
