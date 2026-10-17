@@ -13,6 +13,7 @@ import type {
   ProfileItemKind,
   RateType,
   RoleFamily,
+  SourceKind,
   SourceStatus,
   UserSeniority,
 } from "./enums";
@@ -351,3 +352,22 @@ export function payPeriodLabel(period: PayPeriod): string {
     }
   }
 }
+
+/**
+ * Each source's name and home page. `attribution` marks the boards whose terms ask for credit and
+ * a link back (RemoteOK, We Work Remotely, Remotive): their jobs show "via <name>" with the
+ * listing link, and the Sources screen links to the board.
+ */
+export const SOURCE_SITES: Readonly<Record<SourceKind, { name: string; url: string; attribution: boolean }>> = {
+  jobicy: { name: "Jobicy", url: "https://jobicy.com", attribution: false },
+  himalayas: { name: "Himalayas", url: "https://himalayas.app", attribution: false },
+  remoteok: { name: "RemoteOK", url: "https://remoteok.com", attribution: true },
+  weworkremotely: { name: "We Work Remotely", url: "https://weworkremotely.com", attribution: true },
+  remotive: { name: "Remotive", url: "https://remotive.com", attribution: true },
+  greenhouse: { name: "Greenhouse", url: "https://www.greenhouse.com", attribution: false },
+  lever: { name: "Lever", url: "https://www.lever.co", attribution: false },
+  ashby: { name: "Ashby", url: "https://www.ashbyhq.com", attribution: false },
+  smartrecruiters: { name: "SmartRecruiters", url: "https://www.smartrecruiters.com", attribution: false },
+  recruitee: { name: "Recruitee", url: "https://recruitee.com", attribution: false },
+  workable: { name: "Workable", url: "https://www.workable.com", attribution: false },
+};

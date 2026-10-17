@@ -207,6 +207,13 @@ const GH_BOARD = "boards-api.greenhouse.io/v1/boards/acme";
 const GH_JOBS = "boards-api.greenhouse.io/v1/boards/acme/jobs";
 const JOBICY = "jobicy.com/api/v2/remote-jobs";
 
+const OTHER_BUILTINS = [
+  ["himalayas.app/jobs/api", "himalayas/jobs.json"],
+  ["remoteok.com/api", "remoteok/api.json"],
+  ["weworkremotely.com/remote-jobs.rss", "weworkremotely/remote-jobs.rss"],
+  ["remotive.com/api/remote-jobs", "remotive/remote-jobs.json"],
+] as const;
+
 const PASTED_URL = "https://boards.greenhouse.io/acme/jobs/4005?utm_source=linkedin";
 
 describe("(c) refresh never changes user tables", () => {
@@ -243,6 +250,11 @@ describe("(c) refresh never changes user tables", () => {
       [GH_JOBS, json(base)],
       [JOBICY, json(jobicy)],
     ]);
+    // The other built-ins run on every refresh too, from their fixtures.
+    for (const [route, file] of OTHER_BUILTINS) {
+      const body = await Bun.file(join(fixtures, file)).text();
+      routes.set(route, () => new Response(body, { status: 200 }));
+    }
     now = new Date("2026-10-16T08:00:00Z");
     deps = await testDeps({
       http: createHttpClient({ fetch: fakeFetch, sleep: async () => {} }),
@@ -387,6 +399,16 @@ describe("(c) refresh never changes user tables", () => {
     // 1. Normal: the same postings again.
     await refresh(hours(1));
     expect(await userTableHashes()).toEqual(before);
+    const builtins = await testSql()<{ kind: string; status: string }[]>`
+      SELECT kind, last_status AS status FROM sources WHERE board IS NULL ORDER BY kind`;
+    // Remotive ran at seeding and is inside its six-hour interval now.
+    expect(builtins.map((r) => `${r.kind} ${r.status}`)).toEqual([
+      "himalayas ok",
+      "jobicy ok",
+      "remoteok ok",
+      "remotive skipped",
+      "weworkremotely ok",
+    ]);
 
     // 2. Postings gone from a complete board: the saved, dismissed and an untouched job close.
     routes.set(GH_JOBS, json(without(4001, 4003, 4006)));
@@ -402,7 +424,7 @@ describe("(c) refresh never changes user tables", () => {
     await refresh(hours(3));
     expect(await userTableHashes()).toEqual(before);
     const failed = await testSql()<{ kind: string; status: string }[]>`
-      SELECT kind, last_status AS status FROM sources ORDER BY kind`;
+      SELECT kind, last_status AS status FROM sources WHERE kind IN ('greenhouse', 'jobicy') ORDER BY kind`;
     expect(failed.map((r) => ({ kind: r.kind, status: r.status }))).toEqual([
       { kind: "greenhouse", status: "failed" },
       { kind: "jobicy", status: "rate_limited" },

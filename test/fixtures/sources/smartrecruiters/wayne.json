@@ -1,0 +1,61 @@
+{
+  "offset": 0,
+  "limit": 100,
+  "totalFound": 2,
+  "content": [
+    {
+      "id": "744000091234501",
+      "name": "Senior Java Developer",
+      "uuid": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9",
+      "jobAdId": "a1b2c3d4-e5f6-4071-8293-a4b5c6d7e801",
+      "defaultJobAd": true,
+      "refNumber": "REF1201X",
+      "company": { "identifier": "WayneEnterprises", "name": "Wayne Enterprises" },
+      "releasedDate": "2026-10-14T08:00:00.000Z",
+      "location": {
+        "city": "Manila",
+        "region": "Metro Manila",
+        "country": "ph",
+        "remote": true,
+        "latitude": "14.59",
+        "longitude": "120.98",
+        "fullLocation": "Manila, Metro Manila, Philippines"
+      },
+      "industry": { "id": "information_technology_and_services", "label": "Information Technology And Services" },
+      "department": { "id": "1001", "label": "Engineering" },
+      "function": { "id": "information_technology", "label": "Information Technology" },
+      "typeOfEmployment": { "id": "permanent", "label": "Full-time" },
+      "experienceLevel": { "id": "mid_senior_level", "label": "Mid-Senior Level" },
+      "customField": [],
+      "ref": "https://api.smartrecruiters.com/v1/companies/wayne/postings/744000091234501",
+      "creator": { "name": "Lucius Fox" },
+      "language": { "code": "en", "label": "English", "labelNative": "English (US)" }
+    },
+    {
+      "id": "744000091234502",
+      "name": "HR Generalist",
+      "uuid": "1c2d3e4f-5061-4728-93a4-b5c6d7e8f901",
+      "jobAdId": "b2c3d4e5-f607-4182-93a4-b5c6d7e8f902",
+      "defaultJobAd": true,
+      "refNumber": "REF1202X",
+      "company": { "identifier": "WayneEnterprises", "name": "Wayne Enterprises" },
+      "releasedDate": "2026-10-13T08:00:00.000Z",
+      "location": {
+        "city": "Gotham",
+        "region": "NJ",
+        "country": "us",
+        "remote": false,
+        "fullLocation": "Gotham, NJ, United States"
+      },
+      "industry": { "id": "information_technology_and_services", "label": "Information Technology And Services" },
+      "department": { "id": "1002", "label": "People" },
+      "function": { "id": "human_resources", "label": "Human Resources" },
+      "typeOfEmployment": { "id": "permanent", "label": "Full-time" },
+      "experienceLevel": { "id": "associate", "label": "Associate" },
+      "customField": [],
+      "ref": "https://api.smartrecruiters.com/v1/companies/wayne/postings/744000091234502",
+      "creator": { "name": "Lucius Fox" },
+      "language": { "code": "en", "label": "English", "labelNative": "English (US)" }
+    }
+  ]
+}

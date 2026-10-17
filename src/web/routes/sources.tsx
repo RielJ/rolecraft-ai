@@ -1,7 +1,7 @@
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import type { SourceDto } from "@/shared/api";
-import { sourceStatusLabel } from "@/shared/labels";
+import { SOURCE_SITES, sourceStatusLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { useAddSource, useDeleteSource, useSources, useUpdateSource } from "../queries";
@@ -11,6 +11,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 
 const onError = (error: unknown) => toast.error(errorMessage(error));
 const WHEN = new Intl.DateTimeFormat("en-PH", {
@@ -28,6 +29,126 @@ function keptLine(source: SourceDto): string | null {
   return dropped > 0
     ? `Kept ${source.lastCount} of ${source.lastCount + dropped}`
     : `${source.lastCount} ${source.lastCount === 1 ? "posting" : "postings"}`;
+}
+
+const lines = (text: string) =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+/**
+ * A built-in board's keywords (decision 13): its own list, or the target titles from Profile when
+ * it has none. Saving an empty list goes back to the target titles.
+ */
+function KeywordsEditor({ source }: { source: SourceDto }) {
+  const id = useId();
+  const update = useUpdateSource();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+
+  function edit() {
+    setText((source.keywords ?? []).join("\n"));
+    update.reset();
+    setOpen(true);
+  }
+
+  function save(keywords: string[] | null) {
+    update.mutate(
+      { id: source.id, keywords },
+      {
+        onSuccess: () => {
+          setOpen(false);
+          toast(keywords === null ? `${source.label} uses your target titles.` : `Saved ${source.label}'s keywords.`);
+        },
+      },
+    );
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const keywords = lines(text);
+    save(keywords.length === 0 ? null : keywords);
+  }
+
+  if (!open) {
+    return (
+      <p className="text-sm">
+        <span className="text-muted-foreground">Keywords:</span>{" "}
+        {source.keywords === null ? "your target titles" : source.keywords.join(", ")}{" "}
+        <Button
+          type="button"
+          size="sm"
+          variant="link"
+          className="ml-1 h-auto p-0 align-baseline"
+          aria-label={`Edit ${source.label} keywords`}
+          onClick={edit}
+        >
+          Edit
+        </Button>
+      </p>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="grid gap-2">
+      <Label htmlFor={`${id}-kw`} className="font-normal text-muted-foreground text-sm">
+        {source.label} keywords, one per line. A posting is kept when its title or tags match one. Leave empty to use
+        your target titles.
+      </Label>
+      <Textarea
+        id={`${id}-kw`}
+        rows={3}
+        value={text}
+        aria-invalid={update.isError}
+        aria-describedby={update.isError ? `${id}-err` : undefined}
+        onChange={(e) => setText(e.target.value)}
+      />
+      {update.isError && (
+        <p id={`${id}-err`} role="alert" className="text-destructive text-sm">
+          {errorMessage(update.error)}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" size="sm" disabled={update.isPending}>
+          {update.isPending ? "Saving…" : "Save keywords"}
+        </Button>
+        {source.keywords !== null && (
+          <Button type="button" size="sm" variant="outline" disabled={update.isPending} onClick={() => save(null)}>
+            Use target titles
+          </Button>
+        )}
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Where a source's jobs come from, linked: "Built-in board · via remoteok.com" or "Lever · acme".
+ * RemoteOK, We Work Remotely and Remotive ask for this credit and a link back.
+ */
+function SourceOrigin({ source }: { source: SourceDto }) {
+  const site = SOURCE_SITES[source.kind];
+  const link = (text: string) => (
+    <a href={site.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+      {text}
+    </a>
+  );
+  if (source.builtin) {
+    return (
+      <span className="text-muted-foreground text-xs">
+        Built-in board · via {link(new URL(site.url).hostname.replace(/^www\./, ""))}
+      </span>
+    );
+  }
+  return (
+    <span className="text-muted-foreground text-xs">
+      {link(site.name)} · {source.board}
+    </span>
+  );
 }
 
 function SourceRow({ source }: { source: SourceDto }) {
@@ -50,9 +171,7 @@ function SourceRow({ source }: { source: SourceDto }) {
           <Label htmlFor={`${id}-on`} className="font-medium">
             {source.label}
           </Label>
-          <span className="text-muted-foreground text-xs">
-            {source.builtin ? "Built-in board" : `Greenhouse · ${source.board}`}
-          </span>
+          <SourceOrigin source={source} />
           {source.lastStatus && (
             <Badge variant={problem ? "destructive" : "secondary"}>{sourceStatusLabel(source.lastStatus)}</Badge>
           )}
@@ -64,6 +183,7 @@ function SourceRow({ source }: { source: SourceDto }) {
         {source.lastError && (
           <p className={cn("text-sm", problem ? "text-destructive" : "text-muted-foreground")}>{source.lastError}</p>
         )}
+        {source.builtin && <KeywordsEditor source={source} />}
       </div>
       {!source.builtin && (
         <Button
@@ -100,7 +220,8 @@ function AddBoardForm() {
         Add a company board
       </h2>
       <Label htmlFor={`${id}-url`} className="font-normal text-muted-foreground">
-        Paste a company's careers link from Greenhouse, for example boards.greenhouse.io/acme.
+        Paste a company's job list link from Greenhouse, Lever, Ashby, SmartRecruiters, Recruitee or Workable, for
+        example jobs.lever.co/acme.
       </Label>
       <div className="flex gap-2">
         <Input
@@ -137,8 +258,8 @@ export function SourcesPage() {
       <div>
         <h1 className="font-semibold text-2xl tracking-tight">Sources</h1>
         <p className="text-muted-foreground text-sm">
-          Refresh reads every source that is on. Built-in boards use your target titles from Profile; company boards
-          read the whole board.
+          Refresh reads every source that is on. Built-in boards keep postings that match their keywords, which are your
+          target titles from Profile unless you set others; company boards read the whole board.
         </p>
       </div>
       {sources.isPending ? (

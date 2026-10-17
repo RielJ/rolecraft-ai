@@ -190,7 +190,7 @@ describe("Greenhouse (complete source)", () => {
     expect(list.jobs.map((j) => j.title)).not.toContain("Backend Engineer");
     expect(list.jobs.find((j) => j.title === "Senior Frontend Engineer")).toMatchObject({
       company: "Acme",
-      seenOn: [{ label: "Acme", listingUrl: "https://boards.greenhouse.io/acme/jobs/4001" }],
+      seenOn: [{ label: "Acme", listingUrl: "https://boards.greenhouse.io/acme/jobs/4001", via: null }],
     });
   });
 

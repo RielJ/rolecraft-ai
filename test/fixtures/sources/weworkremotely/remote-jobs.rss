@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>We Work Remotely: Remote jobs in design, programming, marketing and more</title>
+    <link>https://weworkremotely.com/</link>
+    <description>We Work Remotely: Remote jobs in design, programming, marketing and more</description>
+    <language>en-US</language>
+    <ttl>60</ttl>
+    <item>
+      <title>Hooli: Senior Rails Developer</title>
+      <region>Anywhere in the World</region>
+      <country>&#127758; Anywhere in the World</country>
+      <state></state>
+      <skills>Ruby, Rails, Postgres</skills>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <description><![CDATA[<img src="https://we-work-remotely.imgix.net/logos/hooli.png" alt="Logo" /><p><strong>Headquarters:</strong> Palo Alto <br /><strong>URL:</strong> <a href="https://hooli.example">https://hooli.example</a></p><p>Hooli is hiring a senior Rails developer. Remote, anywhere in the world.</p><ul><li>Ruby on Rails, Postgres</li><li>6+ years of experience</li></ul><p><strong>To apply:</strong> <a href="https://hooli.example/jobs/rails">https://hooli.example/jobs/rails</a></p>]]></description>
+      <pubDate>Tue, 14 Oct 2026 08:00:00 +0000</pubDate>
+      <expires_at>Fri, 13 Nov 2026 08:00:00 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/hooli-senior-rails-developer</guid>
+      <link>https://weworkremotely.com/remote-jobs/hooli-senior-rails-developer</link>
+    </item>
+    <item>
+      <title>Initrode: Full-Stack Engineer &amp; Team Lead</title>
+      <region>Asia Only</region>
+      <country>&#127759; Asia</country>
+      <state></state>
+      <skills>React, Node</skills>
+      <category>Full-Stack Programming</category>
+      <type>Contract</type>
+      <description><![CDATA[<p>Initrode needs a full-stack engineer and team lead. Remote in Asia.</p>]]></description>
+      <pubDate>Mon, 13 Oct 2026 08:00:00 +0000</pubDate>
+      <expires_at>Thu, 12 Nov 2026 08:00:00 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/initrode-full-stack-engineer-team-lead</guid>
+      <link>https://weworkremotely.com/remote-jobs/initrode-full-stack-engineer-team-lead</link>
+    </item>
+    <item>
+      <title>Initrode: Customer Support Specialist</title>
+      <region>USA Only</region>
+      <country>&#127482;&#127480; USA</country>
+      <state></state>
+      <skills></skills>
+      <category>Customer Support</category>
+      <type>Full-Time</type>
+      <description><![CDATA[<p>Answer Initrode customers by email and chat. USA only.</p>]]></description>
+      <pubDate>Sun, 12 Oct 2026 08:00:00 +0000</pubDate>
+      <expires_at>Wed, 11 Nov 2026 08:00:00 +0000</expires_at>
+      <guid>https://weworkremotely.com/remote-jobs/initrode-customer-support-specialist</guid>
+      <link>https://weworkremotely.com/remote-jobs/initrode-customer-support-specialist</link>
+    </item>
+  </channel>
+</rss>

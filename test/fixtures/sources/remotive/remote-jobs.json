@@ -1,0 +1,50 @@
+{
+  "00-warning": "This API is meant to be used by job boards and aggregators. Please don't fetch it more than 4 times a day: the listings are updated a few times a day only.",
+  "0-legal-notice": "Remotive API Legal Notice: by using our API, you agree to link back to the Remotive job listing URL and to mention Remotive as the source.",
+  "job-count": 3,
+  "total-job-count": 3,
+  "jobs": [
+    {
+      "id": 2001001,
+      "url": "https://remotive.com/remote-jobs/software-dev/senior-python-developer-2001001",
+      "title": "Senior Python Developer",
+      "company_name": "Vandelay Industries",
+      "company_logo": "https://remotive.com/job/2001001/logo",
+      "category": "Software Development",
+      "tags": ["python", "django", "aws"],
+      "job_type": "full_time",
+      "publication_date": "2026-10-14T08:00:00",
+      "candidate_required_location": "Worldwide",
+      "salary": "$90,000 - $120,000 a year",
+      "description": "<p>Vandelay Industries is hiring a senior Python developer for its import tooling.</p><ul><li>Python, Django</li><li>5+ years</li></ul>"
+    },
+    {
+      "id": 2001002,
+      "url": "https://remotive.com/remote-jobs/software-dev/qa-automation-engineer-2001002",
+      "title": "QA Automation Engineer",
+      "company_name": "Kramerica",
+      "company_logo": "https://remotive.com/job/2001002/logo",
+      "category": "QA",
+      "tags": ["cypress", "playwright"],
+      "job_type": "contract",
+      "publication_date": "2026-10-13T08:00:00",
+      "candidate_required_location": "Philippines, Vietnam",
+      "salary": "",
+      "description": "<p>Write Playwright suites for Kramerica's web app. Contract, remote.</p>"
+    },
+    {
+      "id": 2001003,
+      "url": "https://remotive.com/remote-jobs/finance/bookkeeper-2001003",
+      "title": "Bookkeeper",
+      "company_name": "Kramerica",
+      "company_logo": "https://remotive.com/job/2001003/logo",
+      "category": "Finance / Legal",
+      "tags": ["accounting"],
+      "job_type": "part_time",
+      "publication_date": "2026-10-12T08:00:00",
+      "candidate_required_location": "USA",
+      "salary": "",
+      "description": "<p>Keep Kramerica's books. USA only.</p>"
+    }
+  ]
+}

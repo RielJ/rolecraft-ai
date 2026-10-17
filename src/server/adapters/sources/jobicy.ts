@@ -87,7 +87,7 @@ export function createJobicyAdapter(http: HttpClient): SourceAdapter {
           tags: (job.jobIndustry ?? []).map((t) => decodeEntities(t)),
         };
       });
-      return { complete: false, postings };
+      return { complete: false, postings, unread: [] };
     },
   };
 }

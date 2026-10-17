@@ -1,0 +1,60 @@
+{
+  "name": "Tyrell Corporation",
+  "description": "<p>Tyrell builds hiring software.</p>",
+  "jobs": [
+    {
+      "title": "Platform Engineer (Kubernetes)",
+      "shortcode": "A1B2C3D4E5",
+      "code": "ENG-12",
+      "employment_type": "Full-time",
+      "telecommuting": true,
+      "department": "Engineering",
+      "url": "https://apply.workable.com/j/A1B2C3D4E5",
+      "shortlink": "https://apply.workable.com/j/A1B2C3D4E5",
+      "application_url": "https://apply.workable.com/j/A1B2C3D4E5/apply",
+      "published_on": "2026-10-14",
+      "created_at": "2026-10-13",
+      "country": "Philippines",
+      "city": "Manila",
+      "state": "Metro Manila",
+      "education": "",
+      "experience": "Mid-Senior level",
+      "function": "Engineering",
+      "industry": "Computer Software",
+      "locations": [
+        { "country": "Philippines", "countryCode": "PH", "city": "Manila", "region": "Metro Manila", "hidden": false }
+      ],
+      "description": "<p>Run Tyrell's Kubernetes platform. Remote from the Philippines.</p><ul><li>Kubernetes, Terraform</li></ul>"
+    },
+    {
+      "title": "Recruiter",
+      "shortcode": "F6G7H8I9J0",
+      "code": "PPL-3",
+      "employment_type": "Contract",
+      "telecommuting": false,
+      "department": "People",
+      "url": "https://apply.workable.com/j/F6G7H8I9J0",
+      "shortlink": "https://apply.workable.com/j/F6G7H8I9J0",
+      "application_url": "https://apply.workable.com/j/F6G7H8I9J0/apply",
+      "published_on": "2026-10-13",
+      "created_at": "2026-10-12",
+      "country": "United States",
+      "city": "Los Angeles",
+      "state": "California",
+      "education": "",
+      "experience": "Associate",
+      "function": "Human Resources",
+      "industry": "Computer Software",
+      "locations": [
+        {
+          "country": "United States",
+          "countryCode": "US",
+          "city": "Los Angeles",
+          "region": "California",
+          "hidden": false
+        }
+      ],
+      "description": "<p>Hire for Tyrell in Los Angeles.</p>"
+    }
+  ]
+}

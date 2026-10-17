@@ -1,0 +1,38 @@
+{
+  "id": "744000091234501",
+  "name": "Senior Java Developer",
+  "uuid": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9",
+  "refNumber": "REF1201X",
+  "company": { "identifier": "WayneEnterprises", "name": "Wayne Enterprises" },
+  "releasedDate": "2026-10-14T08:00:00.000Z",
+  "location": {
+    "city": "Manila",
+    "region": "Metro Manila",
+    "country": "ph",
+    "remote": true,
+    "fullLocation": "Manila, Metro Manila, Philippines"
+  },
+  "department": { "id": "1001", "label": "Engineering" },
+  "function": { "id": "information_technology", "label": "Information Technology" },
+  "typeOfEmployment": { "id": "permanent", "label": "Full-time" },
+  "experienceLevel": { "id": "mid_senior_level", "label": "Mid-Senior Level" },
+  "applyUrl": "https://jobs.smartrecruiters.com/WayneEnterprises/744000091234501-senior-java-developer?oga=true",
+  "postingUrl": "https://jobs.smartrecruiters.com/WayneEnterprises/744000091234501-senior-java-developer",
+  "jobAd": {
+    "sections": {
+      "companyDescription": {
+        "title": "Company Description",
+        "text": "<p>Wayne Enterprises builds logistics software.</p>"
+      },
+      "jobDescription": {
+        "title": "Job Description",
+        "text": "<p>Build Java services for the Wayne logistics platform. Remote from the Philippines.</p>"
+      },
+      "qualifications": {
+        "title": "Qualifications",
+        "text": "<ul><li>Java 21, Spring</li><li>5+ years of experience</li></ul>"
+      },
+      "additionalInformation": { "title": "Additional Information", "text": "<p>Pay: PHP 180,000 a month.</p>" }
+    }
+  }
+}

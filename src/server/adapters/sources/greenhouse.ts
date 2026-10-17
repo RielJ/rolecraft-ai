@@ -100,7 +100,7 @@ export function createGreenhouseAdapter(http: HttpClient): SourceAdapter {
         restrictions: null,
         tags: (job.departments ?? []).map((d) => d.name),
       }));
-      return { complete: true, postings };
+      return { complete: true, postings, unread: [] };
     },
   };
 }

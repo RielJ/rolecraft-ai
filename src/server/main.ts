@@ -16,6 +16,7 @@ import { parseEnv } from "./env";
 import { createApp } from "./http/app";
 import type { Deps } from "./services/context";
 import { ensureUser } from "./services/profile";
+import { ensureBuiltinSources } from "./services/sources";
 import { markInterrupted } from "./services/tasks";
 
 // Composition root: parse env, migrate, ensure the user row, build deps, serve.
@@ -23,6 +24,8 @@ const env = parseEnv(process.env);
 await migrateDb({ url: env.DATABASE_URL });
 const { db, close } = createDb({ url: env.DATABASE_URL });
 const userId = await ensureUser(db);
+// The five built-in boards, on by default (Q10). Idempotent: existing rows keep their settings.
+await ensureBuiltinSources({ db, userId });
 // Tasks run in this process, so any still `running` died with the last one (decision 36).
 const interrupted = await markInterrupted(db);
 if (interrupted > 0) console.info(JSON.stringify({ level: "info", msg: "tasks interrupted", count: interrupted }));

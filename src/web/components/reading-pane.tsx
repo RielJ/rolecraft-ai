@@ -21,23 +21,35 @@ function ReasonIcon({ sign }: { sign: MatchReason["sign"] }) {
   }
 }
 
-/** Where the job was seen, with the listing on each board (attribution, section 4). */
+function ListingLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-4">
+      {children}
+    </a>
+  );
+}
+
+/**
+ * Where the job was seen, with the listing on each board (attribution, section 4). Boards whose
+ * terms ask for credit read "via RemoteOK", linked to the listing there.
+ */
 function SeenOn({ seenOn }: { seenOn: MatchDetail["seenOn"] }) {
+  const plain = seenOn.filter((s) => s.via === null);
+  const credited = seenOn.filter((s) => s.via !== null);
   if (seenOn.length === 0) return null;
   return (
     <p className="text-muted-foreground text-sm">
-      Seen on{" "}
-      {seenOn.map((s, i) => (
+      {plain.length > 0 && "Seen on "}
+      {plain.map((s, i) => (
         <span key={s.listingUrl}>
           {i > 0 && ", "}
-          <a
-            href={s.listingUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-foreground underline underline-offset-4"
-          >
-            {s.label}
-          </a>
+          <ListingLink href={s.listingUrl}>{s.label}</ListingLink>
+        </span>
+      ))}
+      {credited.map((s, i) => (
+        <span key={s.listingUrl}>
+          {(plain.length > 0 || i > 0) && " · "}
+          via <ListingLink href={s.listingUrl}>{s.via}</ListingLink>
         </span>
       ))}
     </p>

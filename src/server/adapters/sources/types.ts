@@ -1,7 +1,7 @@
 import type { z } from "zod";
-import type { Pay } from "@/domain/pay";
-import type { SourceKind } from "@/shared/enums";
-import { HttpError } from "../http";
+import { type Pay, payPhrase } from "@/domain/pay";
+import type { PayPeriod, SourceKind } from "@/shared/enums";
+import { type HttpClient, HttpError } from "../http";
 
 /** One posting as a source gives it, before normalization (section 3.1 step 3). */
 export type Posting = {
@@ -25,8 +25,14 @@ export type Posting = {
   tags: readonly string[];
 };
 
-/** `complete`: the whole board came back, so a missing posting is closed. */
-export type FetchResult = { complete: boolean; postings: Posting[] };
+/**
+ * `complete`: the whole board came back, so a missing posting is closed. `unread`: external ids
+ * the board lists whose content was not read this run (a detail budget); they are not missing.
+ */
+export type FetchResult = { complete: boolean; postings: Posting[]; unread: string[] };
+
+/** What sync asks a source for. `known` holds the external ids this source already has listings for. */
+export type FetchInput = { board: string | null; keywords: readonly string[]; known: ReadonlySet<string> };
 
 export type SourceErrorKind = "failed" | "rate_limited" | "parse";
 
@@ -48,7 +54,7 @@ export type SourceAdapter = {
   complete: boolean;
   /** A source run within this many minutes of the last one is skipped. */
   minIntervalMinutes: number;
-  fetch(input: { board: string | null; keywords: readonly string[] }): Promise<FetchResult>;
+  fetch(input: FetchInput): Promise<FetchResult>;
   /** Company boards only: read a careers link and check the board exists before it is saved. */
   board?: {
     /** The board slug in a careers link, or null when the link is not this ATS. */
@@ -91,4 +97,106 @@ export function dateOrNull(value: string | null | undefined): Date | null {
   if (!value) return null;
   const at = new Date(value);
   return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** GET a source's body as text; a failed request becomes a `SourceError` naming the source. */
+export async function getBody({
+  http,
+  url,
+  name,
+  accept = "application/json",
+}: {
+  http: HttpClient;
+  url: string;
+  name: string;
+  accept?: string;
+}): Promise<string> {
+  try {
+    return (await http.getText(url, { accept })).body;
+  } catch (error) {
+    throw sourceErrorFrom(error, name);
+  }
+}
+
+/**
+ * Check a company board by reading `url`: 404 means the board does not exist, and the error says
+ * what to do. Any other failure is the source's usual error. Returns the body.
+ */
+export async function checkBoard({
+  http,
+  url,
+  name,
+  board,
+}: {
+  http: HttpClient;
+  url: string;
+  name: string;
+  board: string;
+}): Promise<string> {
+  try {
+    return (await http.getText(url, { accept: "application/json" })).body;
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) throw boardMissing({ name, board });
+    throw sourceErrorFrom(error, name);
+  }
+}
+
+export function boardMissing({ name, board }: { name: string; board: string }): SourceError {
+  return new SourceError({
+    kind: "failed",
+    message: `${name} said the board "${board}" does not exist. Check the link, or open the company's careers page and copy the link of its job list.`,
+  });
+}
+
+/** A positive amount from a number or a numeric string ("60,000"), else null. */
+export function amountOf(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value.replace(/[,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Pay a board gives as data, or null when the minimum or the currency is missing. */
+export function structuredPay({
+  min,
+  max,
+  currency,
+  period,
+}: {
+  min: string | number | null | undefined;
+  max: string | number | null | undefined;
+  currency: string | null | undefined;
+  period: PayPeriod | null;
+}): Pay | null {
+  const lo = amountOf(min);
+  const hi = amountOf(max);
+  const code = currency?.trim().toUpperCase();
+  if (lo === null || !code || !/^[A-Z]{3}$/.test(code)) return null;
+  const top = hi !== null && hi >= lo ? hi : null;
+  return {
+    min: lo,
+    max: top,
+    currency: code,
+    period,
+    phrase: payPhrase({ min: lo, max: top, currency: code, period }),
+  };
+}
+
+/** "acme-labs" as "Acme Labs", for boards whose API does not name the company. */
+export function labelFromSlug(slug: string): string {
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** A board slug as boards use them: letters, digits, `-` and `_`. */
+export const BOARD_SLUG = /^[a-z0-9][a-z0-9_-]{0,99}$/i;
+
+/** The first path segment of `raw` when its host is one of `hosts` and it looks like a slug. */
+export function slugFromPath({ raw, hosts }: { raw: string; hosts: ReadonlySet<string> }): string | null {
+  const url = URL.parse(raw.trim());
+  if (!url || !hosts.has(url.hostname.toLowerCase())) return null;
+  const slug = url.pathname.split("/").filter(Boolean)[0] ?? null;
+  return slug && BOARD_SLUG.test(slug) ? slug.toLowerCase() : null;
 }

@@ -1,0 +1,71 @@
+[
+  {
+    "additional": "<div>We pay in USD and hire worldwide.</div>",
+    "additionalPlain": "We pay in USD and hire worldwide.",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Engineering",
+      "location": "Remote",
+      "team": "Routing",
+      "allLocations": ["Remote"]
+    },
+    "createdAt": 1791964800000,
+    "description": "<div>Globex builds routing software for freight teams. Remote, open worldwide.</div>",
+    "descriptionPlain": "Globex builds routing software for freight teams. Remote, open worldwide.",
+    "id": "7f3c2a10-5b1e-4c8e-9a51-1d2e3f4a5b6c",
+    "lists": [
+      { "text": "What you'll do", "content": "<li>Own the routing service in Go</li><li>Tune Postgres</li>" },
+      { "text": "Requirements", "content": "<li>5+ years of experience</li>" }
+    ],
+    "text": "Senior Go Engineer",
+    "country": "US",
+    "workplaceType": "remote",
+    "salaryRange": { "currency": "USD", "interval": "per-year-salary", "min": 95000, "max": 135000 },
+    "salaryDescription": "<div>Base salary, plus equity.</div>",
+    "salaryDescriptionPlain": "Base salary, plus equity.",
+    "hostedUrl": "https://jobs.lever.co/globex/7f3c2a10-5b1e-4c8e-9a51-1d2e3f4a5b6c",
+    "applyUrl": "https://jobs.lever.co/globex/7f3c2a10-5b1e-4c8e-9a51-1d2e3f4a5b6c/apply"
+  },
+  {
+    "additional": "",
+    "additionalPlain": "",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Engineering",
+      "location": "Manila",
+      "team": "Data",
+      "allLocations": ["Manila", "Singapore"]
+    },
+    "createdAt": 1791878400000,
+    "description": "<div>Build Globex's data warehouse. Hybrid in Manila or Singapore.</div>",
+    "descriptionPlain": "Build Globex's data warehouse. Hybrid in Manila or Singapore.",
+    "id": "8a4d3b21-6c2f-4d9f-8b62-2e3f4a5b6c7d",
+    "lists": [],
+    "text": "Data Engineer",
+    "country": "PH",
+    "workplaceType": "hybrid",
+    "hostedUrl": "https://jobs.lever.co/globex/8a4d3b21-6c2f-4d9f-8b62-2e3f4a5b6c7d",
+    "applyUrl": "https://jobs.lever.co/globex/8a4d3b21-6c2f-4d9f-8b62-2e3f4a5b6c7d/apply"
+  },
+  {
+    "additional": "",
+    "additionalPlain": "",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Sales",
+      "location": "New York",
+      "team": "Enterprise",
+      "allLocations": ["New York"]
+    },
+    "createdAt": 1791792000000,
+    "description": "<div>Sell Globex to enterprise freight teams.</div>",
+    "descriptionPlain": "Sell Globex to enterprise freight teams.",
+    "id": "9b5e4c32-7d30-4e00-9c73-3f4a5b6c7d8e",
+    "lists": [],
+    "text": "Enterprise Account Executive",
+    "country": "US",
+    "workplaceType": "onsite",
+    "hostedUrl": "https://jobs.lever.co/globex/9b5e4c32-7d30-4e00-9c73-3f4a5b6c7d8e",
+    "applyUrl": "https://jobs.lever.co/globex/9b5e4c32-7d30-4e00-9c73-3f4a5b6c7d8e/apply"
+  }
+]

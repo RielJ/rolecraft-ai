@@ -39,6 +39,11 @@ export type FetchOutcome =
       complete: boolean;
       /** Every external id the source returned, before the keyword and role filters. */
       fetchedIds: readonly string[];
+      /**
+       * External ids the board lists whose content was not read this run (SmartRecruiters' detail
+       * budget). They are on the board, so a stored listing among them is seen, with its job unchanged.
+       */
+      unread: readonly string[];
       /** The role filter's sure drops. */
       dropped: number;
       /** What is left after both filters. */
@@ -88,9 +93,9 @@ export function planSourceRun({
   if (fetched.kind !== "fetched") return { kind: fetched.kind, error: fetched.error };
   // Zero postings after a healthy run looks like a broken source, not an empty board. The check
   // uses the count before filtering, so a strict role filter never looks broken.
-  const rawCount = new Set(fetched.fetchedIds).size;
+  const onBoard = new Set([...fetched.fetchedIds, ...fetched.unread]);
+  const rawCount = onBoard.size;
   if (rawCount === 0 && (source.lastOkCount ?? 0) > 0) return { kind: "suspicious_empty" };
-  const onBoard = new Set(fetched.fetchedIds);
 
   const byExternalId = new Map(existing.map((l) => [l.externalId, l]));
   const seenIds = new Set<string>();
@@ -131,6 +136,16 @@ export function planSourceRun({
     }
     inserted.push({ ...keys, externalId: posting.externalId });
     upserts.push({ kind: "insert", externalId: posting.externalId });
+  }
+
+  // Listed but not read: a stored listing is seen (and reopens), and its job keeps its content.
+  // An unread posting with no listing waits for a later run's budget.
+  for (const externalId of fetched.unread) {
+    const listing = byExternalId.get(externalId);
+    if (!listing || seenIds.has(externalId)) continue;
+    seenIds.add(externalId);
+    upserts.push({ kind: "seen", externalId, jobId: listing.jobId, rewrite: false });
+    if (listing.missingSince !== null) reopened.push(listing.jobId);
   }
 
   const notSeen = existing.filter((l) => !seenIds.has(l.externalId) && l.missingSince === null);

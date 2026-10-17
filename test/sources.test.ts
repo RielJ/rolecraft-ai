@@ -53,7 +53,7 @@ describe("Greenhouse adapter", () => {
     const { http, urls } = harness({
       "boards-api.greenhouse.io/v1/boards/acme/jobs": file("greenhouse/acme.json"),
     });
-    const result = await createGreenhouseAdapter(http).fetch({ board: "acme", keywords: [] });
+    const result = await createGreenhouseAdapter(http).fetch({ board: "acme", keywords: [], known: new Set() });
     expect(urls).toEqual(["https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true"]);
     expect(result.complete).toBe(true);
     expect(result.postings).toHaveLength(7);
@@ -86,7 +86,9 @@ describe("Greenhouse adapter", () => {
   test("429 is rate_limited, 500 and bad JSON are failed or parse", async () => {
     const statuses = async (route: () => Response | Promise<Response>) => {
       const { http } = harness({ "boards-api.greenhouse.io/v1/boards/acme/jobs": route });
-      const error = await caught(() => createGreenhouseAdapter(http).fetch({ board: "acme", keywords: [] }));
+      const error = await caught(() =>
+        createGreenhouseAdapter(http).fetch({ board: "acme", keywords: [], known: new Set() }),
+      );
       return error instanceof SourceError ? error.kind : String(error);
     };
     expect(await statuses(json({}, 429))).toBe("rate_limited");
@@ -101,7 +103,7 @@ describe("Jobicy adapter", () => {
     const { http, urls } = harness({
       "jobicy.com/api/v2/remote-jobs": file("jobicy/remote-jobs.json"),
     });
-    const result = await createJobicyAdapter(http).fetch({ board: null, keywords: ["react"] });
+    const result = await createJobicyAdapter(http).fetch({ board: null, keywords: ["react"], known: new Set() });
     expect(urls).toEqual(["https://jobicy.com/api/v2/remote-jobs?count=100"]);
     // The adapter returns every posting; sync applies the keyword filter.
     expect(result).toMatchObject({ complete: false });
@@ -127,11 +129,11 @@ describe("Jobicy adapter", () => {
 describe("fixture sources (HB_SOURCES=fixture)", () => {
   test("run the real adapters over files, and a board without a file does not exist", async () => {
     const sources = createFixtureSources({ dir: fixtures });
-    const acme = await sources.greenhouse?.fetch({ board: "acme", keywords: [] });
+    const acme = await sources.greenhouse?.fetch({ board: "acme", keywords: [], known: new Set() });
     expect(acme?.postings).toHaveLength(7);
     expect(await sources.greenhouse?.board?.check("acme")).toEqual({ label: "Acme" });
     expect(await caught(async () => sources.greenhouse?.board?.check("nosuchco"))).toBeInstanceOf(SourceError);
-    expect((await sources.jobicy?.fetch({ board: null, keywords: [] }))?.postings).toHaveLength(3);
+    expect((await sources.jobicy?.fetch({ board: null, keywords: [], known: new Set() }))?.postings).toHaveLength(3);
   });
 });
 
@@ -164,7 +166,11 @@ describe("sources API", () => {
   test("built-ins are always listed and on by default", async () => {
     const list = SourceList.parse(await (await call("GET", "/sources")).json());
     expect(list.sources).toMatchObject([
+      { kind: "himalayas", label: "Himalayas", enabled: true, builtin: true, board: null },
       { kind: "jobicy", label: "Jobicy", enabled: true, builtin: true, board: null },
+      { kind: "remoteok", label: "RemoteOK", enabled: true, builtin: true, board: null },
+      { kind: "remotive", label: "Remotive", enabled: true, builtin: true, board: null },
+      { kind: "weworkremotely", label: "We Work Remotely", enabled: true, builtin: true, board: null },
     ]);
   });
 
@@ -219,7 +225,7 @@ describe("sources API", () => {
       await (await call("POST", "/sources", { url: "https://boards.greenhouse.io/acme" })).json(),
     );
     const after = SourceList.parse(await (await call("DELETE", `/sources/${board.id}`)).json());
-    expect(after.sources.map((s) => s.kind)).toEqual(["jobicy"]);
+    expect(after.sources.map((s) => s.kind)).toEqual(["himalayas", "jobicy", "remoteok", "remotive", "weworkremotely"]);
   });
 
   test("the profile stores role families and exclude words, deduplicated", async () => {

@@ -1,0 +1,85 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "2c1f0e9d-8b7a-4c6d-9e5f-0a1b2c3d4e5f",
+      "title": "Senior Frontend Engineer, Design Systems",
+      "department": "Engineering",
+      "team": "Web Platform",
+      "employmentType": "FullTime",
+      "location": "Remote - APAC",
+      "secondaryLocations": [
+        { "location": "Manila", "address": { "addressLocality": "Manila", "addressCountry": "Philippines" } }
+      ],
+      "publishedAt": "2026-10-14T08:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": { "postalAddress": { "addressCountry": "Philippines", "addressLocality": "Manila" } },
+      "jobUrl": "https://jobs.ashbyhq.com/umbrella/2c1f0e9d-8b7a-4c6d-9e5f-0a1b2c3d4e5f",
+      "applyUrl": "https://jobs.ashbyhq.com/umbrella/2c1f0e9d-8b7a-4c6d-9e5f-0a1b2c3d4e5f/application",
+      "descriptionHtml": "<p>Umbrella is hiring a frontend engineer for its design system. Remote across APAC.</p><ul><li>React and TypeScript</li></ul>",
+      "descriptionPlain": "Umbrella is hiring a frontend engineer for its design system. Remote across APAC.\n\n- React and TypeScript",
+      "compensation": {
+        "compensationTierSummary": "$80K – $110K",
+        "scrapeableCompensationSalarySummary": "$80K - $110K",
+        "summaryComponents": [
+          {
+            "compensationType": "Salary",
+            "interval": "1 YEAR",
+            "currencyCode": "USD",
+            "minValue": 80000,
+            "maxValue": 110000
+          },
+          {
+            "compensationType": "EquityPercentage",
+            "interval": "NONE",
+            "currencyCode": null,
+            "minValue": 0.05,
+            "maxValue": 0.1
+          }
+        ]
+      }
+    },
+    {
+      "id": "3d2a1f0e-9c8b-4d7e-8f60-1b2c3d4e5f60",
+      "title": "Security Engineer",
+      "department": "Engineering",
+      "team": "Security",
+      "employmentType": "FullTime",
+      "location": "Remote - US",
+      "secondaryLocations": [],
+      "publishedAt": "2026-10-13T08:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": { "postalAddress": { "addressCountry": "United States" } },
+      "jobUrl": "https://jobs.ashbyhq.com/umbrella/3d2a1f0e-9c8b-4d7e-8f60-1b2c3d4e5f60",
+      "applyUrl": "https://jobs.ashbyhq.com/umbrella/3d2a1f0e-9c8b-4d7e-8f60-1b2c3d4e5f60/application",
+      "descriptionHtml": "<p>Keep Umbrella safe. US only.</p>",
+      "descriptionPlain": "Keep Umbrella safe. US only.",
+      "compensation": {
+        "compensationTierSummary": null,
+        "scrapeableCompensationSalarySummary": null,
+        "summaryComponents": []
+      }
+    },
+    {
+      "id": "4e3b2a1f-0d9c-4e8f-9071-2c3d4e5f6071",
+      "title": "Internal Tools Engineer",
+      "department": "Engineering",
+      "team": "Tools",
+      "employmentType": "FullTime",
+      "location": "Remote",
+      "secondaryLocations": [],
+      "publishedAt": "2026-10-12T08:00:00.000+00:00",
+      "isListed": false,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/umbrella/4e3b2a1f-0d9c-4e8f-9071-2c3d4e5f6071",
+      "applyUrl": "https://jobs.ashbyhq.com/umbrella/4e3b2a1f-0d9c-4e8f-9071-2c3d4e5f6071/application",
+      "descriptionHtml": "<p>Unlisted: internal referral only.</p>",
+      "descriptionPlain": "Unlisted: internal referral only."
+    }
+  ]
+}

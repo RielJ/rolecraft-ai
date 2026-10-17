@@ -5,6 +5,7 @@ import { convert, type FxRates, monthlyInView, type Pay, toMonthly } from "@/dom
 import { DESCRIPTION_HEAD_CHARS, roleFit } from "@/domain/roles";
 import type { JobId, MatchDetail, MatchItem, MatchList, MatchQuery, Money } from "@/shared/api";
 import type { RoleFamily } from "@/shared/enums";
+import { SOURCE_SITES } from "@/shared/labels";
 import { facts, jobListings, jobs, opportunities, sources, users } from "../db/schema";
 import { type Deps, notFound } from "./context";
 import { jobFacts } from "./jobs";
@@ -105,15 +106,16 @@ function roleUnclear(
 async function seenOn(deps: Pick<Deps, "db">, ids: readonly JobId[]) {
   if (ids.length === 0) return new Map<JobId, MatchItem["seenOn"]>();
   const rows = await deps.db
-    .select({ jobId: jobListings.jobId, label: sources.label, listingUrl: jobListings.listingUrl })
+    .select({ jobId: jobListings.jobId, kind: sources.kind, label: sources.label, listingUrl: jobListings.listingUrl })
     .from(jobListings)
     .innerJoin(sources, eq(sources.id, jobListings.sourceId))
     .where(inArray(jobListings.jobId, [...ids]))
     .orderBy(desc(jobListings.isPrimary), asc(sources.label));
   const byJob = new Map<JobId, MatchItem["seenOn"]>();
-  for (const { jobId, label, listingUrl } of rows) {
+  for (const { jobId, kind, label, listingUrl } of rows) {
     const list = byJob.get(jobId) ?? [];
-    list.push({ label, listingUrl });
+    const site = SOURCE_SITES[kind];
+    list.push({ label, listingUrl, via: site.attribution ? site.name : null });
     byJob.set(jobId, list);
   }
   return byJob;

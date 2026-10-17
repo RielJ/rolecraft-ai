@@ -751,8 +751,11 @@ export type MatchQueryInput = z.input<typeof MatchQuery>;
 export const MatchReason = z.object({ sign: z.enum(["positive", "negative", "neutral"]), text: z.string() });
 export type MatchReason = z.infer<typeof MatchReason>;
 
-/** Where a job was seen: source labels, primary first. */
-export const SeenOn = z.array(z.object({ label: z.string(), listingUrl: z.string() }));
+/**
+ * Where a job was seen: source labels, primary first. `via` is the board's name when its terms
+ * ask for attribution (RemoteOK, We Work Remotely, Remotive), shown as "via <name>" with the link.
+ */
+export const SeenOn = z.array(z.object({ label: z.string(), listingUrl: z.string(), via: z.string().nullable() }));
 
 /** One row of the Matches list. */
 export const MatchItem = z.object({

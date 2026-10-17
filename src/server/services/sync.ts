@@ -94,8 +94,21 @@ async function refreshSource({
     return { ...base, ...EMPTY_COUNTS, status: "skipped", error: null };
   }
 
+  // What this source already lists, so an adapter with a detail budget spends it on new postings.
+  const known = adapter
+    ? new Set(
+        (
+          await asSync(deps.db, (tx) =>
+            tx
+              .select({ externalId: jobListings.externalId })
+              .from(jobListings)
+              .where(eq(jobListings.sourceId, source.id)),
+          )
+        ).map((l) => l.externalId),
+      )
+    : new Set<string>();
   const fetched: FetchOutcome & { normalized?: Map<string, Normalized> } = adapter
-    ? await fetchAndFilter({ adapter, source, targeting })
+    ? await fetchAndFilter({ adapter, source, targeting, known })
     : { kind: "failed", error: `${source.label} has no reader yet.` };
 
   return asSync(deps.db, async (tx) => {
@@ -150,15 +163,17 @@ async function fetchAndFilter({
   adapter,
   source,
   targeting,
+  known,
 }: {
   adapter: NonNullable<SyncDeps["sources"][SourceRow["kind"]]>;
   source: SourceRow;
   targeting: Targeting;
+  known: ReadonlySet<string>;
 }): Promise<FetchOutcome & { normalized?: Map<string, Normalized> }> {
   const keywords = source.keywords ?? targeting.targetTitles;
   let result: Awaited<ReturnType<typeof adapter.fetch>>;
   try {
-    result = await adapter.fetch({ board: source.board, keywords });
+    result = await adapter.fetch({ board: source.board, keywords, known });
   } catch (error) {
     const sourceError =
       error instanceof SourceError ? error : new SourceError({ kind: "failed", message: `${adapter.name} failed.` });
@@ -198,7 +213,15 @@ async function fetchAndFilter({
     contentHash: derived.contentHash,
     postedAt: derived.postedAt,
   }));
-  return { kind: "fetched", complete: result.complete, fetchedIds, dropped, postings, normalized };
+  return {
+    kind: "fetched",
+    complete: result.complete,
+    fetchedIds,
+    unread: result.unread,
+    dropped,
+    postings,
+    normalized,
+  };
 }
 
 // ---------- apply ----------
@@ -249,13 +272,19 @@ async function applyPlan({
   let added = 0;
   let updated = 0;
 
+  const posting = (externalId: string): Normalized => {
+    const item = normalized.get(externalId);
+    if (!item) throw new Error(`no posting for ${externalId}`);
+    return item;
+  };
+
   for (const upsert of plan.upserts) {
-    const item = normalized.get(upsert.externalId);
-    if (!item) throw new Error(`no posting for ${upsert.externalId}`);
     switch (upsert.kind) {
       case "seen": {
         seen.push(upsert.externalId);
+        // An unread listing (detail budget) is seen with no posting, and never rewrites.
         if (upsert.rewrite) {
+          const item = posting(upsert.externalId);
           // The board changed the posting: refresh its content, derived columns and rule eligibility.
           await tx
             .update(jobs)
@@ -266,6 +295,7 @@ async function applyPlan({
         break;
       }
       case "insert": {
+        const item = posting(upsert.externalId);
         const [job] = await tx
           .insert(jobs)
           .values({ userId: deps.userId, origin: "source", ...item.derived, firstSeenAt: now, updatedAt: now })
@@ -280,6 +310,7 @@ async function applyPlan({
         const jobId = upsert.to.kind === "job" ? upsert.to.jobId : insertedJobs.get(upsert.to.externalId);
         if (!jobId) throw new Error(`no job for ${upsert.externalId}`);
         // Only a listing: the job's text and its opportunity stay as they are.
+        const item = posting(upsert.externalId);
         await insertListing(tx, { source, item, jobId, isPrimary: false, now, userId: deps.userId });
         break;
       }

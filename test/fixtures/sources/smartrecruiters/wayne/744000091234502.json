@@ -1,0 +1,29 @@
+{
+  "id": "744000091234502",
+  "name": "HR Generalist",
+  "uuid": "1c2d3e4f-5061-4728-93a4-b5c6d7e8f901",
+  "refNumber": "REF1202X",
+  "company": { "identifier": "WayneEnterprises", "name": "Wayne Enterprises" },
+  "releasedDate": "2026-10-13T08:00:00.000Z",
+  "location": {
+    "city": "Gotham",
+    "region": "NJ",
+    "country": "us",
+    "remote": false,
+    "fullLocation": "Gotham, NJ, United States"
+  },
+  "department": { "id": "1002", "label": "People" },
+  "applyUrl": "https://jobs.smartrecruiters.com/WayneEnterprises/744000091234502-hr-generalist?oga=true",
+  "postingUrl": "https://jobs.smartrecruiters.com/WayneEnterprises/744000091234502-hr-generalist",
+  "jobAd": {
+    "sections": {
+      "companyDescription": {
+        "title": "Company Description",
+        "text": "<p>Wayne Enterprises builds logistics software.</p>"
+      },
+      "jobDescription": { "title": "Job Description", "text": "<p>Run hiring and onboarding in Gotham.</p>" },
+      "qualifications": { "title": "Qualifications", "text": "<p>3+ years in HR.</p>" },
+      "additionalInformation": { "title": "Additional Information", "text": "" }
+    }
+  }
+}

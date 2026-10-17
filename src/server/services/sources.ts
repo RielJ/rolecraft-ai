@@ -10,6 +10,7 @@ import {
   type UpdateSourceInput,
 } from "@/shared/api";
 import { BUILTIN_SOURCE_KINDS, type SourceKind } from "@/shared/enums";
+import { SOURCE_SITES } from "@/shared/labels";
 import { boardFromUrl, SourceError } from "../adapters/sources";
 import { sources, tasks } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
@@ -22,9 +23,6 @@ import { getTask, startTask } from "./tasks";
  */
 
 type SourceRow = typeof sources.$inferSelect;
-
-/** Built-in boards that have an adapter. Slice 8 adds the other four. */
-const BUILTINS = [{ kind: "jobicy", label: "Jobicy" }] as const;
 
 const isBuiltin = (kind: SourceKind) => BUILTIN_SOURCE_KINDS.some((k) => k === kind);
 
@@ -46,11 +44,16 @@ function toSourceDto(row: SourceRow): SourceDto {
   };
 }
 
-/** Insert a row for each built-in board the user does not have yet (on by default, Q10). */
+/**
+ * Insert a row for each built-in board the user does not have yet, on by default (Q10). Safe to
+ * run on every start: an existing row, turned off or given keywords, is left as it is.
+ */
 export async function ensureBuiltinSources(deps: Pick<Deps, "db" | "userId">): Promise<void> {
   await deps.db
     .insert(sources)
-    .values(BUILTINS.map((b) => ({ userId: deps.userId, kind: b.kind, board: null, label: b.label })))
+    .values(
+      BUILTIN_SOURCE_KINDS.map((kind) => ({ userId: deps.userId, kind, board: null, label: SOURCE_SITES[kind].name })),
+    )
     .onConflictDoNothing();
 }
 
@@ -76,7 +79,7 @@ export async function addCompanyBoard(deps: Deps, { url }: AddSourceInput): Prom
     throw new AppError({
       code: "invalid_input",
       message:
-        "This link is not a company board we can read yet. Paste the careers page link from Greenhouse (boards.greenhouse.io/company).",
+        "This link is not a company board we can read. Paste the job list link from Greenhouse, Lever, Ashby, SmartRecruiters, Recruitee or Workable, for example jobs.lever.co/company.",
     });
   }
   const { adapter, board } = found;

@@ -1,0 +1,57 @@
+[
+  {
+    "last_updated": 1760515200,
+    "legal": "API Terms of Service: Please link back (with follow, without nofollow!) to the URL on Remote OK and mention Remote OK as a source, so we get traffic back from your site. If you do not we'll have to suspend API access."
+  },
+  {
+    "slug": "remote-senior-typescript-engineer-pied-piper-1093001",
+    "id": "1093001",
+    "epoch": 1760428800,
+    "date": "2026-10-14T08:00:00+00:00",
+    "company": "Pied Piper",
+    "company_logo": "https://remoteok.com/assets/img/jobs/pied-piper.png",
+    "position": "Senior TypeScript Engineer",
+    "tags": ["typescript", "node", "engineer"],
+    "logo": "https://remoteok.com/assets/img/jobs/pied-piper.png",
+    "description": "<p>Pied Piper is hiring a TypeScript engineer to work on compression APIs.</p><p>Remote, worldwide. 5+ years of experience.</p>",
+    "location": "Worldwide",
+    "salary_min": 100000,
+    "salary_max": 140000,
+    "apply_url": "https://remoteok.com/remote-jobs/remote-senior-typescript-engineer-pied-piper-1093001",
+    "url": "https://remoteok.com/remote-jobs/remote-senior-typescript-engineer-pied-piper-1093001"
+  },
+  {
+    "slug": "remote-devops-engineer-aviato-1093002",
+    "id": "1093002",
+    "epoch": 1760342400,
+    "date": "2026-10-13T08:00:00+00:00",
+    "company": "Aviato",
+    "company_logo": "",
+    "position": "DevOps Engineer",
+    "tags": ["devops", "aws", "kubernetes"],
+    "logo": "",
+    "description": "<p>Run Aviato's AWS and Kubernetes. Remote in APAC.</p>",
+    "location": "APAC",
+    "salary_min": 0,
+    "salary_max": 0,
+    "apply_url": "https://remoteok.com/remote-jobs/remote-devops-engineer-aviato-1093002",
+    "url": "https://remoteok.com/remote-jobs/remote-devops-engineer-aviato-1093002"
+  },
+  {
+    "slug": "remote-sales-development-representative-aviato-1093003",
+    "id": "1093003",
+    "epoch": 1760256000,
+    "date": "2026-10-12T08:00:00+00:00",
+    "company": "Aviato",
+    "company_logo": "",
+    "position": "Sales Development Representative",
+    "tags": ["sales"],
+    "logo": "",
+    "description": "<p>Book meetings for Aviato's sales team. US only.</p>",
+    "location": "United States",
+    "salary_min": 50000,
+    "salary_max": 0,
+    "apply_url": "https://remoteok.com/remote-jobs/remote-sales-development-representative-aviato-1093003",
+    "url": "https://remoteok.com/remote-jobs/remote-sales-development-representative-aviato-1093003"
+  }
+]

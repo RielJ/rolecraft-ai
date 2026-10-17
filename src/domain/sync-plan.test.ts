@@ -40,6 +40,7 @@ const fetched = (postings: PlannedPosting[], over: Partial<Fetched> = {}): Fetch
   kind: "fetched",
   complete: true,
   fetchedIds: postings.map((p) => p.externalId),
+  unread: [],
   dropped: 0,
   postings,
   ...over,
@@ -168,6 +169,30 @@ describe("planSourceRun (section 3.1, steps 5 to 7)", () => {
       ],
     });
     expect(result).toMatchObject({ kind: "ok", missing: ["3", "5"] });
+  });
+
+  test("unread postings (detail budget): a stored one is seen unchanged and reopens; none goes missing", () => {
+    const result = plan({
+      fetched: fetched([posting("1")], { unread: ["2", "3", "9"] }),
+      existing: [listing("1", 1), listing("2", 2), listing("3", 3, { missingSince: days(-3) }), listing("4", 4)],
+      lastOkCount: 4,
+    });
+    expect(result).toMatchObject({
+      kind: "ok",
+      upserts: [
+        { kind: "seen", externalId: "1", rewrite: false },
+        { kind: "seen", externalId: "2", jobId: jobId(2), rewrite: false },
+        { kind: "seen", externalId: "3", jobId: jobId(3), rewrite: false },
+      ],
+      missing: ["4"],
+      reopened: [jobId(3)],
+      count: 1,
+      rawCount: 4,
+    });
+  });
+
+  test("a run with only unread postings is not suspicious_empty", () => {
+    expect(plan({ fetched: fetched([], { unread: ["1"] }), lastOkCount: 3 }).kind).toBe("ok");
   });
 
   test("duplicate external ids in one fetch count once", () => {
