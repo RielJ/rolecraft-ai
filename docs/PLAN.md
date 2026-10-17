@@ -984,11 +984,61 @@ The invariant test is written first, fails, and then the code makes it pass.
   docker compose up --build -d --wait && curl -fsS localhost:3000/api/health && docker compose restart app && docker compose up -d --wait app && curl -fsS localhost:3000/api/health
   ```
 
+### Slice 12. Refresh age, excluded count, metrics line
+
+- **Files owned**: `src/domain/metrics.ts`, a last-refresh field and an excluded count in `src/server/services/matches.ts` and `src/server/services/board.ts`, `src/web/components/refresh-button.tsx`, the Excluded toggle in `src/web/routes/matches.tsx`, the metrics line in `src/web/routes/board.tsx`, `test/metrics.test.ts`, `e2e/metrics.spec.ts`.
+- **Depends on**: slice 11.
+- **Acceptance**:
+  - The top bar shows "Refreshed 3 days ago" from the newest finished sync task, and "Not refreshed yet" on a fresh database.
+  - The Excluded toggle shows the count of open excluded jobs.
+  - The Board shows applied, reached Interviewing, the rate and the median Saved to Ready time for the last 30 days, read from status history. Unit tests cover zero applications, no Ready time and history entries outside the window.
+- **Verify**:
+  ```
+  bun test test/metrics.test.ts src/domain/metrics.test.ts
+  bun run check
+  bun run build && bunx playwright test e2e/metrics.spec.ts
+  ```
+
+### Slice 13. Filtered-out postings on the Board
+
+- **Files owned**: a migration adding `role_drops` (sync role may delete and insert) and `eligibility_overrides` (no sync grant), the drop writes in `src/server/services/sync.ts`, `src/server/services/filtered.ts`, the override in the Matches query, `src/web/components/filtered-out.tsx`, its place in `src/web/routes/board.tsx`, `test/filtered.test.ts`, `e2e/filtered.spec.ts`.
+- **Depends on**: slice 12.
+- **Acceptance**:
+  - A source run replaces that source's role drops and leaves other sources' drops alone.
+  - The sync-invariant test passes, and the sync role cannot write `eligibility_overrides`.
+  - An overridden excluded job appears in Matches and stays there after a Refresh that re-runs eligibility.
+  - The Board section is collapsed by default, groups by reason with counts, shows the newest 50 per group and searches title and company.
+  - A role drop's Add by link opens the dialog with its URL filled in.
+- **Verify**:
+  ```
+  bun test test/filtered.test.ts test/sync-invariant.test.ts
+  bun run check
+  bun run build && bunx playwright test e2e/filtered.spec.ts
+  ```
+
+### Slice 14. GitHub add-ons
+
+- **Files owned**: `src/server/adapters/github.ts` (public API and `gh` readers behind one interface), `src/domain/github-link.ts`, the repo reading prompt in `src/domain/prompts.ts`, add-on reading in `src/server/services/profile.ts`, evidence links and the lock badge in `src/web/routes/profile.tsx`, the private-URL filter on export in `src/server/services/workspace.ts`, `eval/github/*.json`, `test/github.test.ts`.
+- **Depends on**: slice 3.
+- **Acceptance**:
+  - Repo and pull request links parse; other links stay stored only.
+  - The reader takes at most the README, the manifest, the tree, five AI-picked files and 50 of the user's commits, and stops at the token cap.
+  - With `HB_GITHUB=gh`, a call is refused when gh's active account is not `HB_GITHUB_USER`; the app never runs `gh auth token`.
+  - Every proposed fact carries a file or commit link. Re-read shows a diff and asks before removing a fact.
+  - An export never contains a private repo or commit URL.
+  - `bun run eval` on the three fixture repos reports zero invented claims and zero injected facts.
+- **Verify**:
+  ```
+  bun test test/github.test.ts
+  bun run check
+  HB_AI=pi bun run eval --tier light --github   # manual, uses the pi subscription
+  ```
+
 ### Later
 
-From `DECISIONS.md`: fetching add-on links (GitHub) to pre-fill the form; reading a portfolio URL; filtering on working hours; using dismiss reasons in ranking; tracking active contracts (hours, invoices, payments, W-8BEN and BIR reminders); pgvector for facts or jobs; scheduled syncs, maybe with pg-boss behind `startTask`; accounts, login, hosting and RA 10173 consent work (the key file moves into Postgres, encrypted, at that point); a command palette; DOCX export; reading application forms on ATS sites.
+From `DECISIONS.md`: reading a portfolio URL; filtering on working hours; using dismiss reasons in ranking; tracking active contracts (hours, invoices, payments, W-8BEN and BIR reminders); pgvector for facts or jobs; scheduled syncs, maybe with pg-boss behind `startTask`; accounts, login, hosting and RA 10173 consent work (the key file moves into Postgres, encrypted, at that point); a command palette; DOCX export; reading application forms on ATS sites.
 
-Deferred by this plan: near-match detection on re-import ("this replaces FACT-12"); output version history; a "not a duplicate" memory; a `status_events` table if cross-job reports are wanted; board drag and drop; a manual eligibility override.
+Deferred by this plan: near-match detection on re-import ("this replaces FACT-12"); output version history; a "not a duplicate" memory; a `status_events` table if cross-job reports are wanted; board drag and drop.
 
 ---
 
