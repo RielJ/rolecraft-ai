@@ -1,0 +1,32 @@
+{
+  "about": "Postings open to someone in the Philippines, in words the rules do not know. A model that excludes these hides real jobs; the eval reports it but does not fail on it.",
+  "cases": [
+    {
+      "id": "stable-internet",
+      "title": "Full Stack Engineer",
+      "company": "Tidepool Tools",
+      "locationText": "Remote",
+      "description": "Tidepool Tools builds scheduling software for surf schools.\n\nOur team spans 14 countries and we hire wherever you have a stable internet connection. We pay in USD through Deel.\n\nYou will work across our React frontend and Elixir backend.",
+      "expected": "worldwide",
+      "why": "Hires in any country, without the word worldwide."
+    },
+    {
+      "id": "southeast-asian",
+      "title": "Content Designer",
+      "company": "Sari Commerce",
+      "locationText": "Remote",
+      "description": "Sari Commerce helps neighborhood shops sell online.\n\nWe hire contractors in Southeast Asian countries and work on GMT+7 to GMT+9 hours.\n\nYou will write onboarding flows and help center articles.",
+      "expected": "apac",
+      "why": "Southeast Asian countries, written as an adjective the APAC rule does not match."
+    },
+    {
+      "id": "no-visa-any-country",
+      "title": "DevOps Engineer",
+      "company": "Copperline",
+      "locationText": "Remote",
+      "description": "Copperline hosts websites for nonprofits.\n\nWe are unable to sponsor visas, but we hire contractors in any country where our payment provider operates.\n\nYou will own Terraform, CI and our monitoring.",
+      "expected": "worldwide",
+      "why": "\"Unable to sponsor visas\" sounds like an exclusion, but it only rules out relocation."
+    }
+  ]
+}

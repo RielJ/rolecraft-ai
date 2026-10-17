@@ -216,8 +216,11 @@ export function useWorkspace(id: OpportunityId) {
   return useQuery({
     queryKey: keys.workspace(id),
     queryFn: () => unwrap(client.api.opportunities[":id"].$get({ param: { id } }), WorkspaceDto),
-    // The draft task's step and the drafted bodies arrive by polling the workspace.
-    refetchInterval: (query) => (query.state.data?.draftTask?.status === "running" ? TASK_POLL_MS : false),
+    // Task steps, drafted bodies and suggested questions arrive by polling the workspace.
+    refetchInterval: (query) =>
+      query.state.data?.draftTask?.status === "running" || query.state.data?.suggestTask?.status === "running"
+        ? TASK_POLL_MS
+        : false,
   });
 }
 
@@ -267,6 +270,19 @@ export function useDraft(opportunityId: OpportunityId) {
   return useMutation({
     mutationFn: (json: DraftInput) =>
       unwrap(client.api.opportunities[":id"].draft.$post({ param: { id: opportunityId }, json }), TaskDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) }),
+  });
+}
+
+/** Start a suggest-questions task. Like drafting, its progress arrives by polling the workspace. */
+export function useSuggestQuestions(opportunityId: OpportunityId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (json: { confirmOverCap?: boolean }) =>
+      unwrap(
+        client.api.opportunities[":id"]["suggest-questions"].$post({ param: { id: opportunityId }, json }),
+        TaskDto,
+      ),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) }),
   });
 }

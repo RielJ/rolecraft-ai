@@ -8,6 +8,8 @@ import type {
   OpportunityId,
   OutputDto,
   OutputId,
+  OverCapDetails,
+  TaskId,
   WorkspaceDto,
 } from "@/shared/api";
 import { OpportunityType, RATE_TYPES, RateType } from "@/shared/enums";
@@ -19,7 +21,7 @@ import {
   rateTypeLabel,
   statusLabel,
 } from "@/shared/labels";
-import { errorMessage } from "../api";
+import { ApiError, errorMessage } from "../api";
 import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
 import { JobFacts, PossibleDuplicates } from "../components/job-facts";
 import { NeedsInput } from "../components/needs-input";
@@ -30,10 +32,22 @@ import {
   useDeleteQuestion,
   useMarkOutputCurrent,
   useMarkReady,
+  useRetryTask,
+  useSuggestQuestions,
   useUpdateOpportunity,
   useUpdateOutput,
   useWorkspace,
 } from "../queries";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -242,6 +256,7 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
         <Label htmlFor={`${id}-body`} className="flex-1 font-medium leading-snug">
           {answer.question}
         </Label>
+        {!answer.included && <span className="pt-0.5 text-muted-foreground text-xs">Not added</span>}
         {answer.mustAnswer && <Badge variant="outline">{mustAnswerLabel(answer.mustAnswer)}</Badge>}
         <Button
           size="icon-sm"
@@ -293,6 +308,111 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
   );
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the last finished suggestion run found, as one line. */
+function suggestSummary(result: { found: number; added: number }): string {
+  if (result.found === 0) return "The posting asks no questions that the AI could find.";
+  if (result.added === 0) return `Found ${plural(result.found, "question")}, all already listed.`;
+  return `Added ${plural(result.added, "suggested question")}. Tick the ones the form asks.`;
+}
+
+/** "Suggest questions": a light-tier task with its step, its outcome, Retry, and the over-cap confirmation. */
+function SuggestQuestions({ ws }: { ws: WorkspaceDto }) {
+  const suggest = useSuggestQuestions(ws.opportunity.id);
+  const retry = useRetryTask(ws.opportunity.id);
+  const [overCap, setOverCap] = useState<{ details: OverCapDetails; retryId: TaskId | null } | null>(null);
+  const task = ws.suggestTask;
+  const busy = suggest.isPending || retry.isPending || task?.status === "running";
+  if (ws.opportunity.frozen || !ws.aiReady) return null;
+
+  function run({ confirmOverCap, retryId }: { confirmOverCap: boolean; retryId: TaskId | null }) {
+    const onError = (error: unknown) => {
+      const details = error instanceof ApiError ? error.overCap : null;
+      if (details) setOverCap({ details, retryId });
+      else toast.error(errorMessage(error));
+    };
+    if (retryId) retry.mutate({ id: retryId, confirmOverCap }, { onError });
+    else suggest.mutate({ confirmOverCap }, { onError });
+  }
+
+  let status: ReactElement | null = null;
+  if (task) {
+    switch (task.status) {
+      case "running":
+        status = (
+          <p className="text-muted-foreground text-sm" aria-live="polite">
+            {task.step || "Starting"}…
+          </p>
+        );
+        break;
+      case "failed":
+      case "interrupted":
+        status = (
+          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="text-destructive">
+              {task.status === "interrupted"
+                ? "Finding questions stopped because the app restarted."
+                : (task.error ?? "Finding questions failed.")}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => run({ confirmOverCap: false, retryId: task.id })}
+            >
+              Retry
+            </Button>
+          </div>
+        );
+        break;
+      case "done":
+        status = task.result && (
+          <p className="text-muted-foreground text-sm" aria-live="polite">
+            {suggestSummary(task.result)}
+          </p>
+        );
+        break;
+      default: {
+        const _exhaustive: never = task.status;
+        return _exhaustive;
+      }
+    }
+  }
+
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2">
+      <Button size="sm" variant="outline" disabled={busy} onClick={() => run({ confirmOverCap: false, retryId: null })}>
+        <SparklesIcon aria-hidden />
+        Suggest questions
+      </Button>
+      {status}
+      <AlertDialog open={overCap !== null} onOpenChange={(open) => !open && setOverCap(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Go over your monthly cap?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Finding questions costs at most ${overCap?.details.estimateUsd.toFixed(4) ?? "0"}, which takes this
+              month's AI spend past your ${overCap?.details.capUsd.toFixed(2) ?? "0"} cap.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (overCap) run({ confirmOverCap: true, retryId: overCap.retryId });
+                setOverCap(null);
+              }}
+            >
+              Find questions anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 function Questions({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions }) {
   const id = useId();
   const add = useAddQuestion(ws.opportunity.id);
@@ -309,6 +429,7 @@ function Questions({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions })
       <h2 id={`${id}-h`} className="font-semibold text-lg">
         Questions
       </h2>
+      <SuggestQuestions ws={ws} />
       {ws.answers.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           No questions yet. Add the ones the application form asks, so they are answered before you export.

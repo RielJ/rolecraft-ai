@@ -11,7 +11,8 @@ import { AppError, type Deps } from "./context";
 /**
  * Every AI call goes through `runAi`: it reads the key, picks the tier's model, checks the
  * monthly cap, calls the provider and records an `ai_calls` row (decision 31). It takes the
- * database handle from `deps`, so the sync pipeline can pass its `hb_sync` transaction later.
+ * database handle from `deps`, so the sync pipeline's AI eligibility pass passes its `hb_sync`
+ * transaction and every read and write here is checked against that role's grants.
  */
 
 type AiDeps = Pick<Deps, "userId" | "ai" | "aiSource" | "keyStore" | "clock"> & { db: DbOrTx };
@@ -64,11 +65,53 @@ export async function loadAiConfig(deps: Omit<AiDeps, "ai" | "clock">): Promise<
   };
 }
 
+/** One tier's model with the provider, key and cap: what a single call needs. */
+export type AiTierConfig = Omit<AiConfig, "models"> & { model: string };
+
+/**
+ * Like `loadAiConfig` for one tier, reading only that tier's model column. The sync pass runs
+ * this as `hb_sync`, which may read `model_light` but not `model_writing` (section 2 grants).
+ */
+export async function loadAiTierConfig(
+  deps: Omit<AiDeps, "ai" | "clock">,
+  { tier }: { tier: AiTier },
+): Promise<AiTierConfig | null> {
+  if (deps.aiSource.kind === "pi") {
+    const [user] = await deps.db.select({ cap: users.monthlyCapUsd }).from(users).where(eq(users.id, deps.userId));
+    return {
+      via: "pi",
+      provider: "anthropic",
+      key: "",
+      model: deps.aiSource.models[tier],
+      capUsd: user?.cap == null ? null : Number(user.cap),
+    };
+  }
+  const [user] = await deps.db
+    .select({
+      provider: users.aiProvider,
+      model: tier === "light" ? users.modelLight : users.modelWriting,
+      cap: users.monthlyCapUsd,
+    })
+    .from(users)
+    .where(eq(users.id, deps.userId));
+  if (!user?.provider) return null;
+  const key = await deps.keyStore.read(deps.userId);
+  if (key === null) return null;
+  return {
+    via: "key",
+    provider: user.provider,
+    key,
+    model: user.model || DEFAULT_MODELS[user.provider][tier],
+    capUsd: user.cap === null ? null : Number(user.cap),
+  };
+}
+
+const NO_AI_KEY = () =>
+  new AppError({ code: "no_ai_key", message: "Add an AI key in Settings first, then draft again." });
+
 export async function requireAiConfig(deps: Omit<AiDeps, "ai" | "clock">): Promise<AiConfig> {
   const config = await loadAiConfig(deps);
-  if (!config) {
-    throw new AppError({ code: "no_ai_key", message: "Add an AI key in Settings first, then draft again." });
-  }
+  if (!config) throw NO_AI_KEY();
   return config;
 }
 
@@ -207,8 +250,9 @@ export async function runAi(
     confirmOverCap?: boolean;
   },
 ): Promise<{ text: string; aiCallId: AiCallId }> {
-  const config = await requireAiConfig(deps);
-  const model = config.models[tier];
+  const config = await loadAiTierConfig(deps, { tier });
+  if (!config) throw NO_AI_KEY();
+  const { model } = config;
   await checkCap(deps, {
     capUsd: config.capUsd,
     estimateUsd: estimateUsd({ model, prompt, maxOutputTokens }),

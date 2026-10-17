@@ -1,0 +1,86 @@
+{
+  "about": "Postings that leave out the Philippines in words the eligibility rules do not know, so the rules say unclear and the light model decides. Every case here is a missed exclusion if the final verdict is not excluded.",
+  "cases": [
+    {
+      "id": "fifty-states",
+      "title": "Senior Backend Engineer",
+      "company": "Ledgerline",
+      "locationText": "Remote",
+      "description": "Ledgerline builds accounting software for independent clinics. We are a fully remote team and you can work from home.\n\nThis role is open to candidates residing in one of the 50 states. We offer medical, dental and vision coverage and a 401(k) match.\n\nYou will own our billing services in Go and Postgres.",
+      "expected": "excluded",
+      "why": "\"one of the 50 states\" means United States residents only, without saying US."
+    },
+    {
+      "id": "eor-entities",
+      "title": "Product Designer",
+      "company": "Northwind Studio",
+      "locationText": "Remote",
+      "description": "Northwind Studio designs booking tools for gyms and dance schools.\n\nWe can only employ people through our entities in Germany, the Netherlands and Spain, so you need to live in one of those countries.\n\nYou will run research, design flows in Figma and work closely with two engineers.",
+      "expected": "excluded",
+      "why": "Hiring limited to three employer entities in Europe."
+    },
+    {
+      "id": "right-to-work-uk",
+      "title": "Frontend Developer",
+      "company": "Pennywise Labs",
+      "locationText": "Remote",
+      "description": "Pennywise Labs makes budgeting apps for students. Remote-first, with an optional office in Leeds.\n\nCandidates must hold the right to work in the UK without sponsorship. We are not able to consider applications from outside the UK.\n\nOur stack is React, TypeScript and a small Rails API.",
+      "expected": "excluded",
+      "why": "Right to work in the UK, phrased so the authorized-to-work rule does not match."
+    },
+    {
+      "id": "hybrid-commute",
+      "title": "Data Engineer",
+      "company": "Maplewood Analytics",
+      "locationText": "Hybrid",
+      "description": "Maplewood Analytics helps grocery chains forecast demand.\n\nThis is a hybrid role: you'll need to be within commuting distance of our Toronto office, where the team meets two days a week.\n\nYou will build pipelines in Python and dbt on top of Snowflake.",
+      "expected": "excluded",
+      "why": "Hybrid, tied to an office the candidate must commute to."
+    },
+    {
+      "id": "latam-list",
+      "title": "QA Engineer",
+      "company": "Tienda Cloud",
+      "locationText": "Remote",
+      "description": "Tienda Cloud runs online stores for small merchants.\n\nApplicants must currently live in Brazil, Mexico, Colombia or Argentina; we pay through local contractors in those countries only.\n\nYou will write Playwright tests and own release checks.",
+      "expected": "excluded",
+      "why": "A list of Latin American countries without the word LATAM."
+    },
+    {
+      "id": "emea-hours",
+      "title": "Customer Support Engineer",
+      "company": "Railyard",
+      "locationText": "Remote",
+      "description": "Railyard is a deploy platform for small teams.\n\nDue to payroll and coverage requirements, we are only able to hire people living in EMEA time zones (UTC-1 to UTC+3).\n\nYou will answer technical tickets and write help articles.",
+      "expected": "excluded",
+      "why": "EMEA time zones only. The Philippines is UTC+8."
+    },
+    {
+      "id": "anz-only",
+      "title": "Mobile Engineer",
+      "company": "Kiwi Parcel",
+      "locationText": "Remote",
+      "description": "Kiwi Parcel tracks deliveries for courier companies.\n\nRemote within Australia and New Zealand. You must have working rights in either country.\n\nOur app is built in React Native with a Node backend.",
+      "expected": "excluded",
+      "why": "Australia and New Zealand only. A model that equates this with Asia-Pacific misses it."
+    },
+    {
+      "id": "india-subsidiary",
+      "title": "Site Reliability Engineer",
+      "company": "Chaiwala Systems",
+      "locationText": "Remote",
+      "description": "Chaiwala Systems runs the order platform for tea and coffee chains.\n\nEmployment is through our Indian subsidiary, so you must be based in Bengaluru or Pune and able to visit the office once a quarter.\n\nYou will run Kubernetes clusters on AWS and own on-call.",
+      "expected": "excluded",
+      "why": "India only. A model that reads Asia as open to the Philippines misses it."
+    },
+    {
+      "id": "singapore-citizens",
+      "title": "Backend Engineer",
+      "company": "Merlion Pay",
+      "locationText": "Singapore",
+      "description": "Merlion Pay processes payouts for marketplaces in the region.\n\nThis role is open to Singapore citizens and permanent residents only. We do not sponsor Employment Passes.\n\nYou will build payout services in Kotlin.",
+      "expected": "excluded",
+      "why": "Citizens and permanent residents of Singapore only, though the company serves the region."
+    }
+  ]
+}

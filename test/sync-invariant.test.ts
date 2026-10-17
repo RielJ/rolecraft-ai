@@ -2,13 +2,23 @@ import { afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
+import type { AiProviderClient } from "@/server/adapters/ai/types";
 import { createHttpClient, type FetchFn } from "@/server/adapters/http";
 import { asSync } from "@/server/db/sync-session";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { ensureBuiltinSources } from "@/server/services/sources";
 import { waitForTask } from "@/server/services/tasks";
-import { AddJobResult, type OpportunityId, type OutputId, ProfileDto, TaskDto, WorkspaceDto } from "@/shared/api";
+import {
+  AddJobResult,
+  type OpportunityId,
+  type OutputId,
+  ProfileDto,
+  RefreshDto,
+  SettingsDto,
+  TaskDto,
+  WorkspaceDto,
+} from "@/shared/api";
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 /*
@@ -17,6 +27,8 @@ import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
  *  (b) as `hb_sync`, every write outside that table fails with SQLSTATE 42501;
  *  (c) refresh runs through fixture sources in six scenarios, and every row of every table outside
  *      {jobs, job_listings, sources, ai_calls, tasks} hashes the same before and after each one.
+ *      The AI eligibility pass is on (slice 10), with an AI that decides every job it is asked
+ *      about, so its `ai_calls` inserts and `jobs` updates run as `hb_sync` in these scenarios.
  * The table lists come from the catalog, so a new table is covered without editing this file.
  * Nothing here reaches the network: the HTTP client gets a fetch that serves fixture files.
  */
@@ -216,6 +228,42 @@ const OTHER_BUILTINS = [
 
 const PASTED_URL = "https://boards.greenhouse.io/acme/jobs/4005?utm_source=linkedin";
 
+/** A posting the rules leave `unclear`, added in scenario 2 so the AI pass has a new job to read. */
+const NEW_UNCLEAR = {
+  ...{ absolute_url: "https://boards.greenhouse.io/acme/jobs/4999", internal_job_id: 3999, metadata: null },
+  id: 4999,
+  title: "Payments Engineer",
+  location: { name: "Distributed" },
+  updated_at: "2026-10-16T09:00:00-04:00",
+  first_published: "2026-10-16T09:00:00-04:00",
+  content: "&lt;p&gt;We hire people wherever they live and work async.&lt;/p&gt;",
+  departments: [],
+  offices: [],
+};
+
+/**
+ * The test's AI: eligibility questions get "worldwide" with the description's first 40 characters
+ * as the phrase, which is verbatim, so every job asked about gets written. Anything else goes to
+ * the fake's default writer.
+ */
+function decidingAi(fallback: AiProviderClient): AiProviderClient {
+  return {
+    checkKey: (args) => fallback.checkKey(args),
+    complete: async (request) => {
+      const prompt = request.messages[0]?.content ?? "";
+      if (!prompt.includes('{"verdict"')) return fallback.complete(request);
+      const description = /^<<<\n([\s\S]*?)\n>>>$/m.exec(prompt)?.[1] ?? "";
+      const phrase = description.slice(0, 40).trim();
+      return {
+        text: JSON.stringify({ verdict: "worldwide", phrase }),
+        inputTokens: 500,
+        outputTokens: 20,
+        model: request.model,
+      };
+    },
+  };
+}
+
 describe("(c) refresh never changes user tables", () => {
   let deps: Deps;
   let app: ReturnType<typeof createApp>;
@@ -256,10 +304,12 @@ describe("(c) refresh never changes user tables", () => {
       routes.set(route, () => new Response(body, { status: 200 }));
     }
     now = new Date("2026-10-16T08:00:00Z");
-    deps = await testDeps({
+    const test = await testDeps({
       http: createHttpClient({ fetch: fakeFetch, sleep: async () => {} }),
       clock: { now: () => now },
     });
+    const ai = decidingAi(test.fake);
+    deps = { ...test, ai: { anthropic: ai, openai: ai } };
     app = createApp(deps);
   });
 
@@ -280,12 +330,13 @@ describe("(c) refresh never changes user tables", () => {
     return schema.parse(body);
   }
 
-  async function refresh(at: Date): Promise<void> {
+  async function refresh(at: Date): Promise<RefreshDto["result"]> {
     now = at;
     const task = await ok(await call("POST", "/refresh"), TaskDto, 202);
     await waitForTask(task.id);
     const done = await ok(await call("GET", `/tasks/${task.id}`), TaskDto);
     expect({ status: done.status, error: done.error }).toEqual({ status: "done", error: null });
+    return (await ok(await call("GET", "/refresh"), RefreshDto)).result;
   }
 
   /** md5 of every row of every table sync may not write, per table. */
@@ -344,6 +395,12 @@ describe("(c) refresh never changes user tables", () => {
     );
     await waitForSplits(cv);
     await ok(await call("POST", "/facts/confirm-all"), ProfileDto);
+    // The AI eligibility pass is on for every refresh below.
+    await ok(
+      await call("PUT", "/settings/ai-key", { provider: "anthropic", key: "sk-ant-good-key-a1B2" }),
+      SettingsDto,
+    );
+    await ok(await call("PATCH", "/settings", { eligibilityOnRefresh: true }), SettingsDto);
 
     // A pasted job whose apply URL a Greenhouse posting shares: sync attaches a listing, nothing more.
     const pasted = await ok(
@@ -363,7 +420,9 @@ describe("(c) refresh never changes user tables", () => {
 
     await ensureBuiltinSources(deps);
     await ok(await call("POST", "/sources", { url: "https://boards.greenhouse.io/acme" }), z.unknown(), 201);
-    await refresh(now);
+    const first = await refresh(now);
+    // The fixtures' unclear jobs all went to the AI and were all written.
+    expect(first?.aiPass).toEqual({ kind: "ran", checked: 2, decided: 2, unbacked: 0, left: 0, stopped: null });
 
     // Saved, with notes and a cited resume.
     const saved = await putOnBoard("Senior Frontend Engineer");
@@ -411,9 +470,14 @@ describe("(c) refresh never changes user tables", () => {
     ]);
 
     // 2. Postings gone from a complete board: the saved, dismissed and an untouched job close.
-    routes.set(GH_JOBS, json(without(4001, 4003, 4006)));
-    await refresh(hours(2));
+    //    A new posting the rules cannot place arrives too, and the AI pass decides it.
+    routes.set(GH_JOBS, json({ jobs: [...without(4001, 4003, 4006).jobs, NEW_UNCLEAR] }));
+    const second = await refresh(hours(2));
     expect(await userTableHashes()).toEqual(before);
+    expect(second?.aiPass).toEqual({ kind: "ran", checked: 1, decided: 1, unbacked: 0, left: 0, stopped: null });
+    const [decided] = await testSql()<{ eligibility: string; by: string }[]>`
+      SELECT eligibility, eligibility_by AS by FROM jobs WHERE title = 'Payments Engineer'`;
+    expect(decided).toEqual({ eligibility: "worldwide", by: "ai" });
     expect((await jobByTitle("Senior Frontend Engineer"))?.closed).not.toBeNull();
     expect((await jobByTitle("UX Engineer"))?.closed).not.toBeNull();
     expect((await jobByTitle("Staff Software Engineer"))?.closed).not.toBeNull();

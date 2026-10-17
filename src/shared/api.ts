@@ -527,6 +527,14 @@ export const DraftTaskInput = z.object({
 });
 export type DraftTaskInput = z.infer<typeof DraftTaskInput>;
 
+/** What a suggest-questions task needs to run again (stored in `tasks.input`). */
+export const SuggestQuestionsTaskInput = z.object({ opportunityId: OpportunityId });
+export type SuggestQuestionsTaskInput = z.infer<typeof SuggestQuestionsTaskInput>;
+
+/** What a finished suggest-questions task found and added. */
+export const SuggestQuestionsResult = z.object({ found: z.number().int(), added: z.number().int() });
+export type SuggestQuestionsResult = z.infer<typeof SuggestQuestionsResult>;
+
 export const DraftInput = z
   .object({
     kinds: z.array(OutputKind).min(1).optional(),
@@ -645,6 +653,8 @@ export const WorkspaceDto = z.object({
   aiReady: z.boolean(),
   /** The latest draft task for this job, so a reload can resume progress or offer Retry. */
   draftTask: TaskDto.extend({ outputIds: z.array(OutputId) }).nullable(),
+  /** The latest "Suggest questions" task for this job: progress text, Retry, and what it added. */
+  suggestTask: TaskDto.extend({ result: SuggestQuestionsResult.nullable() }).nullable(),
 });
 export type WorkspaceDto = z.infer<typeof WorkspaceDto>;
 
@@ -726,12 +736,41 @@ export const RefreshSourceResult = z.object({
 });
 export type RefreshSourceResult = z.infer<typeof RefreshSourceResult>;
 
+/**
+ * The optional AI eligibility pass (section 3.1 step 8, decision 31):
+ * - `not_run`: the setting is off, or no AI is set up. Results from before slice 10 have no reason.
+ * - `skipped`: this month's spend plus the pass's estimate would cross the cap. Nobody is there to
+ *   confirm during a refresh, so it does not run.
+ * - `ran`: `checked` jobs went to the light model; `decided` got a verdict with a verbatim phrase;
+ *   `unbacked` answered without one and stayed unclear; `left` were over the 25-job limit.
+ *   `stopped` says why it ended early, when it did.
+ */
+export const AiPassResult = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("not_run"), reason: z.enum(["off", "no_ai"]).optional() }),
+  z.object({
+    kind: z.literal("skipped"),
+    reason: z.literal("over_cap"),
+    jobs: z.number().int(),
+    estimateUsd: z.number(),
+    monthUsd: z.number(),
+    capUsd: z.number(),
+  }),
+  z.object({
+    kind: z.literal("ran"),
+    checked: z.number().int(),
+    decided: z.number().int(),
+    unbacked: z.number().int(),
+    left: z.number().int(),
+    stopped: z.object({ reason: z.enum(["over_cap", "ai_failed"]), message: z.string() }).nullable(),
+  }),
+]);
+export type AiPassResult = z.infer<typeof AiPassResult>;
+
 export const RefreshResult = z.object({
   sources: z.array(RefreshSourceResult),
   /** Closed jobs older than 60 days with no board entry, deleted. */
   pruned: z.number().int(),
-  /** The AI eligibility pass arrives in a later slice. */
-  aiPass: z.object({ kind: z.literal("not_run") }),
+  aiPass: AiPassResult,
 });
 export type RefreshResult = z.infer<typeof RefreshResult>;
 

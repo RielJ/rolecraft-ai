@@ -5,7 +5,7 @@ import type { Deps } from "../../services/context";
 import { retrySplit } from "../../services/profile";
 import { latestRefresh, startRefresh } from "../../services/sources";
 import { getTask, retryTask } from "../../services/tasks";
-import { retryDraft } from "../../services/workspace";
+import { retryDraft, retrySuggestQuestions } from "../../services/workspace";
 import { validate } from "../validate";
 
 const TaskParam = z.object({ id: TaskId });
@@ -24,6 +24,7 @@ export function taskRoutes(deps: Deps) {
             handlers: {
               draft: (input, options) => retryDraft(deps, input, options),
               split: (input, options) => retrySplit(deps, input, options),
+              suggest_questions: (input, options) => retrySuggestQuestions(deps, input, options),
               // A refresh retries from scratch; its input carries nothing.
               refresh: () => startRefresh(deps),
             },

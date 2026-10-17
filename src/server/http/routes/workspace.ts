@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { AddQuestionInput, DraftInput, OpportunityId, OutputId, UpdateOutputInput } from "@/shared/api";
+import {
+  AddQuestionInput,
+  ConfirmOverCapInput,
+  DraftInput,
+  OpportunityId,
+  OutputId,
+  UpdateOutputInput,
+} from "@/shared/api";
 import type { Deps } from "../../services/context";
 import {
   addQuestion,
@@ -11,6 +18,7 @@ import {
   getWorkspace,
   markOutputCurrent,
   markReady,
+  startSuggestQuestions,
   updateOutput,
 } from "../../services/workspace";
 import { validate } from "../validate";
@@ -32,6 +40,19 @@ export function workspaceRoutes(deps: Deps) {
     )
     .post("/opportunities/:id/draft", validate("param", OpportunityParam), validate("json", DraftInput), async (c) =>
       c.json(await draft(deps, { opportunityId: c.req.valid("param").id, ...c.req.valid("json") }), 202),
+    )
+    .post(
+      "/opportunities/:id/suggest-questions",
+      validate("param", OpportunityParam),
+      validate("json", ConfirmOverCapInput),
+      async (c) =>
+        c.json(
+          await startSuggestQuestions(deps, {
+            opportunityId: c.req.valid("param").id,
+            confirmOverCap: c.req.valid("json").confirmOverCap ?? false,
+          }),
+          202,
+        ),
     )
     .post("/opportunities/:id/ready", validate("param", OpportunityParam), async (c) =>
       c.json(await markReady(deps, { opportunityId: c.req.valid("param").id })),

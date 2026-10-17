@@ -6,11 +6,13 @@ import { classifyQuestion } from "@/domain/must-answer";
 import {
   allowedFacts,
   buildDraftPrompt,
+  buildQuestionsPrompt,
   buildRetryPrompt,
   buildStyleRewritePrompt,
   cleanModelText,
   DRAFT_MAX_TOKENS,
   type PromptFact,
+  QUESTIONS_MAX_TOKENS,
 } from "@/domain/prompts";
 import { checkStyle } from "@/domain/style";
 import { sentenceSpans } from "@/domain/text";
@@ -27,6 +29,8 @@ import {
   type OutputDto,
   type OutputId,
   type StandardAnswers,
+  SuggestQuestionsResult,
+  SuggestQuestionsTaskInput,
   type TaskDto,
   type UpdateOutputInput,
   type WorkspaceDto,
@@ -44,6 +48,7 @@ import { outputKindLabel } from "@/shared/labels";
 import type { DbOrTx } from "../db/client";
 import { facts, jobs, opportunities, outputFacts, outputs, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
+import { parseQuestionsReply } from "./ai-replies";
 import { AppError, type Deps, notFound } from "./context";
 import { jobFacts } from "./jobs";
 import { loadContact } from "./profile";
@@ -192,7 +197,7 @@ export async function getWorkspace(
 ): Promise<WorkspaceDto> {
   const { opportunity, job } = await loadOpportunity(deps, opportunityId);
   const frozen = isFrozen(opportunity.status);
-  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask, jobView] = await Promise.all([
+  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask, suggestTask, jobView] = await Promise.all([
     loadContact(deps),
     loadOutputs(deps.db, opportunityId),
     deps.db
@@ -202,6 +207,7 @@ export async function getWorkspace(
       .orderBy(asc(facts.no)),
     loadAiConfig(deps),
     latestTask(deps, { kind: "draft", inputMatches: { opportunityId } }),
+    latestTask(deps, { kind: "suggest_questions", inputMatches: { opportunityId } }),
     jobFacts(deps, job),
   ]);
   const gate = checkGate({ outputs: loaded.map(toGateOutput), standardAnswers });
@@ -232,6 +238,9 @@ export async function getWorkspace(
     facts: confirmed.map((f) => ({ key: factKey(f.no), text: f.text })),
     aiReady: aiConfig !== null,
     draftTask: draftTask && draftInput.success ? { ...draftTask.task, outputIds: draftInput.data.outputIds } : null,
+    suggestTask: suggestTask
+      ? { ...suggestTask.task, result: SuggestQuestionsResult.nullable().catch(null).parse(suggestTask.result) }
+      : null,
   };
 }
 
@@ -332,6 +341,121 @@ export async function addQuestion(
     position: (last?.position ?? 0) + 1,
   });
   return getWorkspace(deps, { opportunityId });
+}
+
+// ---------- Suggest questions (section 3.4, decision 23) ----------
+
+const questionKey = (q: string) => q.replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * Insert suggested questions as answers with `included = false`, skipping any the job already has.
+ * Each goes through `classifyQuestion`, so a salary or visa question is must-answer and never drafted.
+ * Runs in one transaction with the opportunity locked, and refuses if it was marked applied meanwhile.
+ */
+async function insertSuggested(
+  deps: Deps,
+  { opportunityId, questions }: { opportunityId: OpportunityId; questions: readonly string[] },
+): Promise<number> {
+  return deps.db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ status: opportunities.status })
+      .from(opportunities)
+      .where(eq(opportunities.id, opportunityId))
+      .for("update");
+    if (!locked) throw notFound("That job");
+    assertEditable(locked.status);
+    const existing = await tx
+      .select({ question: outputs.question, position: outputs.position })
+      .from(outputs)
+      .where(eq(outputs.opportunityId, opportunityId));
+    const have = new Set(existing.flatMap((o) => (o.question === null ? [] : [questionKey(o.question)])));
+    const fresh = questions.filter((q) => !have.has(questionKey(q)));
+    if (fresh.length === 0) return 0;
+    const start = Math.max(0, ...existing.map((o) => o.position)) + 1;
+    await tx.insert(outputs).values(
+      fresh.map((question, i) => ({
+        userId: deps.userId,
+        opportunityId,
+        kind: "answer" as const,
+        question,
+        included: false,
+        mustAnswer: classifyQuestion(question),
+        position: start + i,
+      })),
+    );
+    return fresh.length;
+  });
+}
+
+/**
+ * `POST /api/opportunities/:id/suggest-questions`: check the cap for one light-tier call, then
+ * start a `suggest_questions` task that reads the posting and adds what it finds, unticked.
+ */
+export async function startSuggestQuestions(
+  deps: Deps,
+  { opportunityId, confirmOverCap = false }: { opportunityId: OpportunityId; confirmOverCap?: boolean },
+): Promise<TaskDto> {
+  const { opportunity, job } = await loadOpportunity(deps, opportunityId);
+  assertEditable(opportunity.status);
+  const running = await latestTask(deps, { kind: "suggest_questions", inputMatches: { opportunityId } });
+  if (running?.task.status === "running") {
+    throw new AppError({
+      code: "invalid_input",
+      message: "Already looking for questions in this posting. Wait for it to finish.",
+    });
+  }
+  const config = await requireAiConfig(deps);
+  const prompt = buildQuestionsPrompt({
+    posting: { title: job.title, company: job.company, description: job.description },
+  });
+  await checkCap(deps, {
+    capUsd: config.capUsd,
+    estimateUsd: estimateUsd({ model: config.models.light, prompt, maxOutputTokens: QUESTIONS_MAX_TOKENS }),
+    confirmOverCap,
+  });
+
+  const input: SuggestQuestionsTaskInput = { opportunityId };
+  return startTask(deps, {
+    kind: "suggest_questions",
+    input,
+    run: async (ctx): Promise<SuggestQuestionsResult> => {
+      await ctx.step("Reading the posting for questions");
+      const { text } = await runAi(deps, {
+        tier: "light",
+        purpose: "questions",
+        taskId: ctx.taskId,
+        prompt,
+        maxOutputTokens: QUESTIONS_MAX_TOKENS,
+        confirmOverCap,
+      });
+      const questions = parseQuestionsReply(text);
+      if (questions === null) {
+        throw new AppError({
+          code: "ai_unavailable",
+          message: `The ${config.models.light} reply could not be read as a list of questions. Retry, or add questions by hand.`,
+        });
+      }
+      await ctx.step(`Adding ${questions.length} question${questions.length === 1 ? "" : "s"}`);
+      const added = await insertSuggested(deps, { opportunityId, questions });
+      return { found: questions.length, added };
+    },
+  });
+}
+
+/** Retry handler for `suggest_questions` tasks. */
+export async function retrySuggestQuestions(
+  deps: Deps,
+  input: unknown,
+  { confirmOverCap }: { confirmOverCap: boolean },
+): Promise<TaskDto> {
+  const parsed = SuggestQuestionsTaskInput.safeParse(input);
+  if (!parsed.success) {
+    throw new AppError({
+      code: "invalid_input",
+      message: "This task's input is unreadable. Click Suggest questions again instead.",
+    });
+  }
+  return startSuggestQuestions(deps, { ...parsed.data, confirmOverCap });
 }
 
 export async function deleteQuestion(deps: Deps, { outputId }: { outputId: OutputId }): Promise<WorkspaceDto> {

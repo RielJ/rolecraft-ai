@@ -47,9 +47,26 @@ function defaultSplit(request: AiCompletionRequest): string {
   return JSON.stringify({ facts: splitFacts({ text }).map((t) => ({ text: t })) });
 }
 
+/** The posting text between `<<<` and `>>>`. */
+function postingText(request: AiCompletionRequest): string {
+  const prompt = request.messages[0]?.content ?? "";
+  return /^<<<\n([\s\S]*?)\n>>>$/m.exec(prompt)?.[1] ?? "";
+}
+
+/** Every sentence of the posting that ends in a question mark, as asked. */
+function defaultQuestions(request: AiCompletionRequest): string {
+  const questions = sentenceSpans(postingText(request))
+    .map((s) => s.text.trim())
+    .filter((s) => s.endsWith("?"));
+  return JSON.stringify({ questions });
+}
+
 /** Which default writer answers a request, from what its last message asks for. */
 function defaultReply(request: AiCompletionRequest): string {
   const last = request.messages.at(-1)?.content ?? "";
+  // Eligibility: the fake never guesses, so a job the rules left unclear stays unclear.
+  if (last.includes('{"verdict"')) return JSON.stringify({ verdict: "unclear", phrase: null });
+  if (last.includes('{"questions"')) return defaultQuestions(request);
   if (last.includes('{"rewrites"')) return defaultRewrite(request);
   if (last.includes('{"facts"')) return defaultSplit(request);
   return defaultDraft(request);

@@ -1,0 +1,32 @@
+{
+  "about": "Postings the rules already decide. No AI call is made; these keep the rules honest in the same report.",
+  "cases": [
+    {
+      "id": "us-only",
+      "title": "Platform Engineer",
+      "company": "Gridwise",
+      "locationText": "Remote - US only",
+      "description": "Gridwise builds software for utility companies. You will run our Kubernetes platform.",
+      "expected": "excluded",
+      "why": "Known phrasing: US only."
+    },
+    {
+      "id": "asia-but-not-ph",
+      "title": "Account Executive",
+      "company": "Lantern CRM",
+      "locationText": "Remote",
+      "description": "Lantern CRM sells to mid-size retailers. We hire across Asia, excluding the Philippines and Vietnam, for tax reasons.",
+      "expected": "excluded",
+      "why": "Names the Philippines as excluded; the exclusion rule runs before the APAC one."
+    },
+    {
+      "id": "manila-named",
+      "title": "Support Lead",
+      "company": "Bayanihan Health",
+      "locationText": "Remote",
+      "description": "Bayanihan Health runs telehealth clinics. We are building a support team in Manila and across the country.",
+      "expected": "ph",
+      "why": "Names a Philippine city."
+    }
+  ]
+}

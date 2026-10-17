@@ -22,6 +22,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "test", "e2e", "*.ts"],
+  "include": ["src", "test", "e2e", "eval", "*.ts"],
   "exclude": ["node_modules", "dist"]
 }

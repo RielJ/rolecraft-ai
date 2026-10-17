@@ -12,7 +12,8 @@
     "db:migrate": "bun src/server/db/migrate.ts",
     "build": "vite build",
     "start": "bun src/server/main.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "eval": "bun eval/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

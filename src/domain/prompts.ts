@@ -249,3 +249,84 @@ export function buildSplitRetryPrompt({ prompt, reply }: { prompt: Prompt; reply
     ],
   };
 }
+
+// ---------- AI eligibility (section 3.1 step 8, decision 31) ----------
+
+/** Output budget for one eligibility call. The cap estimate uses the same number. */
+export const ELIGIBILITY_MAX_TOKENS = 300;
+
+/** Long postings are cut here; the phrase must still come from the text the model saw. */
+export const ELIGIBILITY_DESCRIPTION_CHARS = 20_000;
+
+export type EligibilityPosting = { title: string; company: string; locationText: string; description: string };
+
+/**
+ * The light-tier eligibility prompt, for jobs the rules left `unclear`. The answer is accepted
+ * only when its phrase is copied word for word from the posting (`acceptAiVerdict`).
+ */
+export function buildEligibilityPrompt({ posting }: { posting: EligibilityPosting }): Prompt {
+  const system = [
+    "You decide whether a person living in the Philippines can be hired for a job posting.",
+    "",
+    "Verdicts:",
+    "- ph: the posting names the Philippines (or a Philippine city) as a place it hires from.",
+    "- worldwide: it hires from any country.",
+    "- apac: it hires across Asia-Pacific or works on Asian time zones.",
+    "- americas: it hires in the Americas or needs most of the day on American time zones.",
+    "- excluded: it limits hiring to countries, states, regions, entities, citizenships, work permits or clearances that leave out the Philippines.",
+    "- unclear: the posting does not say.",
+    "",
+    "Rules:",
+    "- Decide only from the posting. Do not guess from the company's name or size.",
+    '- "phrase" is the sentence or clause that decides it, copied exactly from the description, character for character. No paraphrase, no ellipsis.',
+    "- If no part of the posting decides it, the verdict is unclear and the phrase is null.",
+  ].join("\n");
+  const description = posting.description.trim().slice(0, ELIGIBILITY_DESCRIPTION_CHARS);
+  const user = [
+    "JOB POSTING",
+    `Title: ${posting.title}`,
+    `Company: ${posting.company}`,
+    `Location: ${posting.locationText.trim() || "(not given)"}`,
+    "Description:",
+    "<<<",
+    description,
+    ">>>",
+    "",
+    'Reply with JSON only: {"verdict": "ph" | "worldwide" | "apac" | "americas" | "excluded" | "unclear", "phrase": "..." | null}',
+  ].join("\n");
+  return { system, messages: [{ role: "user", content: user }] };
+}
+
+// ---------- Suggest questions (section 3.4) ----------
+
+/** Output budget for one question-finding call. */
+export const QUESTIONS_MAX_TOKENS = 800;
+
+/** At most this many suggestions are kept from one reply. */
+export const MAX_SUGGESTED_QUESTIONS = 15;
+
+/** The light-tier prompt that finds application questions in a posting's text (decision 23). */
+export function buildQuestionsPrompt({ posting }: { posting: DraftPosting }): Prompt {
+  const system = [
+    "You find the questions a job posting asks applicants to answer when they apply.",
+    "",
+    "Rules:",
+    "- Only questions the posting itself asks or tells applicants to address, such as 'Tell us about a project you are proud of' or 'Include your salary expectations'.",
+    "- Write each one as a question, close to the posting's wording.",
+    "- Do not invent interview questions, and skip anything the posting does not ask.",
+    "- Include questions about salary, visa or work authorization, notice period, start date and references when the posting asks them.",
+    "- If the posting asks nothing, return an empty list.",
+  ].join("\n");
+  const user = [
+    "JOB POSTING",
+    `Title: ${posting.title}`,
+    `Company: ${posting.company}`,
+    "Description:",
+    "<<<",
+    posting.description.trim(),
+    ">>>",
+    "",
+    'Reply with JSON only: {"questions": ["...", ...]}',
+  ].join("\n");
+  return { system, messages: [{ role: "user", content: user }] };
+}

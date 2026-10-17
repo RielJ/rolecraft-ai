@@ -33,8 +33,18 @@ export const PRICES: Readonly<Record<string, Price>> = {
 };
 
 /**
- * Models used when the user has not picked one (decision 30). The cheapest current model of each
- * provider covers the light tier; the mid model covers writing. Slice 8's eval may change these.
+ * Light-tier models that passed the evaluation set (`bun run eval`, decision 30): no missed
+ * exclusion and no invented claim. A provider's light default must be its cheapest entry here.
+ */
+export const EVAL_PASSED_LIGHT: Partial<Record<AiProvider, { model: string; date: string; via: "key" | "pi" }>> = {
+  // 15 eligibility cases (12 sent to the model), 4 drafting cases; two drafts fixed on the app's retry.
+  anthropic: { model: "claude-haiku-5-5", date: "2026-10-17", via: "pi" },
+};
+
+/**
+ * Models used when the user has not picked one (decision 30). Light is the cheapest model that
+ * passed the eval where one has (Anthropic), else the provider's cheapest current model (OpenAI,
+ * not yet evaluated). Writing is the mid model.
  */
 export const DEFAULT_MODELS: Record<AiProvider, Record<AiTier, string>> = {
   anthropic: { light: "claude-haiku-5-5", writing: "claude-sonnet-5-5" },

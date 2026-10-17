@@ -116,3 +116,28 @@ export function classifyEligibility({
   }
   return { verdict: "unclear", phrase: null };
 }
+
+/** What the light model answered for an `unclear` job, after the reply was parsed. */
+export type AiEligibilityAnswer = { verdict: Eligibility; phrase: string | null };
+
+/** Shorter than this, a "phrase" is a word fragment that would match almost any posting. */
+const MIN_AI_PHRASE = 4;
+
+/**
+ * Accept an AI verdict only when its phrase is a verbatim substring of the posting's description
+ * (section 3.1 step 8). Anything else, including an `unclear` answer, returns null and the job
+ * stays `unclear`.
+ */
+export function acceptAiVerdict({
+  answer,
+  description,
+}: {
+  answer: AiEligibilityAnswer;
+  description: string;
+}): Exclude<EligibilityVerdict, { verdict: "unclear" }> | null {
+  if (answer.verdict === "unclear" || answer.phrase === null) return null;
+  const phrase = answer.phrase.trim();
+  if (phrase.length < MIN_AI_PHRASE || !/\p{L}/u.test(phrase)) return null;
+  if (!description.includes(phrase)) return null;
+  return { verdict: answer.verdict, phrase };
+}

@@ -117,7 +117,7 @@ export async function getTask(deps: Pick<Deps, "db" | "userId">, { taskId }: { t
 export async function latestTask(
   deps: Pick<Deps, "db" | "userId">,
   { kind, inputMatches }: { kind: TaskKind; inputMatches: Record<string, unknown> },
-): Promise<{ task: TaskDto; input: unknown } | null> {
+): Promise<{ task: TaskDto; input: unknown; result: unknown } | null> {
   const [row] = await deps.db
     .select()
     .from(tasks)
@@ -130,7 +130,7 @@ export async function latestTask(
     )
     .orderBy(desc(tasks.createdAt))
     .limit(1);
-  return row ? { task: toTaskDto(row), input: row.input } : null;
+  return row ? { task: toTaskDto(row), input: row.input, result: row.result } : null;
 }
 
 /** On boot: anything still `running` died with the previous process (decision 36). */

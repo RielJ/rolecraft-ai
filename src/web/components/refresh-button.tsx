@@ -24,7 +24,26 @@ function summary(result: RefreshResult): string {
   const problems = result.sources
     .filter((s) => s.status !== "ok" && s.status !== "skipped")
     .map((s) => `${s.label}: ${sourceStatusLabel(s.status)}.`);
-  return [`${counts.join(", ")}.`, ...problems].join(" ");
+  return [`${counts.join(", ")}.`, aiPassSummary(result.aiPass), ...problems].filter(Boolean).join(" ");
+}
+
+/** The AI eligibility pass in one sentence, or "" when it did not run or had nothing to read. */
+function aiPassSummary(pass: RefreshResult["aiPass"]): string {
+  switch (pass.kind) {
+    case "not_run":
+      return "";
+    case "skipped":
+      return "AI eligibility check skipped: it would go over your monthly cap.";
+    case "ran": {
+      if (pass.checked === 0 && pass.stopped === null) return "";
+      const read = `AI placed ${pass.decided} of ${plural(pass.checked, "unclear job")}.`;
+      return pass.stopped ? `${read} It stopped early: ${pass.stopped.message}` : read;
+    }
+    default: {
+      const _exhaustive: never = pass;
+      return _exhaustive;
+    }
+  }
 }
 
 /**

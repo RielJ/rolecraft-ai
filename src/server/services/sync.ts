@@ -1,14 +1,18 @@
 import { and, eq, inArray, lt, notExists, sql } from "drizzle-orm";
 import { z } from "zod";
+import { acceptAiVerdict } from "@/domain/eligibility";
 import { type Derived, derive } from "@/domain/posting";
+import { buildEligibilityPrompt, ELIGIBILITY_MAX_TOKENS } from "@/domain/prompts";
 import { matchesKeywords, roleFit } from "@/domain/roles";
 import { type FetchOutcome, type PlannedPosting, planSourceRun, type SourcePlan } from "@/domain/sync-plan";
-import type { JobId, RefreshResult, RefreshSourceResult } from "@/shared/api";
+import type { AiPassResult, JobId, RefreshResult, RefreshSourceResult } from "@/shared/api";
 import { BUILTIN_SOURCE_KINDS, type SourceStatus } from "@/shared/enums";
 import { type Posting, SourceError } from "../adapters/sources";
 import { jobListings, jobs, opportunities, sources, users } from "../db/schema";
 import { asSync, type SyncTx } from "../db/sync-session";
-import type { Deps } from "./context";
+import { estimateUsd, loadAiTierConfig, monthSpend, runAi } from "./ai";
+import { parseEligibilityReply } from "./ai-replies";
+import { AppError, type Deps } from "./context";
 import type { TaskContext } from "./tasks";
 
 /**
@@ -20,7 +24,7 @@ import type { TaskContext } from "./tasks";
  * applied or untouched.
  */
 
-type SyncDeps = Pick<Deps, "db" | "userId" | "sources" | "clock">;
+type SyncDeps = Pick<Deps, "db" | "userId" | "sources" | "clock" | "ai" | "aiSource" | "keyStore">;
 type SourceRow = typeof sources.$inferSelect;
 type Targeting = {
   targetTitles: readonly string[];
@@ -30,13 +34,15 @@ type Targeting = {
 
 /** Closed jobs nobody touched are deleted this long after closing (decision 15). */
 export const PRUNE_DAYS = 60;
+/** The AI eligibility pass reads at most this many new unclear jobs per refresh (section 3.1 step 8). */
+export const AI_PASS_LIMIT = 25;
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 
 const isBuiltin = (kind: SourceRow["kind"]) => BUILTIN_SOURCE_KINDS.some((k) => k === kind);
 
-export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step">): Promise<RefreshResult> {
-  const { enabled, targeting } = await asSync(deps.db, async (tx) => {
+export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step" | "taskId">): Promise<RefreshResult> {
+  const { enabled, targeting, aiEligibility } = await asSync(deps.db, async (tx) => {
     const rows = await tx
       .select()
       .from(sources)
@@ -47,27 +53,36 @@ export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step">)
         targetTitles: users.targetTitles,
         roleFamilies: users.roleFamilies,
         excludeTitleWords: users.excludeTitleWords,
+        aiEligibility: users.aiEligibilityOnRefresh,
       })
       .from(users)
       .where(eq(users.id, deps.userId));
     if (!user) throw new Error("The user row is missing.");
-    return { enabled: rows, targeting: user };
+    const { aiEligibility, ...targeting } = user;
+    return { enabled: rows, targeting, aiEligibility };
   });
 
   const results: RefreshSourceResult[] = [];
+  const newJobIds: JobId[] = [];
   for (const [index, source] of enabled.entries()) {
     await ctx.step(`${source.label} ${index + 1} of ${enabled.length}`);
-    results.push(await refreshSource({ deps, source, targeting }));
+    const run = await refreshSource({ deps, source, targeting });
+    results.push(run.result);
+    newJobIds.push(...run.newJobIds);
   }
+
+  const aiPass = aiEligibility ? await aiEligibilityPass({ deps, ctx, newJobIds }) : NOT_RUN_OFF;
 
   await ctx.step("Removing old closed jobs");
   const pruned = await prune(deps);
-  return { sources: results, pruned, aiPass: { kind: "not_run" } };
+  return { sources: results, pruned, aiPass };
 }
 
 // ---------- one source ----------
 
 type Normalized = { posting: Posting; derived: Derived };
+/** One source's summary, and the jobs it inserted (for the AI eligibility pass). */
+type SourceRun = { result: RefreshSourceResult; newJobIds: JobId[] };
 
 async function refreshSource({
   deps,
@@ -77,7 +92,7 @@ async function refreshSource({
   deps: SyncDeps;
   source: SourceRow;
   targeting: Targeting;
-}): Promise<RefreshSourceResult> {
+}): Promise<SourceRun> {
   const base = { sourceId: source.id, label: source.label };
   const adapter = deps.sources[source.kind];
   const now = deps.clock.now();
@@ -91,7 +106,7 @@ async function refreshSource({
     await asSync(deps.db, (tx) =>
       tx.update(sources).set({ lastStatus: "skipped", lastError: null }).where(eq(sources.id, source.id)),
     );
-    return { ...base, ...EMPTY_COUNTS, status: "skipped", error: null };
+    return { result: { ...base, ...EMPTY_COUNTS, status: "skipped", error: null }, newJobIds: [] };
   }
 
   // What this source already lists, so an adapter with a detail budget spends it on new postings.
@@ -246,18 +261,18 @@ async function applyPlan({
   normalized: Map<string, Normalized>;
   now: Date;
   base: Pick<RefreshSourceResult, "sourceId" | "label">;
-}): Promise<RefreshSourceResult> {
+}): Promise<SourceRun> {
   switch (plan.kind) {
     case "failed":
     case "rate_limited": {
       // A thrown fetch writes only the status. Nothing closes.
       await setStatus(tx, source.id, { lastRunAt: now, lastStatus: plan.kind, lastError: plan.error });
-      return { ...base, ...EMPTY_COUNTS, status: plan.kind, error: plan.error };
+      return { result: { ...base, ...EMPTY_COUNTS, status: plan.kind, error: plan.error }, newJobIds: [] };
     }
     case "suspicious_empty": {
       const error = `${source.label} returned no postings after returning ${source.lastOkCount ?? 0} last time. Nothing was closed; if the board really is empty, this clears once it lists a job again.`;
       await setStatus(tx, source.id, { lastRunAt: now, lastStatus: "suspicious_empty", lastError: error });
-      return { ...base, ...EMPTY_COUNTS, status: "suspicious_empty", error };
+      return { result: { ...base, ...EMPTY_COUNTS, status: "suspicious_empty", error }, newJobIds: [] };
     }
     case "ok":
       break;
@@ -345,15 +360,18 @@ async function applyPlan({
     lastError: null,
   });
   return {
-    ...base,
-    status: "ok",
-    fetched: plan.rawCount,
-    dropped: plan.dropped,
-    added,
-    updated,
-    closed,
-    reopened,
-    error: null,
+    result: {
+      ...base,
+      status: "ok",
+      fetched: plan.rawCount,
+      dropped: plan.dropped,
+      added,
+      updated,
+      closed,
+      reopened,
+      error: null,
+    },
+    newJobIds: [...insertedJobs.values()],
   };
 }
 
@@ -414,6 +432,109 @@ async function setStatus(
   >,
 ): Promise<void> {
   await tx.update(sources).set(patch).where(eq(sources.id, sourceId));
+}
+
+// ---------- AI eligibility pass (section 3.1 step 8) ----------
+
+const NOT_RUN_OFF: AiPassResult = { kind: "not_run", reason: "off" };
+const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+
+/**
+ * Jobs first seen in this refresh whose rules said `unclear` go to the light model, at most 25.
+ * Everything runs as `hb_sync`: `runAi` reads the config and month total and records `ai_calls`
+ * through the sync transaction. A verdict is kept only with a phrase copied verbatim from the
+ * posting. When the estimate would cross the monthly cap the pass does not run at all, since
+ * nobody is there to confirm; if real costs cross it midway, `runAi` refuses and the pass stops.
+ * Each job is its own transaction, so a stop keeps the verdicts already written.
+ */
+async function aiEligibilityPass({
+  deps,
+  ctx,
+  newJobIds,
+}: {
+  deps: SyncDeps;
+  ctx: Pick<TaskContext, "step" | "taskId">;
+  newJobIds: readonly JobId[];
+}): Promise<AiPassResult> {
+  const plan = await asSync(deps.db, async (tx) => {
+    const config = await loadAiTierConfig({ ...deps, db: tx }, { tier: "light" });
+    if (!config) return null;
+    const unclear =
+      newJobIds.length === 0
+        ? []
+        : await tx
+            .select({
+              id: jobs.id,
+              title: jobs.title,
+              company: jobs.company,
+              description: jobs.description,
+              locationText: jobs.locationText,
+              contentHash: jobs.contentHash,
+            })
+            .from(jobs)
+            .where(and(eq(jobs.userId, deps.userId), inArray(jobs.id, [...newJobIds]), eq(jobs.eligibility, "unclear")))
+            .orderBy(jobs.firstSeenAt, jobs.id);
+    const batch = unclear
+      .slice(0, AI_PASS_LIMIT)
+      .map((job) => ({ job, prompt: buildEligibilityPrompt({ posting: job }) }));
+    const estimate = batch.reduce(
+      (sum, { prompt }) => sum + estimateUsd({ model: config.model, prompt, maxOutputTokens: ELIGIBILITY_MAX_TOKENS }),
+      0,
+    );
+    const { usd } = await monthSpend({ ...deps, db: tx });
+    return { capUsd: config.capUsd, batch, left: unclear.length - batch.length, estimate, monthUsd: usd };
+  });
+  if (!plan) return { kind: "not_run", reason: "no_ai" };
+  const { batch, left, capUsd, estimate, monthUsd } = plan;
+  if (batch.length > 0 && capUsd !== null && monthUsd + estimate > capUsd) {
+    return {
+      kind: "skipped",
+      reason: "over_cap",
+      jobs: batch.length,
+      estimateUsd: round4(estimate),
+      monthUsd: round4(monthUsd),
+      capUsd,
+    };
+  }
+
+  let decided = 0;
+  let unbacked = 0;
+  let checked = 0;
+  let stopped: Extract<AiPassResult, { kind: "ran" }>["stopped"] = null;
+  for (const [index, { job, prompt }] of batch.entries()) {
+    await ctx.step(`Checking eligibility with AI · ${index + 1} of ${batch.length}`);
+    try {
+      const outcome = await asSync(deps.db, async (tx) => {
+        const { text } = await runAi(
+          { ...deps, db: tx },
+          {
+            tier: "light",
+            purpose: "eligibility",
+            taskId: ctx.taskId,
+            prompt,
+            maxOutputTokens: ELIGIBILITY_MAX_TOKENS,
+          },
+        );
+        const answer = parseEligibilityReply(text);
+        const accepted = answer && acceptAiVerdict({ answer, description: job.description });
+        if (!accepted) return "unbacked" as const;
+        // Only while the job is still the posting the model read and nobody else decided it.
+        await tx
+          .update(jobs)
+          .set({ eligibility: accepted.verdict, eligibilityPhrase: accepted.phrase, eligibilityBy: "ai" })
+          .where(and(eq(jobs.id, job.id), eq(jobs.eligibility, "unclear"), eq(jobs.contentHash, job.contentHash)));
+        return "decided" as const;
+      });
+      checked++;
+      if (outcome === "decided") decided++;
+      else unbacked++;
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      stopped = { reason: error.code === "over_cap" ? "over_cap" : "ai_failed", message: error.message };
+      break;
+    }
+  }
+  return { kind: "ran", checked, decided, unbacked, left: left + (batch.length - checked), stopped };
 }
 
 // ---------- prune ----------
