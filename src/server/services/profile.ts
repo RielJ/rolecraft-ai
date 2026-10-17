@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { factKey } from "@/domain/citations";
+import { contactFromCv, fillContact } from "@/domain/contact";
 import { diffFacts } from "@/domain/facts-diff";
 import { skillsInFacts } from "@/domain/features";
 import {
@@ -322,6 +323,17 @@ export async function retrySplit(deps: Deps, input: unknown, { confirmOverCap }:
 // ---------- CV (section 3.3, step 1) ----------
 
 /**
+ * Fill the contact fields the user left empty from the CV's header (decision 49). A field the
+ * user filled is never overwritten, so saving a CV again changes nothing they typed.
+ */
+async function fillContactFromCv(deps: Pick<Deps, "db" | "userId">, text: string): Promise<void> {
+  const { contact } = await loadContact(deps);
+  const { contact: next, filled } = fillContact(contact, contactFromCv(text));
+  if (filled.length === 0) return;
+  await deps.db.update(users).set(next).where(eq(users.id, deps.userId));
+}
+
+/**
  * Save CV text into the single `cv` item and start its split. Every save is a new version
  * (`rev + 1`), which is what makes a re-import diff against the facts of the last one.
  */
@@ -355,6 +367,7 @@ export async function saveCv(
     if (!created) throw new Error("Could not save the CV.");
     return created.id;
   });
+  await fillContactFromCv(deps, text);
   await startSplit(deps, { itemId, confirmOverCap });
   return getProfile(deps);
 }

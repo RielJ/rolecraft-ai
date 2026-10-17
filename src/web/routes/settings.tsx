@@ -576,7 +576,7 @@ export function SettingsPage() {
   const { ai, money } = settings.data;
   return (
     <div className="grid gap-10">
-      <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
+      <h1 className="display text-3xl">Settings</h1>
       {ai.piModels ? <PiRunner models={ai.piModels} /> : <KeyForm ai={ai} />}
       <Separator />
       <SpendForm key={String(ai.monthlyCapUsd)} settings={settings.data} />

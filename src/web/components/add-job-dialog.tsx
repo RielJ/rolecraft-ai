@@ -31,7 +31,16 @@ function pasteReason(result: Extract<AddLinkResult, { kind: "needs_paste" }>): s
  * Add a job by link (section 3.2), or paste it. A link the server cannot read becomes the paste
  * form with the link kept as the apply URL and whatever was found filled in.
  */
-export function AddJobDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function AddJobDialog({
+  open,
+  instant = false,
+  onOpenChange,
+}: {
+  open: boolean;
+  /** Opened by a key: no motion. */
+  instant?: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const id = useId();
   const navigate = useNavigate();
   const fromLink = useAddJobFromLink();
@@ -118,7 +127,7 @@ export function AddJobDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent instant={instant} className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Add a job</DialogTitle>
           <DialogDescription>

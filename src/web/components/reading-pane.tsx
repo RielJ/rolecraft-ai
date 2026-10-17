@@ -161,7 +161,7 @@ export function ReadingPane({
       ref={ref}
       aria-label="Reading pane"
       aria-busy={stale}
-      className="min-h-0 overflow-y-auto rounded-md border bg-card px-5 py-4 md:px-7 md:py-6"
+      className="min-h-0 overflow-y-auto overscroll-contain rounded-md border bg-card px-5 py-4 md:px-7 md:py-6"
     >
       {job && (
         <article className="grid max-w-[68ch] gap-5">

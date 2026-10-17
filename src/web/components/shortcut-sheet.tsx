@@ -18,10 +18,19 @@ const SHORTCUTS: readonly { keys: readonly (readonly string[])[]; action: string
   { keys: [["?"]], action: "Shortcut sheet" },
 ];
 
-export function ShortcutSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function ShortcutSheet({
+  open,
+  instant,
+  onOpenChange,
+}: {
+  open: boolean;
+  /** Opened by `?`: no motion. */
+  instant: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent instant={instant} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>Keys are ignored while focus is in a text field.</DialogDescription>

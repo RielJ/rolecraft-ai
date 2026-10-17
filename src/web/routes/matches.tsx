@@ -81,7 +81,7 @@ function DismissPopover({
         ref={contentRef}
         aria-label="Dismiss reason"
         align="start"
-        className="w-60 p-1 duration-150 ease-out"
+        className="w-60 animate-none! rounded-lg p-1"
         // Focus the panel, not the first reason, so Enter means "without a reason".
         onOpenAutoFocus={(e) => {
           e.preventDefault();
@@ -108,16 +108,23 @@ function DismissPopover({
         {DISMISS_REASONS.map((reason, i) => (
           <Button
             key={reason}
+            static
             variant="ghost"
             size="sm"
-            className="w-full justify-between font-normal"
+            className="w-full justify-between rounded-sm font-normal"
             onClick={() => onChoose(reason)}
           >
             {dismissReasonLabel(reason)}
             <Kbd>{i + 1}</Kbd>
           </Button>
         ))}
-        <Button variant="ghost" size="sm" className="w-full justify-between font-normal" onClick={() => onChoose(null)}>
+        <Button
+          static
+          variant="ghost"
+          size="sm"
+          className="w-full justify-between rounded-sm font-normal"
+          onClick={() => onChoose(null)}
+        >
           Without a reason
           <Kbd>Enter</Kbd>
         </Button>
@@ -138,13 +145,13 @@ function NoJobsYet() {
   const setup = useSetup();
   if (setup.data && !setup.data.done) {
     return (
-      <div className="min-h-0 overflow-y-auto pb-4">
+      <div className="min-h-0 overflow-y-auto overscroll-contain pb-4">
         <SetupChecklist />
       </div>
     );
   }
   return (
-    <p className="max-w-3xl text-muted-foreground">
+    <p className="surface h-fit max-w-3xl rounded-xl p-6 text-muted-foreground">
       No open jobs yet. Press Refresh to read your sources, or add a company board under{" "}
       <Link to="/sources" className="underline underline-offset-4 hover:text-foreground">
         Sources
@@ -202,7 +209,9 @@ export function MatchesPage() {
   }, [nextId, prevId, prefetch]);
 
   const [dismissing, setDismissing] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  // How the shortcut sheet opened: by `?` it opens and closes with no motion (section 4).
+  const [sheet, setSheet] = useState<"closed" | "key" | "click">("closed");
+  const sheetOpen = sheet !== "closed";
   const [last, setLast] = useState<LastAction | null>(null);
   const save = useSaveJob();
   const dismiss = useDismissJob();
@@ -381,10 +390,10 @@ export function MatchesPage() {
           setShowExcluded((x) => !x);
           return true;
         case "a":
-          setAddJobOpen(true);
+          setAddJobOpen(true, "key");
           return true;
         case "?":
-          setSheetOpen(true);
+          setSheet("key");
           return true;
         default:
           return false;
@@ -412,7 +421,7 @@ export function MatchesPage() {
   return (
     <div className="grid h-[calc(100dvh-8.5rem)] min-h-96 grid-rows-[auto_minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-        <h1 className="mr-3 font-semibold text-2xl tracking-tight">Matches</h1>
+        <h1 className="display mr-3 text-3xl">Matches</h1>
         <div className="relative w-full max-w-64">
           <Label htmlFor={searchId} className="sr-only">
             Search jobs
@@ -466,7 +475,7 @@ export function MatchesPage() {
         <Toggle variant="outline" size="sm" pressed={showExcluded} onPressedChange={setShowExcluded}>
           Excluded
         </Toggle>
-        <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground" onClick={() => setSheetOpen(true)}>
+        <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground" onClick={() => setSheet("click")}>
           Shortcuts <Kbd>?</Kbd>
         </Button>
       </div>
@@ -540,7 +549,7 @@ export function MatchesPage() {
           />
         </div>
       )}
-      <ShortcutSheet open={sheetOpen} onOpenChange={setSheetOpen} />
+      <ShortcutSheet open={sheetOpen} instant={sheet === "key"} onOpenChange={(open) => !open && setSheet("closed")} />
     </div>
   );
 }

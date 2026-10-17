@@ -140,6 +140,33 @@ describe("extract: PDF and DOCX", () => {
   });
 });
 
+describe("contact from the CV header (decision 49)", () => {
+  const HEADED = [
+    "Ana Cruz",
+    "+63 917 555 0101 • ana@cruz.dev • Iligan City",
+    "https://github.com/anacruz",
+    "- Built a billing service in Go",
+  ].join("\n");
+
+  test("saving a CV fills the empty contact fields from its header", async () => {
+    const profile = await pasteCv(HEADED);
+    expect(profile.contact).toEqual({
+      fullName: "Ana Cruz",
+      email: "ana@cruz.dev",
+      phone: "+63 917 555 0101",
+      location: "Iligan City, Philippines",
+      links: ["https://github.com/anacruz"],
+    });
+  });
+
+  test("a field the user filled is never overwritten by a CV save", async () => {
+    const mine = { fullName: "Ana C.", email: "me@work.ph", phone: "", location: "Cebu City", links: [] };
+    expect((await call("PUT", "/profile", { contact: mine })).status).toBe(200);
+    const profile = await pasteCv(HEADED);
+    expect(profile.contact).toEqual({ ...mine, phone: "+63 917 555 0101", links: ["https://github.com/anacruz"] });
+  });
+});
+
 describe("split: checked against the item's own text", () => {
   test("a candidate with a number not in the CV text is dropped", () => {
     const evidence = CV_LINES.join("\n");

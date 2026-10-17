@@ -177,7 +177,7 @@ function BoardRow({
       className={cn(
         "flex items-start gap-1 py-2",
         // Only a pointer move eases the row into its new column; keyboard moves are instant.
-        arrived && "fade-in-0 slide-in-from-top-1 animate-in duration-200 ease-out motion-reduce:animate-none",
+        arrived && "fade-in-0 slide-in-from-top-1 animate-in transition-none duration-200 ease-out",
       )}
     >
       <Link
@@ -297,7 +297,7 @@ export function BoardPage() {
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <h1 className="font-semibold text-2xl tracking-tight">Board</h1>
+        <h1 className="display text-3xl">Board</h1>
         {board.data && board.data.length > 0 && (
           <p className="hidden text-muted-foreground text-sm sm:block">
             Focus a row and press <kbd className="font-sans">1</kbd> to <kbd className="font-sans">5</kbd> to move it.
@@ -314,14 +314,16 @@ export function BoardPage() {
           </Button>
         </div>
       ) : board.data.length === 0 ? (
-        <div className="grid justify-items-start gap-3 py-8">
-          <p className="text-muted-foreground">Nothing on the board yet. Save a match or add a job by link.</p>
-          <Button onClick={() => setAdding(true)}>
-            <PlusIcon aria-hidden />
-            Add by link
-          </Button>
-          <AddJobDialog open={adding} onOpenChange={setAdding} />
-          <SetupChecklist className="mt-6" />
+        <div className="grid gap-6">
+          <div className="surface grid max-w-2xl justify-items-start gap-3 rounded-xl p-6">
+            <p className="text-muted-foreground">Nothing on the board yet. Save a match or add a job by link.</p>
+            <Button onClick={() => setAdding(true)}>
+              <PlusIcon aria-hidden />
+              Add by link
+            </Button>
+            <AddJobDialog open={adding} onOpenChange={setAdding} />
+          </div>
+          <SetupChecklist />
         </div>
       ) : (
         <div className={COLUMNS_GRID}>

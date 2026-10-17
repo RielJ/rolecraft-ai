@@ -99,6 +99,73 @@ test("j j s d 1 z: save, dismiss with a reason, undo; selection never animates",
   await expect(page.getByRole("region", { name: /^Saved 1/ })).toContainText("Charlie Engineer");
 });
 
+test("overlays a key opens never animate; a click eases them in; reduced motion keeps only the fade", async ({
+  page,
+}) => {
+  // Motion on the overlay surfaces themselves; a focused input's ring is not overlay motion.
+  const running = () =>
+    page.evaluate(() =>
+      document
+        .getAnimations()
+        .filter((a) =>
+          /(?:content|overlay)$/.test((a.effect as KeyframeEffect | null)?.target?.getAttribute("data-slot") ?? ""),
+        )
+        .map((a) =>
+          [
+            a instanceof CSSTransition ? a.transitionProperty : a instanceof CSSAnimation ? a.animationName : "js",
+            (a.effect as KeyframeEffect | null)?.target?.getAttribute("data-slot") ??
+              (a.effect as KeyframeEffect | null)?.target?.tagName,
+          ].join(" "),
+        ),
+    );
+  await page.goto("/");
+  await expect(list(page)).toBeFocused();
+
+  // d, ? and a open and close with no motion (section 4: no motion on keyboard actions).
+  for (const [key, name] of [
+    ["d", "Dismiss reason"],
+    ["?", "Keyboard shortcuts"],
+    ["a", "Add a job"],
+  ] as const) {
+    await list(page).focus();
+    await page.keyboard.press(key);
+    await expect(page.getByRole("dialog", { name })).toBeVisible();
+    expect(await running(), `${key} opens with no animation`).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name })).toBeHidden();
+    expect(await running(), `${key} closes with no animation`).toEqual([]);
+  }
+
+  // The same sheet from a click enters over 200ms with the strong ease-out, scaling from 0.95.
+  const content = page.locator('[data-slot="dialog-content"]');
+  const motion = () =>
+    content.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        duration: style.animationDuration,
+        easing: style.animationTimingFunction,
+        scale: style.getPropertyValue("--tw-enter-scale").trim(),
+        opacity: style.getPropertyValue("--tw-enter-opacity").trim(),
+      };
+    });
+  await page.getByRole("button", { name: /Shortcuts/ }).click();
+  await expect(content).toBeVisible();
+  expect(await motion()).toEqual({
+    duration: "0.2s",
+    easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+    scale: ".95",
+    opacity: "0",
+  });
+  await page.keyboard.press("Escape");
+  await expect(content).toBeHidden();
+
+  // Reduced motion: the fade stays, the scale goes.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: /Shortcuts/ }).click();
+  await expect(content).toBeVisible();
+  expect(await motion()).toMatchObject({ scale: "1", opacity: "0" });
+});
+
 test("e shows excluded jobs, ? opens the sheet, / focuses search and Esc returns", async ({ page }) => {
   await page.goto("/");
   await expect(list(page).getByRole("option")).toHaveCount(5);

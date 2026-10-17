@@ -34,6 +34,7 @@ import {
   userSeniorityLabel,
 } from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
+import { FileDropZone } from "../components/file-drop-zone";
 import { SetupChecklist } from "../components/setup-checklist";
 import {
   useConfirmAllFacts,
@@ -76,7 +77,7 @@ const onError = (error: unknown) => toast.error(errorMessage(error));
 function ContactForm({ contact }: { contact: Contact }) {
   const id = useId();
   const update = useUpdateProfile();
-  const [form, setForm] = useState({ ...contact, links: contact.links.join("\n") });
+  const [form, setForm] = useState({ ...contact, links: contact.links.join(", ") });
   const fields = [
     { key: "fullName", label: "Full name", type: "text", autoComplete: "name" },
     { key: "email", label: "Email", type: "email", autoComplete: "email" },
@@ -86,10 +87,7 @@ function ContactForm({ contact }: { contact: Contact }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const links = form.links
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const links = form.links.split(/[\s,]+/).filter(Boolean);
     update.mutate({ contact: { ...form, links } }, { onSuccess: () => toast("Contact details saved."), onError });
   }
 
@@ -99,7 +97,9 @@ function ContactForm({ contact }: { contact: Contact }) {
         <h2 id={`${id}-h`} className="font-semibold text-lg">
           Contact
         </h2>
-        <p className="text-muted-foreground text-sm">The header of every PDF you export.</p>
+        <p className="text-muted-foreground text-sm">
+          The header of every PDF you export. Empty fields fill in from your CV when you save it.
+        </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map((f) => (
@@ -116,13 +116,21 @@ function ContactForm({ contact }: { contact: Contact }) {
         ))}
       </div>
       <div className="grid gap-2">
-        <Label htmlFor={`${id}-links`}>Links, one per line</Label>
-        <Textarea
+        <Label htmlFor={`${id}-links`}>Links</Label>
+        <Input
           id={`${id}-links`}
-          className="min-h-20"
+          type="text"
+          inputMode="url"
+          autoComplete="url"
+          spellCheck={false}
+          placeholder="https://github.com/you, https://you.dev"
+          aria-describedby={`${id}-links-hint`}
           value={form.links}
           onChange={(e) => setForm((prev) => ({ ...prev, links: e.target.value }))}
         />
+        <p id={`${id}-links-hint`} className="text-muted-foreground text-xs">
+          Separate links with commas.
+        </p>
       </div>
       <Button type="submit" className="justify-self-start" disabled={update.isPending}>
         {update.isPending ? "Saving…" : "Save contact"}
@@ -522,8 +530,30 @@ function SplitStatus({ item, what }: { item: ProfileItemDto; what: string }) {
 // ---------- CV ----------
 
 const CV_ACCEPT = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const CV_EXTENSIONS = [".pdf", ".docx"] as const;
 
-function CvForm({ cv, aiReady }: { cv: ProfileDto["cv"]; aiReady: boolean }) {
+const CONTACT_FIELD_NAMES: Record<keyof Contact, string> = {
+  fullName: "name",
+  email: "email",
+  phone: "phone",
+  location: "location",
+  links: "links",
+};
+
+/** The contact fields a CV save filled: empty before, set after. */
+function filledFields(before: Contact, after: Contact): string[] {
+  return Object.entries(CONTACT_FIELD_NAMES).flatMap(([key, name]) =>
+    String(before[key as keyof Contact]) === String(after[key as keyof Contact]) ? [] : [name],
+  );
+}
+
+function readMessage(what: string, before: Contact, after: ProfileDto): string {
+  const filled = filledFields(before, after.contact);
+  const contactNote = filled.length > 0 ? ` Filled your ${filled.join(", ")} under Contact.` : "";
+  return `${what} Its facts appear below.${contactNote}`;
+}
+
+function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Contact; aiReady: boolean }) {
   const id = useId();
   const paste = usePasteCv();
   const upload = useUploadCv();
@@ -532,13 +562,18 @@ function CvForm({ cv, aiReady }: { cv: ProfileDto["cv"]; aiReady: boolean }) {
   const [uploadProblem, setUploadProblem] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // A CV read from a file hides the paste box; it opens on request or when a file fails.
+  const [pasting, setPasting] = useState(!cv?.fileName);
   const splitting = cv?.splitTask?.status === "running";
   const busy = paste.isPending || upload.isPending;
 
   function savePaste(confirmOverCap: boolean) {
     paste.mutate(
       { text, confirmOverCap },
-      { onSuccess: () => toast("CV saved. Its facts appear below."), onError: overCap.onError(() => savePaste(true)) },
+      {
+        onSuccess: (profile) => toast(readMessage("CV saved.", contact, profile)),
+        onError: overCap.onError(() => savePaste(true)),
+      },
     );
   }
 
@@ -547,11 +582,12 @@ function CvForm({ cv, aiReady }: { cv: ProfileDto["cv"]; aiReady: boolean }) {
     upload.mutate(
       { file, confirmOverCap },
       {
-        onSuccess: () => toast(`Read ${file.name}. Its facts appear below.`),
+        onSuccess: (profile) => toast(readMessage(`Read ${file.name}.`, contact, profile)),
         onError: (error) => {
           if (error instanceof ApiError && error.overCap) return overCap.onError(() => sendFile(file, true))(error);
           setUploadProblem(errorMessage(error));
-          textRef.current?.focus();
+          setPasting(true);
+          requestAnimationFrame(() => textRef.current?.focus());
         },
         onSettled: () => {
           if (fileRef.current) fileRef.current.value = "";
@@ -577,51 +613,60 @@ function CvForm({ cv, aiReady }: { cv: ProfileDto["cv"]; aiReady: boolean }) {
         </p>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor={`${id}-file`}>Upload a PDF or DOCX</Label>
-        <Input
-          ref={fileRef}
+        <FileDropZone
           id={`${id}-file`}
-          type="file"
+          inputRef={fileRef}
           accept={CV_ACCEPT}
-          disabled={busy}
-          className="max-w-sm"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) sendFile(file, false);
-          }}
+          extensions={CV_EXTENSIONS}
+          kinds="PDF or DOCX"
+          title={cv ? "Upload a new version of your CV" : "Upload your CV here"}
+          busy={upload.isPending}
+          busyLabel="Reading your CV…"
+          disabled={busy || splitting}
+          footer={cv?.fileName ? `Last read from ${cv.fileName}.` : undefined}
+          onFile={(file) => sendFile(file, false)}
+          onReject={setUploadProblem}
         />
-        {cv?.fileName && !upload.isPending && (
-          <p className="text-muted-foreground text-xs">Last read from {cv.fileName}.</p>
-        )}
-        {upload.isPending && (
-          <p className="text-muted-foreground text-sm" aria-live="polite">
-            Reading your CV…
-          </p>
-        )}
         {uploadProblem && (
           <p role="alert" className="text-destructive text-sm">
             {uploadProblem}
           </p>
         )}
       </div>
-      <div className="grid gap-2">
-        <Label htmlFor={`${id}-cv`}>Or paste it</Label>
-        <Textarea
-          ref={textRef}
-          id={`${id}-cv`}
-          aria-label="CV text"
-          className="max-h-[60vh] min-h-48 font-serif"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Paste your CV here"
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Button type="submit" disabled={busy || splitting || !text.trim()}>
-          {paste.isPending ? "Reading your CV…" : cv ? "Save and update facts" : "Save and split into facts"}
-        </Button>
-        {cv && <SplitStatus item={cv} what="your CV" />}
-      </div>
+      {pasting ? (
+        <>
+          <div className="grid gap-2">
+            <Label htmlFor={`${id}-cv`}>Or paste it</Label>
+            <Textarea
+              ref={textRef}
+              id={`${id}-cv`}
+              aria-label="CV text"
+              className="max-h-[60vh] min-h-48"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Paste your CV here"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Button type="submit" disabled={busy || splitting || !text.trim()}>
+              {paste.isPending ? "Reading your CV…" : cv ? "Save and update facts" : "Save and split into facts"}
+            </Button>
+            {cv?.fileName && (
+              <Button type="button" variant="ghost" onClick={() => setPasting(false)}>
+                Cancel
+              </Button>
+            )}
+            {cv && <SplitStatus item={cv} what="your CV" />}
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Button type="button" variant="link" className="h-auto px-0" onClick={() => setPasting(true)}>
+            Paste the text instead
+          </Button>
+          {cv && <SplitStatus item={cv} what="your CV" />}
+        </div>
+      )}
       {overCap.dialog}
     </form>
   );
@@ -637,21 +682,53 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
   const [text, setText] = useState(fact.text);
   const busy = confirm.isPending || remove.isPending || update.isPending;
 
+  function save() {
+    if (!text.trim() || busy) return;
+    update.mutate({ id: fact.id, text }, { onSuccess: () => setEditing(false), onError });
+  }
+
+  function cancel() {
+    setText(fact.text);
+    setEditing(false);
+  }
+
   return (
     <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
       <span className="w-16 shrink-0 pt-0.5 font-mono text-muted-foreground text-xs tabular-nums">{fact.key}</span>
       {editing ? (
         <form
-          className="flex min-w-0 flex-1 gap-2"
+          className="grid min-w-0 flex-1 gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            update.mutate({ id: fact.id, text }, { onSuccess: () => setEditing(false), onError });
+            save();
           }}
         >
-          <Input aria-label={`Edit ${fact.key}`} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
-          <Button type="submit" size="sm" className="h-9" disabled={busy || !text.trim()}>
-            Save
-          </Button>
+          <Textarea
+            aria-label={`Edit ${fact.key}`}
+            className="min-h-0 resize-none"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                save();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancel();
+              }
+            }}
+            onFocus={(e) => e.currentTarget.setSelectionRange(text.length, text.length)}
+            autoFocus
+          />
+          <div className="flex items-center gap-2">
+            <Button type="submit" size="sm" disabled={busy || !text.trim()}>
+              {update.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={cancel}>
+              Cancel
+            </Button>
+            <span className="text-muted-foreground text-xs max-sm:hidden">⌘ Enter saves · Esc cancels</span>
+          </div>
         </form>
       ) : (
         <div className="grid min-w-0 flex-1 gap-1">
@@ -664,19 +741,21 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
           )}
         </div>
       )}
-      <div className="flex gap-1">
-        {fact.status === "pending" && !editing && (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm.mutate(fact.id, { onError })}>
-            Confirm
+      {!editing && (
+        <div className="flex gap-1">
+          {fact.status === "pending" && (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm.mutate(fact.id, { onError })}>
+              Confirm
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(true)}>
+            Edit
           </Button>
-        )}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing((e) => !e)}>
-          {editing ? "Cancel" : "Edit"}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => remove.mutate(fact.id, { onError })}>
-          {fact.status === "pending" ? "Discard" : "Delete"}
-        </Button>
-      </div>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => remove.mutate(fact.id, { onError })}>
+            {fact.status === "pending" ? "Discard" : "Delete"}
+          </Button>
+        </div>
+      )}
     </li>
   );
 }
@@ -908,7 +987,7 @@ function AddonDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto overscroll-contain sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{item ? "Edit add-on" : "Add an add-on"}</DialogTitle>
           <DialogDescription>
@@ -1158,11 +1237,12 @@ export function ProfilePage() {
   const { contact, standardAnswers, targeting, cv, addons, facts, aiReady } = profile.data;
   return (
     <div className="grid gap-10">
-      <h1 className="font-semibold text-2xl tracking-tight">Profile</h1>
+      <h1 className="display text-3xl">Profile</h1>
       <SetupChecklist />
-      <ContactForm contact={contact} />
+      {/* A CV save can fill empty fields on the server; the form picks them up. */}
+      <ContactForm key={JSON.stringify(contact)} contact={contact} />
       <Separator />
-      <CvForm key={cv?.rev ?? 0} cv={cv} aiReady={aiReady} />
+      <CvForm key={cv?.rev ?? 0} cv={cv} contact={contact} aiReady={aiReady} />
       <Facts profile={profile.data} />
       <Separator />
       <Addons addons={addons} facts={facts} />

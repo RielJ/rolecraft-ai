@@ -570,7 +570,7 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
         {ws.facts.length === 0 ? (
           <p className="text-muted-foreground text-sm">None yet. Paste and confirm your CV on the Profile page.</p>
         ) : (
-          <ul className="grid max-h-80 gap-1.5 overflow-y-auto pr-1 text-sm">
+          <ul className="grid max-h-80 gap-1.5 overflow-y-auto overscroll-contain pr-1 text-sm">
             {ws.facts.map((f) => (
               <li key={f.key} className="flex gap-2">
                 <span className="w-14 shrink-0 font-mono text-muted-foreground text-xs leading-5 tabular-nums">
@@ -742,7 +742,7 @@ function Workspace({ ws }: { ws: WorkspaceDto }) {
     <div className="grid gap-8">
       <header className="grid gap-4">
         <div className="grid gap-1">
-          <h1 className="font-semibold text-2xl tracking-tight">{ws.job.title}</h1>
+          <h1 className="display text-2xl sm:text-3xl">{ws.job.title}</h1>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <span>{ws.job.company}</span>
             {kindStatus && <Badge variant="secondary">{kindStatus}</Badge>}

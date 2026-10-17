@@ -108,7 +108,7 @@ export function RefreshButton() {
   return (
     <Popover open={panelOpen} onOpenChange={setPanelOpen}>
       <PopoverTrigger asChild>{button}</PopoverTrigger>
-      <PopoverContent aria-label="First refresh" align="end" className="w-96 duration-150 ease-out">
+      <PopoverContent aria-label="First refresh" align="end" className="w-96">
         <PopoverHeader className="mb-1">
           <PopoverTitle>Your first refresh</PopoverTitle>
           <PopoverDescription>Refresh reads every board that is on. Turn off any you don't want.</PopoverDescription>

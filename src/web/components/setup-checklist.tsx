@@ -156,9 +156,9 @@ export function SetupChecklist({ className }: { className?: string }) {
   const next = steps.find((s) => !s.done)?.id;
 
   return (
-    <section aria-labelledby="setup-h" className={cn("grid max-w-2xl gap-3", className)}>
+    <section aria-labelledby="setup-h" className={cn("surface-glow grid max-w-2xl gap-4 rounded-2xl p-6", className)}>
       <div>
-        <h2 id="setup-h" className="font-semibold text-lg">
+        <h2 id="setup-h" className="display text-2xl">
           Get set up
         </h2>
         <p className="text-muted-foreground text-sm">
@@ -168,11 +168,11 @@ export function SetupChecklist({ className }: { className?: string }) {
           done. Any order works.
         </p>
       </div>
-      <ol aria-label="Setup steps" className="divide-y border-y">
+      <ol aria-label="Setup steps" className="divide-y border-t">
         {steps.map((step) => {
           const copy = stepCopy(step.id, aiVia);
           return (
-            <li key={step.id} className="flex items-start gap-3 py-3">
+            <li key={step.id} className="flex items-start gap-3 py-3 last:pb-0">
               {step.done ? (
                 <CircleCheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-primary" />
               ) : (

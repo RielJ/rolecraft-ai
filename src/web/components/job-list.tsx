@@ -100,7 +100,7 @@ export function JobList({
       tabIndex={0}
       aria-activedescendant={selected ? optionId(selected) : undefined}
       aria-keyshortcuts="j k ArrowDown ArrowUp Home End Enter o s d z v / e a ?"
-      className="min-h-0 overflow-y-auto rounded-md border-t outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      className="min-h-0 overflow-y-auto overscroll-contain rounded-md border-t outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
     >
       {jobs.map((job) => (
         <Row key={job.id} job={job} selected={job.id === selected} onSelect={onSelect}>

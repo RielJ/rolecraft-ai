@@ -256,7 +256,7 @@ export function SourcesPage() {
   return (
     <div className="grid gap-8">
       <div>
-        <h1 className="font-semibold text-2xl tracking-tight">Sources</h1>
+        <h1 className="display text-3xl">Sources</h1>
         <p className="text-muted-foreground text-sm">
           Refresh reads every source that is on. Built-in boards keep postings that match their keywords, which are your
           target titles from Profile unless you set others; company boards read the whole board.

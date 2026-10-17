@@ -1,5 +1,6 @@
 import mammoth from "mammoth";
 import { extractText, getDocumentProxy } from "unpdf";
+import { reflowPdfText } from "@/domain/reflow";
 
 /**
  * CV text extraction (section 3.3, step 1): `unpdf` for PDF, `mammoth` for DOCX. The file is
@@ -50,7 +51,8 @@ async function readPdf(bytes: Uint8Array): Promise<ExtractResult> {
   } catch {
     return fail("unreadable");
   }
-  const clean = tidy(text);
+  // pdf.js keeps the page's line breaks; reflow joins wrapped sentences and drops lone bullets.
+  const clean = reflowPdfText(tidy(text));
   if (clean.length < MIN_PDF_CHARS) return fail("no_text_layer");
   return { kind: "text", format: "pdf", text: clean };
 }
