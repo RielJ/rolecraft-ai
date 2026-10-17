@@ -12,7 +12,7 @@ import type { Deps } from "@/server/services/context";
 import { AI_PASS_LIMIT } from "@/server/services/sync";
 import { waitForTask } from "@/server/services/tasks";
 import { AddJobResult, ApiErrorBody, RefreshDto, SettingsDto, TaskDto, WorkspaceDto } from "@/shared/api";
-import { type DraftingCase, type EligibilityCase, exitCode, loadSets, main, runEval } from "../eval/run";
+import { type DraftingCase, type EligibilityCase, exitCode, loadSets, main, piProviderFor, runEval } from "../eval/run";
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
@@ -632,6 +632,16 @@ describe("eval set and scorer", () => {
       expect(lines.at(-1)).toBe("Set ANTHROPIC_API_KEY to run the eval with a key, or pass --via pi.");
       expect(await main(["--model", "mystery-1", "--via", "key"], out)).toBe(2);
       expect(lines.at(-1)).toContain("--provider");
+      expect(await main(["--model", "mystery-1", "--via", "pi"], out)).toBe(2);
+      expect(lines.at(-1)).toContain("--pi-provider");
+      expect(await main(["--model", "gpt-6-luna", "--via", "pi", "--pi-provider", "nope"], out)).toBe(2);
+    });
+
+    test("via pi, the pi provider follows the model unless --pi-provider names one", () => {
+      expect(piProviderFor({ model: "claude-haiku-5-5" })).toBe("anthropic");
+      expect(piProviderFor({ model: "gpt-6-luna" })).toBe("openai-codex");
+      expect(piProviderFor({ model: "gpt-6-luna", piProvider: "anthropic" })).toBe("anthropic");
+      expect(piProviderFor({ model: "mystery-1" })).toBeNull();
     });
   });
 

@@ -326,6 +326,8 @@ const Args = z.object({
   model: z.string().min(1, "Pass --model <id>, for example --model claude-haiku-5-5."),
   via: z.enum(["key", "pi"]).default("key"),
   provider: z.enum(["anthropic", "openai"]).optional(),
+  /** pi's provider id. Only the subscription sign-ins: a model with no API key bill. */
+  piProvider: z.enum(["anthropic", "openai-codex"]).optional(),
 });
 
 function providerOf(model: string): "anthropic" | "openai" | null {
@@ -334,20 +336,36 @@ function providerOf(model: string): "anthropic" | "openai" | null {
   return null;
 }
 
+/** The pi provider for a run through pi: `--pi-provider`, else the one that serves the model. */
+export function piProviderFor(args: {
+  model: string;
+  piProvider?: "anthropic" | "openai-codex" | undefined;
+}): "anthropic" | "openai-codex" | null {
+  if (args.piProvider) return args.piProvider;
+  const provider = providerOf(args.model);
+  if (provider === null) return null;
+  return provider === "anthropic" ? "anthropic" : "openai-codex";
+}
+
 type Client = { client: AiProviderClient; key: string; via: string };
 
 async function clientFor(args: z.infer<typeof Args>): Promise<Client | string> {
   if (args.via === "pi") {
+    const piProvider = piProviderFor(args);
+    if (!piProvider) {
+      return `Cannot tell pi's provider for "${args.model}". Pass --pi-provider anthropic or --pi-provider openai-codex.`;
+    }
     const Thinking = z.enum(PI_THINKING_LEVELS);
     const pi = createPiClient({
       bin: process.env.HB_PI_BIN || "pi",
+      piProvider,
       thinking: {
         light: Thinking.catch("off").parse(process.env.HB_PI_THINKING_LIGHT ?? "off"),
         writing: Thinking.catch("low").parse(process.env.HB_PI_THINKING_WRITING ?? "low"),
       },
     });
-    if (!(await pi.authReady())) return "pi is not signed in to anthropic. Run `pi`, then /login, and try again.";
-    return { client: pi, key: "", via: "pi" };
+    if (!(await pi.authReady())) return `pi is not signed in to ${piProvider}. Run \`pi\`, then /login, and try again.`;
+    return { client: pi, key: "", via: `pi (${piProvider})` };
   }
   const provider = args.provider ?? providerOf(args.model);
   if (!provider) return `Cannot tell the provider of "${args.model}". Pass --provider anthropic or --provider openai.`;
@@ -370,6 +388,7 @@ export async function main(argv: readonly string[], out: (line: string) => void 
         model: { type: "string" },
         via: { type: "string" },
         provider: { type: "string" },
+        "pi-provider": { type: "string" },
       },
       strict: true,
     }).values;
@@ -377,7 +396,8 @@ export async function main(argv: readonly string[], out: (line: string) => void 
     out(errorText(error));
     return 2;
   }
-  const args = Args.safeParse({ ...raw, model: raw.model ?? "" });
+  const { "pi-provider": piProvider, ...rest } = raw;
+  const args = Args.safeParse({ ...rest, piProvider, model: raw.model ?? "" });
   if (!args.success) {
     out(z.prettifyError(args.error));
     return 2;
