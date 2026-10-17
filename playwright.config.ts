@@ -8,6 +8,9 @@ const PORT = Number(process.env.HB_E2E_PORT ?? 3100);
 export const E2E_DATABASE_URL =
   process.env.DATABASE_URL_E2E ?? "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay_e2e";
 
+/** Every fixture source request, one `host/path` line each (HB_SOURCES_LOG). Tests clear and read it. */
+export const E2E_SOURCES_LOG = join(tmpdir(), "hanapbuhay-e2e-sources.log");
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -31,6 +34,7 @@ export default defineConfig({
       HB_STATIC_DIR: "./dist",
       HB_AI: "fake",
       HB_SOURCES: "fixture",
+      HB_SOURCES_LOG: E2E_SOURCES_LOG,
       HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
     },
     stdout: "pipe",

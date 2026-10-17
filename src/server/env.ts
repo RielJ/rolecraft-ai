@@ -28,6 +28,8 @@ const EnvSchema = z.object({
   /** `fixture` runs the real source adapters over files in HB_SOURCES_DIR instead of the network. */
   HB_SOURCES: z.enum(["live", "fixture"]).default("live"),
   HB_SOURCES_DIR: z.string().min(1).default("./test/fixtures/sources"),
+  /** With `HB_SOURCES=fixture`, a file that gets one line per fixture request (for e2e). */
+  HB_SOURCES_LOG: z.string().min(1).optional(),
 });
 export type Env = z.infer<typeof EnvSchema>;
 

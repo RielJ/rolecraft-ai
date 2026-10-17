@@ -107,6 +107,22 @@
     background: var(--selection);
     color: var(--foreground);
   }
+  /*
+   * A visible ring for anything focusable that does not draw its own (plain links, the listbox,
+   * summary). Components that ring themselves set outline-none, which wins over this base rule.
+   */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: from-font;
+  }
+  /* Anchored sections (#cv, #facts, #ai) land below the sticky top bar, not under it. */
+  [id] {
+    scroll-margin-top: 4.5rem;
+  }
   h1,
   h2,
   h3 {

@@ -1,5 +1,6 @@
 import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type {
+  BuiltinSourceKind,
   DismissReason,
   Eligibility,
   ItemUsage,
@@ -370,4 +371,13 @@ export const SOURCE_SITES: Readonly<Record<SourceKind, { name: string; url: stri
   smartrecruiters: { name: "SmartRecruiters", url: "https://www.smartrecruiters.com", attribution: false },
   recruitee: { name: "Recruitee", url: "https://recruitee.com", attribution: false },
   workable: { name: "Workable", url: "https://www.workable.com", attribution: false },
+};
+
+/** One line per built-in board for the first-refresh panel (section 4, Setup checklist). */
+export const BUILTIN_SOURCE_NOTES: Readonly<Record<BuiltinSourceKind, string>> = {
+  jobicy: "The newest 100 remote jobs, with each job's allowed regions.",
+  himalayas: "The newest 100 remote jobs; an empty location list means open worldwide.",
+  remoteok: "The newest remote tech jobs, credited with a link back to RemoteOK.",
+  weworkremotely: "Remote jobs from its RSS feed. You apply on We Work Remotely.",
+  remotive: "Remote jobs shown 24 hours after posting. Read at most every six hours.",
 };

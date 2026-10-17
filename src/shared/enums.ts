@@ -145,6 +145,7 @@ export const SOURCE_KINDS = [...BUILTIN_SOURCE_KINDS, ...ATS_SOURCE_KINDS] as co
 export const SourceKind = z.enum(SOURCE_KINDS);
 export type SourceKind = z.infer<typeof SourceKind>;
 export type AtsSourceKind = (typeof ATS_SOURCE_KINDS)[number];
+export type BuiltinSourceKind = (typeof BUILTIN_SOURCE_KINDS)[number];
 
 export const SOURCE_STATUSES = ["ok", "failed", "rate_limited", "suspicious_empty", "skipped"] as const;
 export const SourceStatus = z.enum(SOURCE_STATUSES);

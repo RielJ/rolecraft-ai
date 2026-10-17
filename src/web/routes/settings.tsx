@@ -58,7 +58,7 @@ function KeyForm({ ai }: { ai: SettingsDto["ai"] }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
+    <form id="ai" onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
       <div>
         <h2 id={`${id}-h`} className="font-semibold text-lg">
           AI key

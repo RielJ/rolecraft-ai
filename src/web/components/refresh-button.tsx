@@ -1,12 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { RefreshResult } from "@/shared/api";
 import { sourceStatusLabel } from "@/shared/labels";
-import { ApiError, errorMessage } from "../api";
-import { keys, useRefresh, useStartRefresh } from "../queries";
+import { keys, useRefresh } from "../queries";
 import { Button } from "../ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../ui/popover";
+import { setWatched, subscribeWatched, useRunRefresh, watchedTask } from "./run-refresh";
+import { SourcesPanel } from "./setup-checklist";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -49,47 +58,63 @@ function aiPassSummary(pass: RefreshResult["aiPass"]): string {
 /**
  * Starts a refresh and shows its step while it runs. When it finishes, the job list and the
  * sources page reload and a toast sums it up. A second press while one runs says so.
+ *
+ * Before any refresh has ever run, the button opens the sources panel instead (section 4, Setup
+ * checklist): the five built-in boards as switches above their own Refresh button, so the user
+ * can turn some off before the first sync.
  */
 export function RefreshButton() {
   const qc = useQueryClient();
   const refresh = useRefresh();
-  const start = useStartRefresh();
+  const { run, pending } = useRunRefresh();
+  const watching = useSyncExternalStore(subscribeWatched, watchedTask);
+  const [panelOpen, setPanelOpen] = useState(false);
   const task = refresh.data?.task ?? null;
   const running = task?.status === "running";
-  // The task this tab started or saw running; its finish is announced once. State, not a ref:
-  // a quick refresh can be done before the POST's answer sets it, and setting it must re-run
-  // the effect so that finish is still announced.
-  const [watching, setWatching] = useState<string | null>(null);
+  const neverRefreshed = refresh.data !== undefined && refresh.data.task === null;
 
   useEffect(() => {
     if (!task) return;
     if (task.status === "running") {
-      setWatching(task.id);
+      if (watching !== task.id) setWatched(task.id);
       return;
     }
     if (watching !== task.id) return;
-    setWatching(null);
+    setWatched(null);
     void qc.invalidateQueries({ queryKey: keys.matches });
     void qc.invalidateQueries({ queryKey: keys.sources });
     void qc.invalidateQueries({ queryKey: keys.board });
+    void qc.invalidateQueries({ queryKey: keys.setup });
     if (task.status === "done" && refresh.data?.result) toast(`Refresh done. ${summary(refresh.data.result)}`);
     else if (task.status === "failed") toast.error(`Refresh failed. ${task.error ?? ""}`.trim());
   }, [task, watching, refresh.data?.result, qc]);
 
-  function run() {
-    start.mutate(undefined, {
-      onSuccess: (started) => setWatching(started.id),
-      onError: (error) => {
-        if (error instanceof ApiError && error.code === "refresh_running") toast("A refresh is already running.");
-        else toast.error(errorMessage(error));
-      },
-    });
-  }
-
-  return (
-    <Button size="sm" variant="outline" onClick={run} disabled={running || start.isPending} aria-live="polite">
-      <RefreshCwIcon aria-hidden className={running ? "animate-spin motion-reduce:animate-none" : undefined} />
+  const button = (
+    <Button
+      size="sm"
+      variant="outline"
+      // Before any refresh the popover trigger opens the panel instead; see below.
+      onClick={neverRefreshed ? undefined : () => run()}
+      // Until the newest refresh is known, a click could skip the first-run panel.
+      disabled={running || pending || refresh.isPending}
+      aria-live="polite"
+    >
+      <RefreshCwIcon aria-hidden />
       {running ? <span className="max-w-56 truncate">Refreshing · {task.step}</span> : "Refresh"}
     </Button>
+  );
+
+  if (!neverRefreshed) return button;
+  return (
+    <Popover open={panelOpen} onOpenChange={setPanelOpen}>
+      <PopoverTrigger asChild>{button}</PopoverTrigger>
+      <PopoverContent aria-label="First refresh" align="end" className="w-96 duration-150 ease-out">
+        <PopoverHeader className="mb-1">
+          <PopoverTitle>Your first refresh</PopoverTitle>
+          <PopoverDescription>Refresh reads every board that is on. Turn off any you don't want.</PopoverDescription>
+        </PopoverHeader>
+        <SourcesPanel onClose={() => setPanelOpen(false)} />
+      </PopoverContent>
+    </Popover>
   );
 }

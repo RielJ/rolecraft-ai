@@ -7,6 +7,7 @@ import { OPEN_STATUSES, OPPORTUNITY_STATUSES, type OpportunityStatus, OUTCOMES }
 import { outcomeLabel, rateTypeLabel, statusLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { AddJobDialog } from "../components/add-job-dialog";
+import { SetupChecklist } from "../components/setup-checklist";
 import { cn } from "../lib/utils";
 import { useBoard, useChangeStatus } from "../queries";
 import { Badge } from "../ui/badge";
@@ -320,6 +321,7 @@ export function BoardPage() {
             Add by link
           </Button>
           <AddJobDialog open={adding} onOpenChange={setAdding} />
+          <SetupChecklist className="mt-6" />
         </div>
       ) : (
         <div className={COLUMNS_GRID}>

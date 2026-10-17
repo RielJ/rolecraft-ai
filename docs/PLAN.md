@@ -981,7 +981,7 @@ The invariant test is written first, fails, and then the code makes it pass.
   ```
   bun run check
   bun run build && bun run e2e
-  docker compose up --build -d && curl -fsS localhost:3000/api/health && docker compose restart app && curl -fsS localhost:3000/api/health
+  docker compose up --build -d --wait && curl -fsS localhost:3000/api/health && docker compose restart app && docker compose up -d --wait app && curl -fsS localhost:3000/api/health
   ```
 
 ### Later

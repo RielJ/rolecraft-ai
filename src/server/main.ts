@@ -63,7 +63,9 @@ const keyStore = createFileKeyStore({ dir: env.HB_DATA_DIR });
 
 const http = createHttpClient();
 const sources =
-  env.HB_SOURCES === "fixture" ? createFixtureSources({ dir: env.HB_SOURCES_DIR }) : createSourceAdapters(http);
+  env.HB_SOURCES === "fixture"
+    ? createFixtureSources({ dir: env.HB_SOURCES_DIR, log: env.HB_SOURCES_LOG })
+    : createSourceAdapters(http);
 
 const deps: Deps = { db, userId, pdf, ai, aiSource, keyStore, http, sources, clock: { now: () => new Date() } };
 

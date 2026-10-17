@@ -34,6 +34,7 @@ import {
   userSeniorityLabel,
 } from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
+import { SetupChecklist } from "../components/setup-checklist";
 import {
   useConfirmAllFacts,
   useConfirmFact,
@@ -258,7 +259,7 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
   }
 
   return (
-    <form onSubmit={submit} noValidate className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
+    <form id="targeting" onSubmit={submit} noValidate className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
       <div>
         <h2 id={`${id}-h`} className="font-semibold text-lg">
           Job targeting
@@ -565,7 +566,7 @@ function CvForm({ cv, aiReady }: { cv: ProfileDto["cv"]; aiReady: boolean }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
+    <form id="cv" onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
       <div>
         <h2 id={`${id}-h`} className="font-semibold text-lg">
           CV
@@ -720,7 +721,7 @@ function Facts({ profile }: { profile: ProfileDto }) {
   const showSource = profile.addons.length > 0;
 
   return (
-    <section aria-labelledby="facts-h" className="grid max-w-3xl gap-6">
+    <section id="facts" aria-labelledby="facts-h" className="grid max-w-3xl gap-6">
       <div>
         <h2 id="facts-h" className="font-semibold text-lg">
           Facts
@@ -1158,6 +1159,7 @@ export function ProfilePage() {
   return (
     <div className="grid gap-10">
       <h1 className="font-semibold text-2xl tracking-tight">Profile</h1>
+      <SetupChecklist />
       <ContactForm contact={contact} />
       <Separator />
       <CvForm key={cv?.rev ?? 0} cv={cv} aiReady={aiReady} />

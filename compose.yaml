@@ -16,5 +16,32 @@ services:
       timeout: 3s
       retries: 30
 
+  app:
+    build: .
+    environment:
+      # yamllint disable-line rule:line-length
+      DATABASE_URL: postgres://hanapbuhay:${HB_DB_PASSWORD:-hanapbuhay}@db:5432/hanapbuhay
+      # The key saved in Settings. HB_AI=pi needs the pi CLI and its sign-in
+      # on the host, so it is for `bun run dev` only, not this image.
+      HB_AI: live
+      HB_DATA_DIR: /data
+    ports:
+      - "${HB_PORT:-3000}:3000"
+    volumes:
+      # The AI key file (mode 0600) lives here, so it survives restarts.
+      - appdata:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # /api/health answers 200 only when Postgres does.
+      test: ["CMD", "bun", "src/server/healthcheck.ts"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  appdata:

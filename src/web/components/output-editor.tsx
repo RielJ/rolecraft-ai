@@ -191,7 +191,8 @@ export function OutputEditor({
       </div>
       {blockers.length > 0 && (
         <p className="text-sm text-warning-foreground">
-          {blockers.length} item{blockers.length === 1 ? "" : "s"} in this {label.toLowerCase()} need your input.
+          {blockers.length === 1 ? "1 item" : `${blockers.length} items`} in this {label.toLowerCase()}{" "}
+          {blockers.length === 1 ? "needs" : "need"} your input.
         </p>
       )}
       <BodyPreview output={output} />

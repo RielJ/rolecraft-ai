@@ -176,7 +176,7 @@ function SourceRow({ source }: { source: SourceDto }) {
             <Badge variant={problem ? "destructive" : "secondary"}>{sourceStatusLabel(source.lastStatus)}</Badge>
           )}
         </div>
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-sm tabular-nums">
           {source.lastRunAt ? `Last run ${WHEN.format(new Date(source.lastRunAt))}` : "Not run yet"}
           {kept && ` · ${kept}`}
         </p>
@@ -215,7 +215,7 @@ function AddBoardForm() {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-2" aria-labelledby={`${id}-h`}>
+    <form id="add-board" onSubmit={submit} className="grid max-w-2xl gap-2" aria-labelledby={`${id}-h`}>
       <h2 id={`${id}-h`} className="font-semibold text-lg">
         Add a company board
       </h2>
@@ -278,11 +278,16 @@ export function SourcesPage() {
           </Button>
         </div>
       ) : (
-        <ul aria-label="Sources" className="max-w-2xl divide-y border-y">
-          {sources.data.sources.map((source) => (
-            <SourceRow key={source.id} source={source} />
-          ))}
-        </ul>
+        <div className="grid max-w-2xl gap-3">
+          <ul aria-label="Sources" className="divide-y border-y">
+            {sources.data.sources.map((source) => (
+              <SourceRow key={source.id} source={source} />
+            ))}
+          </ul>
+          {sources.data.sources.every((s) => s.builtin) && (
+            <p className="text-muted-foreground text-sm">No company boards yet. Add one below.</p>
+          )}
+        </div>
       )}
       <AddBoardForm />
     </div>

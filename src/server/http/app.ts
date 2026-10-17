@@ -6,6 +6,7 @@ import { jobRoutes } from "./routes/jobs";
 import { matchRoutes } from "./routes/matches";
 import { profileRoutes } from "./routes/profile";
 import { settingsRoutes } from "./routes/settings";
+import { setupRoutes } from "./routes/setup";
 import { sourceRoutes } from "./routes/sources";
 import { taskRoutes } from "./routes/tasks";
 import { workspaceRoutes } from "./routes/workspace";
@@ -13,7 +14,7 @@ import { workspaceRoutes } from "./routes/workspace";
 export function createApp(deps: Deps) {
   const app = new Hono()
     .basePath("/api")
-    .get("/health", (c) => c.json({ ok: true }))
+    .route("/", setupRoutes(deps))
     .route("/", profileRoutes(deps))
     .route("/", jobRoutes(deps))
     .route("/", matchRoutes(deps))

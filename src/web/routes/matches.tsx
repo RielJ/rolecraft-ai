@@ -8,6 +8,7 @@ import { dismissReasonLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { JobList, JobListSkeleton } from "../components/job-list";
 import { ReadingPane } from "../components/reading-pane";
+import { SetupChecklist } from "../components/setup-checklist";
 import { ShortcutSheet } from "../components/shortcut-sheet";
 import { setAddJobOpen } from "../components/top-bar";
 import {
@@ -17,6 +18,7 @@ import {
   useMergeJob,
   usePrefetchMatch,
   useSaveJob,
+  useSetup,
   useUndoJob,
 } from "../queries";
 import { Button } from "../ui/button";
@@ -128,6 +130,30 @@ function DismissPopover({
  * Matches (section 4): triage new postings from the keyboard. The list is an inbox: saved and
  * dismissed jobs leave it at once, and the next job is selected without waiting on the server.
  */
+/**
+ * No jobs at all: the setup checklist while any step is undone (section 4), else a pointer to
+ * Refresh and Sources. The checklist scrolls inside the page's fixed-height grid row.
+ */
+function NoJobsYet() {
+  const setup = useSetup();
+  if (setup.data && !setup.data.done) {
+    return (
+      <div className="min-h-0 overflow-y-auto pb-4">
+        <SetupChecklist />
+      </div>
+    );
+  }
+  return (
+    <p className="max-w-3xl text-muted-foreground">
+      No open jobs yet. Press Refresh to read your sources, or add a company board under{" "}
+      <Link to="/sources" className="underline underline-offset-4 hover:text-foreground">
+        Sources
+      </Link>
+      .
+    </p>
+  );
+}
+
 export function MatchesPage() {
   const navigate = useNavigate();
   const searchId = useId();
@@ -461,13 +487,7 @@ export function MatchesPage() {
         </div>
       ) : visible.length === 0 ? (
         counts && counts.open === 0 ? (
-          <p className="max-w-3xl text-muted-foreground">
-            No open jobs yet. Press Refresh to read your sources, or add a company board under{" "}
-            <Link to="/sources" className="underline">
-              Sources
-            </Link>
-            .
-          </p>
+          <NoJobsYet />
         ) : (
           <div className="flex h-fit flex-wrap items-center gap-3 text-muted-foreground">
             <p>Nothing new. Refresh, or loosen the filters</p>

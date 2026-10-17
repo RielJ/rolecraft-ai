@@ -33,8 +33,10 @@ test("targeting, a company board, Refresh and the Matches list", async ({ page }
   await page.getByRole("button", { name: "Add board" }).click();
   await expect(page.getByRole("list", { name: "Sources" }).getByText("Roles", { exact: true })).toBeVisible();
 
-  // Refresh from the top bar; the toast sums it up when the task finishes.
+  // Refresh from the top bar. Before any refresh it opens the sources panel first (slice 11);
+  // the panel's own button starts the sync, and the toast sums it up when the task finishes.
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("dialog", { name: "First refresh" }).getByRole("button", { name: "Refresh" }).click();
   await expect(page.getByText(/^Refresh done\. 11 new\./)).toBeVisible();
   await expect(page.getByRole("list", { name: "Sources" })).toContainText("Kept 3 of 4");
   await expect(page.getByRole("list", { name: "Sources" })).toContainText("Kept 2 of 3");

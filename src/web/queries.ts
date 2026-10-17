@@ -23,6 +23,7 @@ import {
   type SaveAiKeyInput,
   SavedJob,
   SettingsDto,
+  SetupDto,
   SourceDto,
   type SourceId,
   SourceList,
@@ -48,6 +49,7 @@ export const keys = {
   matchList: (query: MatchQueryInput) => ["matches", "list", query] as const,
   match: (id: JobId) => ["matches", "detail", id] as const,
   refresh: ["refresh"] as const,
+  setup: ["setup"] as const,
 };
 
 /** How often the workspace polls while a draft task runs. */
@@ -79,6 +81,8 @@ function useProfileMutation<I>(run: (input: I) => Promise<ProfileDto>) {
       void qc.invalidateQueries({ queryKey: keys.board });
       // Confirmed facts and targeting set match levels, tags and the pay filter, on every read.
       void qc.invalidateQueries({ queryKey: keys.matches });
+      // The CV, facts and targeting are setup steps.
+      void qc.invalidateQueries({ queryKey: keys.setup });
     },
   });
 }
@@ -121,7 +125,8 @@ export function useRetrySplit() {
   return useMutation({
     mutationFn: ({ id, confirmOverCap }: { id: TaskId; confirmOverCap?: boolean }) =>
       unwrap(client.api.tasks[":id"].retry.$post({ param: { id }, json: { confirmOverCap } }), TaskDto),
-    onSettled: () => qc.invalidateQueries({ queryKey: keys.profile }),
+    onSettled: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.profile }), qc.invalidateQueries({ queryKey: keys.setup })]),
   });
 }
 
@@ -349,6 +354,8 @@ function useSettingsMutation<I>(run: (input: I) => Promise<SettingsDto>) {
       void qc.invalidateQueries({ queryKey: ["workspace"] });
       // The view currency and rates set the pay shown and the pay filter on Matches.
       void qc.invalidateQueries({ queryKey: keys.matches });
+      // The AI key is a setup step.
+      void qc.invalidateQueries({ queryKey: keys.setup });
     },
   });
 }
@@ -370,7 +377,12 @@ export function useSources() {
 
 function useSourceMutation<I, O>(run: (input: I) => Promise<O>) {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: run, onSettled: () => qc.invalidateQueries({ queryKey: keys.sources }) });
+  return useMutation({
+    mutationFn: run,
+    // "At least one source on" is a setup step.
+    onSettled: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.sources }), qc.invalidateQueries({ queryKey: keys.setup })]),
+  });
 }
 
 /** Add a company board from its careers link. The server checks the board before saving. */
@@ -471,6 +483,14 @@ export function useStartRefresh() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => unwrap(client.api.refresh.$post(), TaskDto),
-    onSettled: () => qc.invalidateQueries({ queryKey: keys.refresh }),
+    onSettled: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.refresh }), qc.invalidateQueries({ queryKey: keys.setup })]),
   });
+}
+
+// ---------- First run ----------
+
+/** The setup checklist (section 4). Every step is derived from data on the server. */
+export function useSetup() {
+  return useQuery({ queryKey: keys.setup, queryFn: () => unwrap(client.api.setup.$get(), SetupDto) });
 }

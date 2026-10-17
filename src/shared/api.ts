@@ -884,3 +884,29 @@ export type UndoInput = z.infer<typeof UndoInput>;
 
 export const SavedJob = z.object({ opportunityId: OpportunityId });
 export type SavedJob = z.infer<typeof SavedJob>;
+
+// ---------- First run (section 4, Setup checklist) ----------
+
+/** The setup steps, in the order the checklist lists them. Any order works for the user. */
+export const SETUP_STEPS = ["ai", "cv", "facts", "preferences", "sources", "first_refresh"] as const;
+export const SetupStepId = z.enum(SETUP_STEPS);
+export type SetupStepId = z.infer<typeof SetupStepId>;
+
+/** `GET /api/setup`: each step derived from data, so nothing is stored to keep in sync. */
+export const SetupDto = z.object({
+  steps: z.array(z.object({ id: SetupStepId, done: z.boolean() })),
+  /** True when every step is done; the checklist is hidden then. */
+  done: z.boolean(),
+  /** `pi` when AI runs through the local pi CLI (decision 48): the AI step needs no key. */
+  aiVia: z.enum(["key", "pi"]),
+  /**
+   * False until any refresh task exists. Until then the top bar's Refresh opens the sources
+   * panel instead of starting a sync.
+   */
+  refreshStarted: z.boolean(),
+});
+export type SetupDto = z.infer<typeof SetupDto>;
+
+/** `GET /api/health`: the process is up and Postgres answers. */
+export const HealthDto = z.object({ ok: z.boolean(), db: z.enum(["ok", "unreachable"]) });
+export type HealthDto = z.infer<typeof HealthDto>;

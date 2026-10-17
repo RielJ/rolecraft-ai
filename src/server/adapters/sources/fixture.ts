@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHttpClient, type FetchFn } from "../http";
 import { createSourceAdapters } from "./index";
@@ -12,11 +13,15 @@ import type { SourceAdapters } from "./types";
  *   lever/<board>.json, ashby/<board>.json, recruitee/<board>.json, workable/<board>.json
  *   smartrecruiters/<board>.json   the postings list; smartrecruiters/<board>/<id>.json each detail
  * Board slugs are matched in lower case. Anything else answers 404.
+ *
+ * With `log`, every request appends its host and path as one line to that file, so Playwright
+ * can prove which sources a refresh did (and did not) call.
  */
-export function createFixtureSources({ dir }: { dir: string }): SourceAdapters {
+export function createFixtureSources({ dir, log }: { dir: string; log?: string | undefined }): SourceAdapters {
   const fetch: FetchFn = async (input) => {
     const url = URL.parse(input);
     if (!url) return new Response("bad url", { status: 400 });
+    if (log) await appendFile(log, `${url.hostname}${url.pathname}\n`);
     const file = fixtureFile({ host: url.hostname.toLowerCase(), path: url.pathname });
     if (file === null) return new Response("not found", { status: 404 });
     const body = Bun.file(join(dir, file.path));
