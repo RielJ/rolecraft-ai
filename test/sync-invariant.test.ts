@@ -26,14 +26,15 @@ import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
  *  (a) the grants of `hb_sync` are exactly the table in the plan, so a sloppy grant fails the build;
  *  (b) as `hb_sync`, every write outside that table fails with SQLSTATE 42501;
  *  (c) refresh runs through fixture sources in six scenarios, and every row of every table outside
- *      {jobs, job_listings, sources, ai_calls, tasks} hashes the same before and after each one.
+ *      {jobs, job_listings, sources, ai_calls, tasks, role_drops} hashes the same before and after
+ *      each one. That includes `eligibility_overrides` (slice 13), which sync can neither read nor write.
  *      The AI eligibility pass is on (slice 10), with an AI that decides every job it is asked
  *      about, so its `ai_calls` inserts and `jobs` updates run as `hb_sync` in these scenarios.
  * The table lists come from the catalog, so a new table is covered without editing this file.
  * Nothing here reaches the network: the HTTP client gets a fetch that serves fixture files.
  */
 
-const SYNC_TABLES = ["jobs", "job_listings", "sources", "ai_calls", "tasks"];
+const SYNC_TABLES = ["jobs", "job_listings", "sources", "ai_calls", "tasks", "role_drops"];
 
 const sqlState = (error: unknown): string | null => {
   for (let e: unknown = error; typeof e === "object" && e !== null; e = "cause" in e ? e.cause : null) {
@@ -81,6 +82,8 @@ describe("(a) hb_sync has exactly the planned grants", () => {
       "jobs:INSERT",
       "jobs:SELECT",
       "jobs:UPDATE",
+      "role_drops:DELETE",
+      "role_drops:INSERT",
       "sources:SELECT",
     ]);
   });
@@ -98,6 +101,7 @@ describe("(a) hb_sync has exactly the planned grants", () => {
       ORDER BY 1, 3, 2`;
     expect(rows.map((r) => `${r.t}.${r.c}:${r.p}`)).toEqual([
       "opportunities.job_id:SELECT",
+      "role_drops.source_id:SELECT",
       "sources.last_count:UPDATE",
       "sources.last_dropped:UPDATE",
       "sources.last_error:UPDATE",
@@ -162,6 +166,9 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
       "DELETE FROM facts",
       "UPDATE users SET full_name = 'x'",
       "UPDATE tasks SET step = 'x'",
+      "INSERT INTO eligibility_overrides DEFAULT VALUES",
+      "DELETE FROM eligibility_overrides",
+      "UPDATE role_drops SET title = 'x'",
     ];
     const codes = await Promise.all(statements.map((s) => failure(run(s))));
     expect(Object.fromEntries(statements.map((s, i) => [s, codes[i]]))).toEqual(
@@ -179,11 +186,13 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
     const statements: string[] = [];
     for (const table of await publicTables()) {
       const writable = table === "jobs" || table === "job_listings";
+      // Sync replaces role drops (insert and delete only); it may never update them.
+      const replaceOnly = table === "role_drops";
       statements.push(`TRUNCATE "${table}"`);
       if (writable) continue;
-      if (table !== "ai_calls") statements.push(`INSERT INTO "${table}" DEFAULT VALUES`);
+      if (table !== "ai_calls" && !replaceOnly) statements.push(`INSERT INTO "${table}" DEFAULT VALUES`);
       statements.push(`UPDATE "${table}" SET "${columnOf.get(table)}" = "${columnOf.get(table)}" WHERE false`);
-      statements.push(`DELETE FROM "${table}" WHERE false`);
+      if (!replaceOnly) statements.push(`DELETE FROM "${table}" WHERE false`);
     }
     statements.push("UPDATE sources SET label = label WHERE false", "UPDATE sources SET enabled = enabled WHERE false");
     const results: Record<string, string> = {};
@@ -195,6 +204,8 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
     expect(await failure(run("SELECT full_name FROM users"))).toBe("42501");
     expect(await failure(run("SELECT notes FROM opportunities"))).toBe("42501");
     expect(await failure(run("SELECT text FROM facts"))).toBe("42501");
+    expect(await failure(run("SELECT job_id FROM eligibility_overrides"))).toBe("42501");
+    expect(await failure(run("SELECT title FROM role_drops"))).toBe("42501");
   });
 
   test("the granted writes succeed", async () => {
@@ -204,6 +215,7 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
       "DELETE FROM job_listings WHERE false",
       "SELECT id, target_titles, role_families, exclude_title_words FROM users",
       "SELECT job_id FROM opportunities",
+      "DELETE FROM role_drops WHERE source_id IS NULL",
     ];
     for (const s of allowed) expect(await failure(run(s))).toBe("succeeded");
   });
@@ -440,6 +452,11 @@ describe("(c) refresh never changes user tables", () => {
     await testSql()`
       INSERT INTO opportunities (user_id, job_id, dismissed_at, dismiss_reason)
       VALUES (${deps.userId}, ${dismissed.id}, ${now}, 'wrong_stack')`;
+
+    // An override to Matches (slice 13) on a job that stays for every scenario.
+    const kept = await jobByTitle("Platform Engineer");
+    if (!kept) throw new Error("no Platform Engineer");
+    await testSql()`INSERT INTO eligibility_overrides (user_id, job_id) VALUES (${deps.userId}, ${kept.id})`;
   }
 
   const hours = (h: number) => new Date(Date.parse("2026-10-16T08:00:00Z") + h * 3_600_000);
@@ -454,6 +471,10 @@ describe("(c) refresh never changes user tables", () => {
     for (const table of SYNC_TABLES) expect(Object.keys(before)).not.toContain(table);
     expect(before.opportunities).toStartWith("4 rows");
     expect(before.output_facts).toStartWith("3 rows");
+    expect(before.eligibility_overrides).toStartWith("1 rows");
+    // The role filter dropped Acme's designer at seeding, and sync wrote it as hb_sync.
+    const dropped = await testSql()<{ title: string }[]>`SELECT title FROM role_drops ORDER BY title`;
+    expect(dropped.map((d) => d.title)).toContain("Product Designer");
 
     // 1. Normal: the same postings again.
     await refresh(hours(1));

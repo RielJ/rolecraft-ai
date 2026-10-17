@@ -28,6 +28,11 @@ export type MatchJob = {
   seniority: JobSeniority | null;
   minYears: number | null;
   eligibility: Eligibility;
+  /**
+   * The user moved this excluded job to Matches (decision 53). The verdict still stands as the
+   * rules read it, but it no longer makes the job Weak; it caps the level at Possible instead.
+   */
+  eligibilityOverridden?: boolean;
   /** Set when the role filter says "unsure" for this job; it caps the level at Possible. */
   roleUnclear: { reason: string } | null;
 };
@@ -170,7 +175,10 @@ function yearsReason(p: Prepared, job: MatchJob): Reason | null {
   return { sign: "negative", text: `Asks for ${job.minYears}+ years of experience; you have ${p.years} ${unit}` };
 }
 
-function eligibilityReason(eligibility: Eligibility): { reason: Reason; cap: boolean; weak: boolean } {
+function eligibilityReason(
+  eligibility: Eligibility,
+  overridden: boolean,
+): { reason: Reason; cap: boolean; weak: boolean } {
   switch (eligibility) {
     case "ph":
       return { reason: { sign: "positive", text: "Open to the Philippines" }, cap: false, weak: false };
@@ -191,7 +199,16 @@ function eligibilityReason(eligibility: Eligibility): { reason: Reason; cap: boo
         weak: false,
       };
     case "excluded":
-      return { reason: { sign: "negative", text: "Does not hire from the Philippines" }, cap: false, weak: true };
+      return overridden
+        ? {
+            reason: {
+              sign: "negative",
+              text: "The posting limits where it hires, and you moved it to Matches, so it is Possible at best",
+            },
+            cap: true,
+            weak: false,
+          }
+        : { reason: { sign: "negative", text: "Does not hire from the Philippines" }, cap: false, weak: true };
     default: {
       const _exhaustive: never = eligibility;
       return _exhaustive;
@@ -217,7 +234,7 @@ function score(p: Prepared, job: MatchJob): Match {
   const years = yearsReason(p, job);
   if (years) reasons.push(years);
 
-  const eligibility = eligibilityReason(job.eligibility);
+  const eligibility = eligibilityReason(job.eligibility, job.eligibilityOverridden === true);
   reasons.push(eligibility.reason);
   if (job.roleUnclear) {
     reasons.push({ sign: "negative", text: `Role unclear (${job.roleUnclear.reason}), so it is Possible at best` });

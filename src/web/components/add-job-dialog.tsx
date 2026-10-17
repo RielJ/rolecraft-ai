@@ -34,11 +34,17 @@ function pasteReason(result: Extract<AddLinkResult, { kind: "needs_paste" }>): s
 export function AddJobDialog({
   open,
   instant = false,
+  initialUrl = "",
   onOpenChange,
 }: {
   open: boolean;
   /** Opened by a key: no motion. */
   instant?: boolean;
+  /**
+   * The link filled in when the dialog opens, e.g. a role drop's posting (decision 53). Read on
+   * mount, so a parent that changes it gives the dialog a new `key`.
+   */
+  initialUrl?: string;
   onOpenChange: (open: boolean) => void;
 }) {
   const id = useId();
@@ -46,7 +52,7 @@ export function AddJobDialog({
   const fromLink = useAddJobFromLink();
   const fromPaste = useAddPastedJob();
   const [mode, setMode] = useState<Mode>("link");
-  const [form, setForm] = useState<Form>(EMPTY);
+  const [form, setForm] = useState<Form>({ ...EMPTY, url: initialUrl });
   const [reason, setReason] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const pending = fromLink.isPending || fromPaste.isPending;
@@ -55,7 +61,7 @@ export function AddJobDialog({
 
   function reset() {
     setMode("link");
-    setForm(EMPTY);
+    setForm({ ...EMPTY, url: initialUrl });
     setReason(null);
     setProblem(null);
   }

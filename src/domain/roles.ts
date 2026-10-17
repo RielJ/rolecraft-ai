@@ -1,4 +1,5 @@
 import type { RoleFamily } from "@/shared/enums";
+import { roleFamilyLabel } from "@/shared/labels";
 import { normalize } from "./text";
 
 /**
@@ -216,9 +217,8 @@ export function roleFit({
   const head = headFamily(title);
   const family: RoleFamily | "unknown" = head ?? (matched.size === 1 ? ([...matched][0] ?? "unknown") : "unknown");
 
-  const lowerTitle = title.toLowerCase();
-  const excluded = excludeWords.map((x) => x.trim()).find((x) => x !== "" && w(escapeRegex(x)).test(lowerTitle));
-  if (excluded !== undefined) return { fit: "drop", family, reason: `title contains "${excluded}"` };
+  const excluded = excludeWordIn({ title, excludeWords });
+  if (excluded !== null) return { fit: "drop", family, reason: `title contains "${excluded}"` };
 
   if (families.length === 0) return { fit: "keep", family, reason: "no role families picked" };
   if (matched.size === 0) return { fit: "unsure", family, reason: "no role family in the title" };
@@ -250,6 +250,36 @@ export function roleFit({
     return { fit: "unsure", family, reason: `title mixes ${list(unpickedInTitle)}, none of them picked` };
   }
   return { fit: "drop", family, reason: `${list(unpickedInTitle)} is not one of your role families` };
+}
+
+/** The first exclude word the title contains, as the user typed it (trimmed), or null. */
+export function excludeWordIn({
+  title,
+  excludeWords,
+}: {
+  title: string;
+  excludeWords: readonly string[];
+}): string | null {
+  const lowerTitle = title.toLowerCase();
+  return excludeWords.map((x) => x.trim()).find((x) => x !== "" && w(escapeRegex(x)).test(lowerTitle)) ?? null;
+}
+
+/**
+ * The Board's group for a posting sync dropped (decision 53): the exclude word in its title
+ * ("Title: intern"), or else the family that is not one of the user's ("Role: Design").
+ */
+export function roleDropReason({
+  title,
+  fit,
+  excludeWords,
+}: {
+  title: string;
+  fit: RoleFit;
+  excludeWords: readonly string[];
+}): string {
+  const word = excludeWordIn({ title, excludeWords });
+  if (word !== null) return `Title: ${word}`;
+  return fit.family === "unknown" ? "Role: not one of yours" : `Role: ${roleFamilyLabel(fit.family)}`;
 }
 
 function escapeRegex(text: string): string {

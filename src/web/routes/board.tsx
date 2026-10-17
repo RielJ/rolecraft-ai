@@ -7,6 +7,7 @@ import { OPEN_STATUSES, OPPORTUNITY_STATUSES, type OpportunityStatus, OUTCOMES }
 import { metricsLine, outcomeLabel, rateTypeLabel, statusLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { AddJobDialog } from "../components/add-job-dialog";
+import { FilteredOut } from "../components/filtered-out";
 import { SetupChecklist } from "../components/setup-checklist";
 import { cn } from "../lib/utils";
 import { useBoard, useBoardMetrics, useChangeStatus } from "../queries";
@@ -352,6 +353,7 @@ export function BoardPage() {
           </div>
         </div>
       )}
+      {board.isSuccess && <FilteredOut />}
     </div>
   );
 }

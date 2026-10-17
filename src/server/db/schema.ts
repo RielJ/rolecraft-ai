@@ -238,6 +238,10 @@ export const jobs = pgTable(
     index("jobs_search").using("gin", t.search),
     index("jobs_open").on(t.userId, t.firstSeenAt.desc()).where(sql`closed_at IS NULL`),
     index("jobs_closed").on(t.closedAt).where(sql`closed_at IS NOT NULL`),
+    // The Board's "Filtered out" excluded jobs, newest first (decision 53).
+    index("jobs_excluded")
+      .on(t.userId, t.firstSeenAt.desc())
+      .where(sql`eligibility = 'excluded' AND closed_at IS NULL`),
   ],
 );
 
@@ -302,6 +306,48 @@ export const jobListings = pgTable(
     index("job_listings_job").on(t.jobId),
   ],
 );
+
+/**
+ * Postings the role filter dropped at sync, as slim rows (decisions 44 and 53). Each ok run of a
+ * source replaces that source's rows, so they stay bounded by feed size. Sync may only insert and
+ * delete them (drizzle/0006_filtered_sync_grants.sql).
+ */
+export const roleDrops = pgTable(
+  "role_drops",
+  {
+    sourceId: uuid()
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" })
+      .$type<SourceId>(),
+    externalId: text().notNull(),
+    userId: userRef(),
+    title: text().notNull(),
+    company: text().notNull(),
+    /** The posting on the board, for Add by link. */
+    url: text().notNull(),
+    /** The group it shows under: "Title: intern" for an exclude word, "Role: Sales" for a family. */
+    reason: text().notNull(),
+    /** When the board says it was posted, or else the run that saw it. Orders "newest". */
+    seenAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sourceId, t.externalId] }),
+    index("role_drops_reason").on(t.userId, t.reason, t.seenAt.desc()),
+  ],
+);
+
+/**
+ * An excluded job the user moved to Matches (decision 53). User-owned: the sync role has no grant
+ * on it, so no sync undoes it. Not "touched" for the 60-day prune (decision 15); it goes with its job.
+ */
+export const eligibilityOverrides = pgTable("eligibility_overrides", {
+  jobId: uuid()
+    .primaryKey()
+    .references(() => jobs.id, { onDelete: "cascade" })
+    .$type<JobId>(),
+  userId: userRef(),
+  createdAt: createdAt(),
+});
 
 export const opportunities = pgTable(
   "opportunities",

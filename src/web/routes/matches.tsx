@@ -11,6 +11,7 @@ import { ReadingPane } from "../components/reading-pane";
 import { SetupChecklist } from "../components/setup-checklist";
 import { ShortcutSheet } from "../components/shortcut-sheet";
 import { setAddJobOpen } from "../components/top-bar";
+import { useSettled } from "../lib/use-settled";
 import {
   useDismissJob,
   useMatchDetail,
@@ -39,16 +40,6 @@ function ignoreKeys(e: KeyboardEvent): boolean {
   if (target.isContentEditable || target.closest("input, textarea, select, [role='dialog']")) return true;
   // Enter and Space keep their own meaning on buttons and links.
   return (e.key === "Enter" || e.key === " ") && target.closest("button, a") !== null;
-}
-
-/** Wait for typing to settle before searching. */
-function useSettled<T>(value: T, ms: number): T {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
 }
 
 /** The posting's page for `v`: only an http(s) address from the job's own data opens. */

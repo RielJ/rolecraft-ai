@@ -150,6 +150,15 @@ describe("matchJob: caps", () => {
     expect(level({ eligibility: "excluded" })).toBe("weak");
   });
 
+  test("excluded but moved to Matches by the user caps at Possible instead (decision 53)", () => {
+    expect(level({ eligibility: "excluded", eligibilityOverridden: true })).toBe("possible");
+    expect(texts({ eligibility: "excluded", eligibilityOverridden: true })).toContain(
+      "negative: The posting limits where it hires, and you moved it to Matches, so it is Possible at best",
+    );
+    // The flag means nothing on a verdict that is not excluded.
+    expect(level({ eligibilityOverridden: true })).toBe("strong");
+  });
+
   test("role unsure caps at Possible and says why", () => {
     const roleUnclear = { reason: "title mixes engineering and design" };
     expect(level({ roleUnclear })).toBe("possible");

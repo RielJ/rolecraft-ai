@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { ApiErrorBody } from "@/shared/api";
 import { AppError, type Deps } from "../services/context";
 import { boardRoutes } from "./routes/board";
+import { filteredRoutes } from "./routes/filtered";
 import { jobRoutes } from "./routes/jobs";
 import { matchRoutes } from "./routes/matches";
 import { profileRoutes } from "./routes/profile";
@@ -19,6 +20,7 @@ export function createApp(deps: Deps) {
     .route("/", jobRoutes(deps))
     .route("/", matchRoutes(deps))
     .route("/", boardRoutes(deps))
+    .route("/", filteredRoutes(deps))
     .route("/", workspaceRoutes(deps))
     .route("/", settingsRoutes(deps))
     .route("/", sourceRoutes(deps))

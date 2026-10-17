@@ -6,7 +6,7 @@ import { DESCRIPTION_HEAD_CHARS, roleFit } from "@/domain/roles";
 import type { JobId, MatchDetail, MatchItem, MatchList, MatchQuery, Money } from "@/shared/api";
 import type { RoleFamily } from "@/shared/enums";
 import { SOURCE_SITES } from "@/shared/labels";
-import { facts, jobListings, jobs, opportunities, sources, users } from "../db/schema";
+import { eligibilityOverrides, facts, jobListings, jobs, opportunities, sources, users } from "../db/schema";
 import { type Deps, notFound } from "./context";
 import { jobFacts } from "./jobs";
 
@@ -147,6 +147,7 @@ function matchJobOf(
     "eligibility"
   >,
   unclear: { reason: string } | null,
+  overridden: boolean,
 ): MatchJob {
   return {
     title: row.title,
@@ -154,9 +155,13 @@ function matchJobOf(
     seniority: row.seniority,
     minYears: row.minYears,
     eligibility: row.eligibility,
+    eligibilityOverridden: overridden,
     roleUnclear: unclear,
   };
 }
+
+/** The user moved this job to Matches from Filtered out (decision 53): it is no longer hidden as excluded. */
+const overriddenColumn = sql<boolean>`${eligibilityOverrides.jobId} IS NOT NULL`;
 
 /**
  * The pay filter in force. The page's value wins; without one, the minimum pay saved on Profile
@@ -193,9 +198,11 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
         ...MATCH_COLUMNS,
         hit: q === "" ? sql<boolean>`true` : sql<boolean>`${jobs.search} @@ ${tsQuery}`,
         rank: q === "" ? sql<number>`0` : sql<number>`ts_rank(${jobs.search}, ${tsQuery})`,
+        overridden: overriddenColumn,
       })
       .from(jobs)
       .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
+      .leftJoin(eligibilityOverrides, eq(eligibilityOverrides.jobId, jobs.id))
       .where(and(eq(jobs.userId, deps.userId), isNull(jobs.closedAt), isNull(opportunities.id))),
   ]);
 
@@ -204,12 +211,13 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
   const counts = { open: rows.length, excluded: 0, excludedOpen: 0, unsure: 0, belowPay: 0, search: 0 };
   const shown: (MatchItem & { rank: number; seenAt: number })[] = [];
   for (const row of rows) {
-    if (row.eligibility === "excluded") counts.excludedOpen++;
+    const excluded = row.eligibility === "excluded" && !row.overridden;
+    if (excluded) counts.excludedOpen++;
     if (!row.hit) {
       counts.search++;
       continue;
     }
-    if (row.eligibility === "excluded" && query.excluded !== true) {
+    if (excluded && query.excluded !== true) {
       counts.excluded++;
       continue;
     }
@@ -226,7 +234,7 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       counts.belowPay++;
       continue;
     }
-    const match = score(matchJobOf(row, unclear));
+    const match = score(matchJobOf(row, unclear, row.overridden));
     shown.push({
       id: row.id,
       title: row.title,
@@ -271,9 +279,10 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
 export async function matchDetail(deps: Deps, jobId: JobId): Promise<MatchDetail> {
   const [[row], t, listings] = await Promise.all([
     deps.db
-      .select({ job: jobs, opportunityId: opportunities.id })
+      .select({ job: jobs, opportunityId: opportunities.id, overridden: overriddenColumn })
       .from(jobs)
       .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
+      .leftJoin(eligibilityOverrides, eq(eligibilityOverrides.jobId, jobs.id))
       .where(and(eq(jobs.userId, deps.userId), eq(jobs.id, jobId))),
     loadTargeting(deps),
     seenOn(deps, [jobId]),
@@ -285,7 +294,7 @@ export async function matchDetail(deps: Deps, jobId: JobId): Promise<MatchDetail
     title: job.title,
     descriptionHead: job.description.slice(0, DESCRIPTION_HEAD_CHARS),
   });
-  const match = matcher(t.profile)(matchJobOf(job, unclear));
+  const match = matcher(t.profile)(matchJobOf(job, unclear, row.overridden));
   return {
     id: job.id,
     title: job.title,

@@ -3,12 +3,12 @@ import { z } from "zod";
 import { acceptAiVerdict } from "@/domain/eligibility";
 import { type Derived, derive } from "@/domain/posting";
 import { buildEligibilityPrompt, ELIGIBILITY_MAX_TOKENS } from "@/domain/prompts";
-import { matchesKeywords, roleFit } from "@/domain/roles";
+import { matchesKeywords, roleDropReason, roleFit } from "@/domain/roles";
 import { type FetchOutcome, type PlannedPosting, planSourceRun, type SourcePlan } from "@/domain/sync-plan";
 import type { AiPassResult, JobId, RefreshResult, RefreshSourceResult } from "@/shared/api";
 import { BUILTIN_SOURCE_KINDS, type SourceStatus } from "@/shared/enums";
 import { type Posting, SourceError } from "../adapters/sources";
-import { jobListings, jobs, opportunities, sources, users } from "../db/schema";
+import { jobListings, jobs, opportunities, roleDrops, sources, users } from "../db/schema";
 import { asSync, type SyncTx } from "../db/sync-session";
 import { estimateUsd, loadAiTierConfig, monthSpend, runAi } from "./ai";
 import { parseEligibilityReply } from "./ai-replies";
@@ -17,7 +17,8 @@ import type { TaskContext } from "./tasks";
 
 /**
  * The refresh pipeline (PLAN.md section 3.1). Every statement runs as `hb_sync` through
- * `asSync`, which may write only jobs, listings and the `last_*` columns of sources (section 2).
+ * `asSync`, which may write only jobs, listings, role drops and the `last_*` columns of sources
+ * (section 2, drizzle/0006_filtered_sync_grants.sql).
  * This module may not import the app-role client (architecture test); task progress goes
  * through `ctx.step`, which the task module owns. Fetching happens outside any transaction, and
  * each source is applied in its own, so an interrupted refresh leaves every source either fully
@@ -81,6 +82,11 @@ export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step" |
 // ---------- one source ----------
 
 type Normalized = { posting: Posting; derived: Derived };
+/** A posting the role filter dropped, as the slim row the Board shows (decision 53). */
+type Drop = { title: string; company: string; url: string; reason: string; postedAt: Date | null };
+type Fetched = FetchOutcome & { normalized?: Map<string, Normalized>; drops?: Map<string, Drop> };
+/** Role drops go in batches, well under Postgres' 65535 parameters per statement. */
+const DROP_BATCH = 1000;
 /** One source's summary, and the jobs it inserted (for the AI eligibility pass). */
 type SourceRun = { result: RefreshSourceResult; newJobIds: JobId[] };
 
@@ -122,7 +128,7 @@ async function refreshSource({
         ).map((l) => l.externalId),
       )
     : new Set<string>();
-  const fetched: FetchOutcome & { normalized?: Map<string, Normalized> } = adapter
+  const fetched: Fetched = adapter
     ? await fetchAndFilter({ adapter, source, targeting, known })
     : { kind: "failed", error: `${source.label} has no reader yet.` };
 
@@ -167,7 +173,16 @@ async function refreshSource({
       candidates,
       now,
     });
-    return applyPlan({ tx, deps, source, plan, normalized: fetched.normalized ?? new Map(), now, base });
+    return applyPlan({
+      tx,
+      deps,
+      source,
+      plan,
+      normalized: fetched.normalized ?? new Map(),
+      drops: fetched.drops ?? new Map(),
+      now,
+      base,
+    });
   });
 }
 
@@ -184,7 +199,7 @@ async function fetchAndFilter({
   source: SourceRow;
   targeting: Targeting;
   known: ReadonlySet<string>;
-}): Promise<FetchOutcome & { normalized?: Map<string, Normalized> }> {
+}): Promise<Fetched> {
   const keywords = source.keywords ?? targeting.targetTitles;
   let result: Awaited<ReturnType<typeof adapter.fetch>>;
   try {
@@ -202,6 +217,7 @@ async function fetchAndFilter({
 
   const fetchedIds = result.postings.map((p) => p.externalId);
   const normalized = new Map<string, Normalized>();
+  const drops = new Map<string, Drop>();
   let dropped = 0;
   for (const posting of result.postings) {
     if (isBuiltin(source.kind) && !matchesKeywords({ title: posting.title, tags: posting.tags, keywords })) continue;
@@ -214,6 +230,13 @@ async function fetchAndFilter({
     });
     if (fit.fit === "drop") {
       dropped++;
+      drops.set(posting.externalId, {
+        title: posting.title,
+        company: posting.company,
+        url: posting.listingUrl,
+        reason: roleDropReason({ title: posting.title, fit, excludeWords: targeting.excludeTitleWords }),
+        postedAt: posting.postedAt,
+      });
       continue;
     }
     if (normalized.has(posting.externalId)) continue;
@@ -236,6 +259,7 @@ async function fetchAndFilter({
     dropped,
     postings,
     normalized,
+    drops,
   };
 }
 
@@ -251,6 +275,7 @@ async function applyPlan({
   source,
   plan,
   normalized,
+  drops,
   now,
   base,
 }: {
@@ -259,6 +284,7 @@ async function applyPlan({
   source: SourceRow;
   plan: SourcePlan;
   normalized: Map<string, Normalized>;
+  drops: Map<string, Drop>;
   now: Date;
   base: Pick<RefreshSourceResult, "sourceId" | "label">;
 }): Promise<SourceRun> {
@@ -349,6 +375,7 @@ async function applyPlan({
       .where(and(eq(jobListings.sourceId, source.id), inArray(jobListings.externalId, plan.missing)));
   }
 
+  await replaceDrops(tx, { source, drops, now, userId: deps.userId });
   const { closed, reopened } = await recomputeClosed(tx, source.id);
   await setStatus(tx, source.id, {
     lastRunAt: now,
@@ -396,6 +423,29 @@ async function insertListing(
     firstSeenAt: now,
     lastSeenAt: now,
   });
+}
+
+/**
+ * An ok run replaces this source's role drops; other sources' rows stay (decision 53). A failed,
+ * rate-limited, suspicious or skipped run never reaches here, so its drops stay as they were.
+ * No RETURNING or ON CONFLICT: hb_sync may only insert and delete these rows.
+ */
+async function replaceDrops(
+  tx: SyncTx,
+  { source, drops, now, userId }: { source: SourceRow; drops: Map<string, Drop>; now: Date; userId: Deps["userId"] },
+): Promise<void> {
+  await tx.delete(roleDrops).where(eq(roleDrops.sourceId, source.id));
+  // Rows are replaced on every run, so "newest" goes by the posting's date where the board gives one.
+  const rows = [...drops].map(([externalId, { postedAt, ...drop }]) => ({
+    sourceId: source.id,
+    externalId,
+    userId,
+    ...drop,
+    seenAt: postedAt ?? now,
+  }));
+  for (let i = 0; i < rows.length; i += DROP_BATCH) {
+    await tx.insert(roleDrops).values(rows.slice(i, i + DROP_BATCH));
+  }
 }
 
 /**

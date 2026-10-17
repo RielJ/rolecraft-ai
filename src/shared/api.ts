@@ -856,7 +856,10 @@ export const MatchList = z.object({
     open: z.number().int(),
     /** Of those, hidden because they exclude the Philippines and `excluded` is off. */
     excluded: z.number().int(),
-    /** Open jobs not yet saved or dismissed that exclude the Philippines, whatever the filters (decision 53). */
+    /**
+     * Open jobs not yet saved or dismissed that exclude the Philippines, whatever the filters
+     * (decision 53). A job the user moved to Matches from Filtered out no longer counts.
+     */
     excludedOpen: z.number().int(),
     /** Hidden because the role is unclear and `unsure` is off. */
     unsure: z.number().int(),
@@ -904,6 +907,70 @@ export type UndoInput = z.infer<typeof UndoInput>;
 
 export const SavedJob = z.object({ opportunityId: OpportunityId });
 export type SavedJob = z.infer<typeof SavedJob>;
+
+// ---------- Filtered out (decision 53) ----------
+
+/** Each group of the Board's "Filtered out" section shows at most this many items, newest first. */
+export const FILTERED_GROUP_LIMIT = 50;
+
+/** `GET /api/filtered`. The search matches title or company across every item, not just the shown ones. */
+export const FilteredQuery = z.object({ q: z.string().trim().max(200).optional() });
+export type FilteredQuery = z.infer<typeof FilteredQuery>;
+
+/** A real job whose eligibility rule said it does not hire from the Philippines. */
+export const ExcludedItem = z.object({
+  kind: z.literal("excluded"),
+  jobId: JobId,
+  title: z.string(),
+  company: z.string(),
+  phrase: z.string().nullable(),
+  seenAt: z.string(),
+});
+export type ExcludedItem = z.infer<typeof ExcludedItem>;
+
+/** A slim row the role filter dropped at sync (decision 44). */
+export const RoleDropItem = z.object({
+  kind: z.literal("role_drop"),
+  sourceId: SourceId,
+  externalId: z.string(),
+  title: z.string(),
+  company: z.string(),
+  url: z.string(),
+  /** The source's label. */
+  source: z.string(),
+  seenAt: z.string(),
+});
+export type RoleDropItem = z.infer<typeof RoleDropItem>;
+
+const groupOf = <K extends string, T extends z.ZodType>(kind: K, item: T) =>
+  z.object({
+    kind: z.literal(kind),
+    /** "US only", "Title: sales", "Role: Design". */
+    reason: z.string(),
+    /** Items in the group that match the search; `items` holds the newest of them. */
+    count: z.number().int(),
+    items: z.array(item),
+  });
+
+export const FilteredGroup = z.discriminatedUnion("kind", [
+  groupOf("excluded", ExcludedItem),
+  groupOf("role_drop", RoleDropItem),
+]);
+export type FilteredGroup = z.infer<typeof FilteredGroup>;
+
+export const FilteredList = z.object({
+  /** Every filtered-out item, whatever the search. */
+  total: z.number().int(),
+  /** Excluded groups first, then role drops; largest group first within each. */
+  groups: z.array(FilteredGroup),
+});
+export type FilteredList = z.infer<typeof FilteredList>;
+
+/** `POST /api/filtered/overrides`: show an excluded job in Matches from now on. */
+export const OverrideInput = z.object({ jobId: JobId });
+export type OverrideInput = z.infer<typeof OverrideInput>;
+export const OverrideResult = z.object({ jobId: JobId });
+export type OverrideResult = z.infer<typeof OverrideResult>;
 
 // ---------- First run (section 4, Setup checklist) ----------
 

@@ -36,6 +36,20 @@
       "when": 1792192950759,
       "tag": "0004_sync_role",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792256529402,
+      "tag": "0005_filtered_out",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792256529847,
+      "tag": "0006_filtered_sync_grants",
+      "breakpoints": true
     }
   ]
 }

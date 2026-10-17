@@ -10,6 +10,7 @@ import {
   type ChangeStatusInput,
   type DraftInput,
   type FactId,
+  FilteredList,
   type ItemId,
   type JobId,
   MatchDetail,
@@ -18,6 +19,7 @@ import {
   MergeResult,
   type OpportunityId,
   type OutputId,
+  OverrideResult,
   type PasteJobInput,
   ProfileDto,
   RefreshDto,
@@ -45,6 +47,9 @@ export const keys = {
   board: ["board"] as const,
   // Under "board", so every move or Ready that invalidates the board refetches the line too.
   boardMetrics: ["board", "metrics"] as const,
+  // Under "board" too: a Refresh, a save or a move refetches the Filtered out section.
+  filtered: ["board", "filtered"] as const,
+  filteredList: (q: string) => ["board", "filtered", q] as const,
   workspace: (id: OpportunityId) => ["workspace", id] as const,
   settings: ["settings"] as const,
   sources: ["sources"] as const,
@@ -480,6 +485,30 @@ export const useUndoJob = () =>
   useMatchMutation(({ id, action }: { id: JobId; action: "save" | "dismiss" }) =>
     unwrap(client.api.jobs[":id"].undo.$post({ param: { id }, json: { action } }), z.object({ ok: z.literal(true) })),
   );
+
+// ---------- Filtered out (decision 53) ----------
+
+/** The Board's Filtered out section. The old groups stay on screen while a new search loads. */
+export function useFiltered(q: string) {
+  return useQuery({
+    queryKey: keys.filteredList(q),
+    queryFn: () => unwrap(client.api.filtered.$get({ query: q === "" ? {} : { q } }), FilteredList),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Show an excluded job in Matches from now on. */
+export function useOverrideEligibility() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: JobId) => unwrap(client.api.filtered.overrides.$post({ json: { jobId } }), OverrideResult),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.filtered }),
+        qc.invalidateQueries({ queryKey: keys.matches }),
+      ]),
+  });
+}
 
 /** The newest refresh. Polls while it runs; the top bar shows its step. */
 export function useRefresh() {

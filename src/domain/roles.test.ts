@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { z } from "zod";
 import { RoleFamily } from "@/shared/enums";
-import { headFamily, matchesKeywords, ROLE_RULES, roleFit } from "./roles";
+import { excludeWordIn, headFamily, matchesKeywords, ROLE_RULES, roleDropReason, roleFit } from "./roles";
 
 const fit = (
   title: string,
@@ -13,6 +13,18 @@ const fit = (
     excludeWords = [],
   }: { tags?: string[]; description?: string; excludeWords?: string[] } = {},
 ) => roleFit({ title, tags, description, families, excludeWords });
+
+describe("role drop reasons (decision 53)", () => {
+  test("the exclude word, as typed, else the family that is not picked", () => {
+    const excludeWords = [" Intern ", "sales"];
+    const intern = fit("Software Engineering Intern", ["engineering"], { excludeWords });
+    expect(roleDropReason({ title: "Software Engineering Intern", fit: intern, excludeWords })).toBe("Title: Intern");
+    const designer = fit("Product Designer", ["engineering"], { excludeWords });
+    expect(roleDropReason({ title: "Product Designer", fit: designer, excludeWords })).toBe("Role: Design");
+    expect(excludeWordIn({ title: "International Sales Engineer", excludeWords })).toBe("sales");
+    expect(excludeWordIn({ title: "Backend Engineer", excludeWords })).toBeNull();
+  });
+});
 
 describe("roleFit: one fixture per rule (section 3.7a)", () => {
   test("drop: the title contains an exclude word, whatever the family", () => {
