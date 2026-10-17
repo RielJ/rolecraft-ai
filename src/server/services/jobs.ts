@@ -3,15 +3,25 @@ import { applyUrlKey, type DuplicateCandidate, duplicateDiff, isAutoMerge, likel
 import { toManila } from "@/domain/hours";
 import { type FxRates, monthlyInView, type Pay } from "@/domain/pay";
 import { type Derived, derive, type JobFields } from "@/domain/posting";
-import type { AddJobResult, AddLinkInput, AddLinkResult, JobFacts, OpportunityId, PasteJobInput } from "@/shared/api";
-import { FILE_KINDS } from "@/shared/enums";
+import type {
+  AddJobResult,
+  AddLinkInput,
+  AddLinkResult,
+  JobFacts,
+  JobId,
+  OpportunityId,
+  PasteJobInput,
+  SavedJob,
+  UndoInput,
+} from "@/shared/api";
+import { type DismissReason, FILE_KINDS } from "@/shared/enums";
 import { blockedSite } from "@/shared/hosts";
 import { eligibilityLabel } from "@/shared/labels";
 import { HttpError } from "../adapters/http";
 import { readPage } from "../adapters/page-reader";
 import type { Db } from "../db/client";
 import { jobs, opportunities, outputs, users } from "../db/schema";
-import type { Deps } from "./context";
+import { AppError, type Deps, notFound } from "./context";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type JobRow = typeof jobs.$inferSelect;
@@ -19,15 +29,44 @@ type JobRow = typeof jobs.$inferSelect;
 /** Section 3.2 step 5: less description than this is too little to work from. */
 const MIN_DESCRIPTION_CHARS = 600;
 
-/** The job's opportunity, created Saved with its three file rows when the job has none yet. */
-async function ensureOpportunity(tx: Tx, deps: Deps, jobId: JobRow["id"]): Promise<OpportunityId> {
-  const [existing] = await tx
-    .select({ id: opportunities.id })
-    .from(opportunities)
-    .where(and(eq(opportunities.userId, deps.userId), eq(opportunities.jobId, jobId)));
-  if (existing) return existing.id;
+/** The three file rows a job gets when it lands on the board. */
+async function addFileRows(tx: Tx, deps: Deps, opportunityId: OpportunityId): Promise<void> {
+  await tx
+    .insert(outputs)
+    .values(FILE_KINDS.map((kind, position) => ({ userId: deps.userId, opportunityId, kind, position })));
+}
 
+/**
+ * The job's opportunity on the board. A job with none gets one, Saved, with its three file rows.
+ * A dismissed job goes back on the board as Saved (decision 14: dismissing only hides it).
+ */
+async function ensureOpportunity(tx: Tx, deps: Deps, jobId: JobRow["id"]): Promise<OpportunityId> {
   const now = deps.clock.now();
+  const [existing] = await tx
+    .select({ id: opportunities.id, status: opportunities.status, history: opportunities.history })
+    .from(opportunities)
+    .where(and(eq(opportunities.userId, deps.userId), eq(opportunities.jobId, jobId)))
+    .for("update");
+  if (existing && existing.status !== null) return existing.id;
+  if (existing) {
+    await tx
+      .update(opportunities)
+      .set({
+        status: "saved",
+        statusChangedAt: now,
+        dismissedAt: null,
+        dismissReason: null,
+        history: [...existing.history, { at: now.toISOString(), from: null, to: "saved" }],
+      })
+      .where(eq(opportunities.id, existing.id));
+    const files = await tx
+      .select({ id: outputs.id })
+      .from(outputs)
+      .where(and(eq(outputs.opportunityId, existing.id), ne(outputs.kind, "answer")));
+    if (files.length === 0) await addFileRows(tx, deps, existing.id);
+    return existing.id;
+  }
+
   const [opportunity] = await tx
     .insert(opportunities)
     .values({
@@ -39,11 +78,7 @@ async function ensureOpportunity(tx: Tx, deps: Deps, jobId: JobRow["id"]): Promi
     })
     .returning({ id: opportunities.id });
   if (!opportunity) throw new Error("Could not save the job to the board.");
-  await tx
-    .insert(outputs)
-    .values(
-      FILE_KINDS.map((kind, position) => ({ userId: deps.userId, opportunityId: opportunity.id, kind, position })),
-    );
+  await addFileRows(tx, deps, opportunity.id);
   return opportunity.id;
 }
 
@@ -255,4 +290,92 @@ export async function jobFacts(deps: Deps, job: JobRow): Promise<JobFacts> {
     expiresAt: job.expiresAt?.toISOString() ?? null,
     possibleDuplicates: duplicates,
   };
+}
+
+// ---------- save, dismiss and undo from Matches (section 4, keys s, d and z) ----------
+
+async function ownJob(tx: Tx, deps: Deps, jobId: JobId): Promise<void> {
+  const [job] = await tx
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.userId, deps.userId), eq(jobs.id, jobId)));
+  if (!job) throw notFound("That job");
+}
+
+/** Save a match to the board as Saved. Saving a job already on the board returns it as it is. */
+export async function saveJob(deps: Deps, jobId: JobId): Promise<SavedJob> {
+  return deps.db.transaction(async (tx) => {
+    await ownJob(tx, deps, jobId);
+    return { opportunityId: await ensureOpportunity(tx, deps, jobId) };
+  });
+}
+
+/**
+ * Hide a match, with an optional reason (decision 14). The reason is stored but not used for
+ * ranking yet. A job on the board is closed there, not dismissed.
+ */
+export async function dismissJob(
+  deps: Deps,
+  { jobId, reason }: { jobId: JobId; reason: DismissReason | null },
+): Promise<void> {
+  const now = deps.clock.now();
+  await deps.db.transaction(async (tx) => {
+    await ownJob(tx, deps, jobId);
+    const [existing] = await tx
+      .select({ id: opportunities.id, status: opportunities.status })
+      .from(opportunities)
+      .where(eq(opportunities.jobId, jobId))
+      .for("update");
+    if (existing?.status) {
+      throw new AppError({
+        code: "on_board",
+        message: "This job is on your board, so it cannot be dismissed. Close it on the Board instead.",
+      });
+    }
+    if (existing) {
+      await tx
+        .update(opportunities)
+        .set({ dismissedAt: now, dismissReason: reason })
+        .where(eq(opportunities.id, existing.id));
+      return;
+    }
+    await tx.insert(opportunities).values({ userId: deps.userId, jobId, dismissedAt: now, dismissReason: reason });
+  });
+}
+
+/**
+ * Undo a save or a dismiss from Matches (key z): the job goes back in the list. A save is undone
+ * only while nothing was done on the board: still Saved, never moved, no drafts, questions or
+ * notes. Undoing what did not happen is a no-op, so a double press is harmless.
+ */
+export async function undoJob(deps: Deps, { jobId, action }: { jobId: JobId } & UndoInput): Promise<void> {
+  await deps.db.transaction(async (tx) => {
+    await ownJob(tx, deps, jobId);
+    const [opportunity] = await tx.select().from(opportunities).where(eq(opportunities.jobId, jobId)).for("update");
+    if (!opportunity) return;
+    if (action === "dismiss") {
+      if (opportunity.status === null) await tx.delete(opportunities).where(eq(opportunities.id, opportunity.id));
+      return;
+    }
+    if (opportunity.status === null) return;
+    const rows = await tx
+      .select({ kind: outputs.kind, body: outputs.body })
+      .from(outputs)
+      .where(eq(outputs.opportunityId, opportunity.id));
+    const untouched =
+      opportunity.status === "saved" &&
+      opportunity.history.length === 1 &&
+      opportunity.type === "job" &&
+      opportunity.notes === "" &&
+      opportunity.readyAt === null &&
+      rows.every((r) => r.kind !== "answer" && r.body === null);
+    if (!untouched) {
+      throw new AppError({
+        code: "has_work",
+        message: "This job has work on the board now, so it stays there. Move or close it on the Board.",
+      });
+    }
+    // Outputs cascade with the opportunity.
+    await tx.delete(opportunities).where(eq(opportunities.id, opportunity.id));
+  });
 }

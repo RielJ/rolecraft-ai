@@ -14,7 +14,7 @@ test.beforeEach(async () => {
   }
 });
 
-test("targeting, a company board, Refresh and the plain Matches list", async ({ page }) => {
+test("targeting, a company board, Refresh and the Matches list", async ({ page }) => {
   // Job targeting on the profile: engineering only.
   await page.goto("/profile");
   await page.getByRole("checkbox", { name: "Engineering" }).click();
@@ -41,10 +41,14 @@ test("targeting, a company board, Refresh and the plain Matches list", async ({ 
 
   // Matches lists what was kept, not the designer or the sales role.
   await page.getByRole("link", { name: "Matches" }).click();
-  const jobs = page.getByRole("list", { name: "Open jobs" });
-  await expect(jobs.getByRole("listitem")).toHaveCount(5);
+  const jobs = page.getByRole("listbox", { name: "Matches" });
+  await expect(jobs.getByRole("option")).toHaveCount(5);
   await expect(jobs).toContainText("Senior Frontend Engineer");
   await expect(jobs).toContainText("Technical Wizard");
+  // Unsure about the role: kept, with the chip, and the reason in the pane.
+  await jobs.getByRole("option", { name: /Technical Wizard/ }).click();
+  await expect(jobs.getByRole("option", { name: /Technical Wizard/ })).toContainText("Role unclear");
+  await expect(page.getByRole("region", { name: "Reading pane" })).toContainText("no role family in the title");
   await expect(jobs).not.toContainText("Product Designer");
   await expect(jobs).not.toContainText("Account Executive");
 

@@ -1,16 +1,20 @@
 import type { GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type {
+  DismissReason,
   Eligibility,
   ItemUsage,
+  MatchLevel,
   MustAnswer,
   OpportunityStatus,
   OpportunityType,
   Outcome,
   OutputKind,
+  PayPeriod,
   ProfileItemKind,
   RateType,
   RoleFamily,
   SourceStatus,
+  UserSeniority,
 } from "./enums";
 
 /** Shown on every contract (decision 19). The app tracks nothing about it. */
@@ -265,6 +269,84 @@ export function sourceStatusLabel(status: SourceStatus): string {
       return "Skipped, ran recently";
     default: {
       const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+/** A match level as Matches names it (section 3.7). */
+export function matchLevelLabel(level: MatchLevel): string {
+  switch (level) {
+    case "strong":
+      return "Strong";
+    case "possible":
+      return "Possible";
+    case "weak":
+      return "Weak";
+    default: {
+      const _exhaustive: never = level;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Dismiss reasons as the popover lists them (decision 14). */
+export function dismissReasonLabel(reason: DismissReason): string {
+  switch (reason) {
+    case "wrong_stack":
+      return "Wrong stack";
+    case "too_senior":
+      return "Too senior";
+    case "pay":
+      return "Pay";
+    case "location":
+      return "Location";
+    case "other":
+      return "Other";
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Your seniority on Profile (section 3.7). */
+export function userSeniorityLabel(seniority: UserSeniority): string {
+  switch (seniority) {
+    case "junior":
+      return "Junior";
+    case "mid":
+      return "Mid-level";
+    case "senior":
+      return "Senior";
+    case "lead":
+      return "Lead";
+    case "staff":
+      return "Staff";
+    case "principal":
+      return "Principal";
+    default: {
+      const _exhaustive: never = seniority;
+      return _exhaustive;
+    }
+  }
+}
+
+/** A pay period after an amount: "150,000 a month". */
+export function payPeriodLabel(period: PayPeriod): string {
+  switch (period) {
+    case "hour":
+      return "an hour";
+    case "day":
+      return "a day";
+    case "week":
+      return "a week";
+    case "month":
+      return "a month";
+    case "year":
+      return "a year";
+    default: {
+      const _exhaustive: never = period;
       return _exhaustive;
     }
   }

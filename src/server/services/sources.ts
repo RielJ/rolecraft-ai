@@ -154,13 +154,18 @@ export async function startRefresh(deps: Deps): Promise<TaskDto> {
 
 /** `GET /api/refresh`: the newest refresh and, once it is done, its summary. */
 export async function latestRefresh(deps: Pick<Deps, "db" | "userId">): Promise<RefreshDto> {
-  const [row] = await deps.db
-    .select({ id: tasks.id, result: tasks.result })
+  const [latest] = await deps.db
+    .select({ id: tasks.id })
     .from(tasks)
     .where(and(eq(tasks.userId, deps.userId), eq(tasks.kind, "refresh")))
     .orderBy(desc(tasks.createdAt))
     .limit(1);
-  if (!row) return { task: null, result: null };
-  const parsed = RefreshResult.safeParse(row.result);
-  return { task: await getTask(deps, { taskId: row.id }), result: parsed.success ? parsed.data : null };
+  if (!latest) return { task: null, result: null };
+  // Status first, result second: a task finishes with one UPDATE of both, so a task read as done
+  // always has its result. The other order can see a refresh that ended in between as done with
+  // no result, and the Refresh button would never sum it up.
+  const task = await getTask(deps, { taskId: latest.id });
+  const [row] = await deps.db.select({ result: tasks.result }).from(tasks).where(eq(tasks.id, latest.id));
+  const parsed = RefreshResult.safeParse(row?.result);
+  return { task, result: parsed.success ? parsed.data : null };
 }

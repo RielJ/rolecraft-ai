@@ -50,7 +50,7 @@ export function RefreshButton() {
     }
     if (watching !== task.id) return;
     setWatching(null);
-    void qc.invalidateQueries({ queryKey: keys.jobs });
+    void qc.invalidateQueries({ queryKey: keys.matches });
     void qc.invalidateQueries({ queryKey: keys.sources });
     void qc.invalidateQueries({ queryKey: keys.board });
     if (task.status === "done" && refresh.data?.result) toast(`Refresh done. ${summary(refresh.data.result)}`);

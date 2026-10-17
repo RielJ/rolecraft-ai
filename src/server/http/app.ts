@@ -3,6 +3,7 @@ import type { ApiErrorBody } from "@/shared/api";
 import { AppError, type Deps } from "../services/context";
 import { boardRoutes } from "./routes/board";
 import { jobRoutes } from "./routes/jobs";
+import { matchRoutes } from "./routes/matches";
 import { profileRoutes } from "./routes/profile";
 import { settingsRoutes } from "./routes/settings";
 import { sourceRoutes } from "./routes/sources";
@@ -15,6 +16,7 @@ export function createApp(deps: Deps) {
     .get("/health", (c) => c.json({ ok: true }))
     .route("/", profileRoutes(deps))
     .route("/", jobRoutes(deps))
+    .route("/", matchRoutes(deps))
     .route("/", boardRoutes(deps))
     .route("/", workspaceRoutes(deps))
     .route("/", settingsRoutes(deps))

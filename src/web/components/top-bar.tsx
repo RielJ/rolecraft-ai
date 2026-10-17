@@ -1,24 +1,39 @@
 import { Link } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Button } from "../ui/button";
 import { AddJobDialog } from "./add-job-dialog";
 import { RefreshButton } from "./refresh-button";
 
 const NAV = [
-  { to: "/matches", label: "Matches" },
+  { to: "/", label: "Matches" },
   { to: "/board", label: "Board" },
   { to: "/profile", label: "Profile" },
   { to: "/sources", label: "Sources" },
   { to: "/settings", label: "Settings" },
 ] as const;
 
+// The Add job dialog lives in the top bar; screens open it with their own key (`a` on Matches).
+let addingJob = false;
+const addJobListeners = new Set<() => void>();
+
+export function setAddJobOpen(open: boolean): void {
+  addingJob = open;
+  for (const listener of addJobListeners) listener();
+}
+
+function subscribeAddJob(listener: () => void) {
+  addJobListeners.add(listener);
+  return () => addJobListeners.delete(listener);
+}
+
 export function TopBar() {
-  const [adding, setAdding] = useState(false);
+  const adding = useSyncExternalStore(subscribeAddJob, () => addingJob);
+  const setAdding = setAddJobOpen;
   return (
     <header className="sticky top-0 z-10 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-6 px-4 sm:px-6">
-        <Link to="/board" className="font-semibold tracking-tight">
+        <Link to="/" className="font-semibold tracking-tight">
           Hanapbuhay
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1">
@@ -26,6 +41,7 @@ export function TopBar() {
             <Link
               key={item.to}
               to={item.to}
+              activeOptions={{ exact: item.to === "/" }}
               className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[status=active]:bg-secondary data-[status=active]:text-foreground"
             >
               {item.label}

@@ -26,6 +26,8 @@ export const FactStatus = z.enum(FACT_STATUSES);
 export type FactStatus = z.infer<typeof FactStatus>;
 
 export const USER_SENIORITIES = ["junior", "mid", "senior", "lead", "staff", "principal"] as const;
+export const UserSeniority = z.enum(USER_SENIORITIES);
+export type UserSeniority = z.infer<typeof UserSeniority>;
 export const JOB_SENIORITIES = ["intern", "junior", "mid", "senior", "lead", "staff", "principal", "manager"] as const;
 
 export const JOB_ORIGINS = ["source", "link", "paste"] as const;
@@ -61,7 +63,15 @@ export const OUTCOMES = ["accepted", "rejected", "no_response", "withdrawn"] as 
 export const Outcome = z.enum(OUTCOMES);
 export type Outcome = z.infer<typeof Outcome>;
 
+/** Why a match was dismissed (decision 14), in the order of the keys 1 to 5 on Matches. */
 export const DISMISS_REASONS = ["wrong_stack", "too_senior", "pay", "location", "other"] as const;
+export const DismissReason = z.enum(DISMISS_REASONS);
+export type DismissReason = z.infer<typeof DismissReason>;
+
+/** Section 3.7, computed on read and never stored. Strong first. */
+export const MATCH_LEVELS = ["strong", "possible", "weak"] as const;
+export const MatchLevel = z.enum(MATCH_LEVELS);
+export type MatchLevel = z.infer<typeof MatchLevel>;
 
 export const RATE_TYPES = ["hourly", "fixed"] as const;
 export const RateType = z.enum(RATE_TYPES);

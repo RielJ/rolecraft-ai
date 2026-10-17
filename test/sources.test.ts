@@ -234,6 +234,9 @@ describe("sources API", () => {
       targetTitles: [],
       roleFamilies: ["engineering", "design"],
       excludeTitleWords: ["intern", "Lead"],
+      seniority: null,
+      yearsExperience: null,
+      minPay: null,
     });
     const bad = await call("PUT", "/profile", { targeting: { roleFamilies: ["wizardry"] } });
     expect(bad.status).toBe(400);

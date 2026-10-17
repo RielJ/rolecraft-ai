@@ -113,6 +113,17 @@ export function extractSkills(text: string): string[] {
   return SKILLS.map((s) => s.name).filter((name) => found.has(name));
 }
 
+/**
+ * Skills named in the user's confirmed fact texts, in dictionary order, each once. This is both
+ * Profile's "Skills found in your confirmed facts" and the skill set Matches scores against, so the
+ * two cannot drift apart. A typed skills field on an item does not count (decision 9).
+ */
+export function skillsInFacts({ texts }: { texts: readonly string[] }): string[] {
+  // Each fact on its own, so a two-word skill never spans the end of one fact and the start of the next.
+  const found = new Set(texts.flatMap((text) => extractSkills(text)));
+  return SKILLS.map((s) => s.name).filter((name) => found.has(name));
+}
+
 // Checked in this order; the first level whose words appear in the title wins. Intern beats
 // everything, manager beats rank words ("Senior Engineering Manager" manages people).
 const SENIORITY_WORDS: readonly (readonly [JobSeniority, readonly string[]])[] = [

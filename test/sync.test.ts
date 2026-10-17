@@ -6,7 +6,7 @@ import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { ensureBuiltinSources } from "@/server/services/sources";
 import { waitForTask } from "@/server/services/tasks";
-import { AddJobResult, ApiErrorBody, JobList, RefreshDto, SourceDto, TaskDto } from "@/shared/api";
+import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto } from "@/shared/api";
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
@@ -181,17 +181,16 @@ describe("Greenhouse (complete source)", () => {
     expect(back.result?.sources).toMatchObject([{ status: "ok", closed: 0, reopened: 1, added: 0 }]);
   });
 
-  test("GET /api/jobs lists open jobs with where each was seen, and drops closed ones", async () => {
+  test("GET /api/matches lists open jobs with where each was seen, and drops closed ones", async () => {
     await refresh(hours(0));
     routes.set(ghJobs("acme"), json(without(acme, 4002)));
     await refresh(hours(1));
-    const list = await ok(await call("GET", "/jobs"), JobList);
+    const list = await ok(await call("GET", "/matches?excluded=true"), MatchList);
     expect(list.jobs).toHaveLength(6);
     expect(list.jobs.map((j) => j.title)).not.toContain("Backend Engineer");
     expect(list.jobs.find((j) => j.title === "Senior Frontend Engineer")).toMatchObject({
       company: "Acme",
       seenOn: [{ label: "Acme", listingUrl: "https://boards.greenhouse.io/acme/jobs/4001" }],
-      opportunityId: null,
     });
   });
 

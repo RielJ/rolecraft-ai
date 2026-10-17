@@ -40,6 +40,8 @@ const STATUS: Record<ErrorCode, Status> = {
   ai_unavailable: 503,
   refresh_running: 409,
   source_exists: 409,
+  on_board: 409,
+  has_work: 409,
   unreadable_file: 422,
   internal: 500,
 };

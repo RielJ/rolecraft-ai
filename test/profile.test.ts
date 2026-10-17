@@ -484,10 +484,65 @@ describe("review and skills found", () => {
     expect(profile.skillsFound).toEqual([]);
     await call("POST", `/facts/${fact(profile, "payments API").id}/confirm`);
     const after = await json(await call("GET", "/profile"), ProfileDto);
-    expect(after.skillsFound).toEqual(["Go", "Postgres"]);
+    expect(after.skillsFound).toEqual(["Go", "PostgreSQL"]);
     // An add-on's skills field does not count until a confirmed fact names the skill.
     await addAddon({ kind: "open_source", title: "dotfiles", body: "- Maintain my dotfiles", skills: ["Rust"] });
     const withAddon = await json(await call("POST", "/facts/confirm-all"), ProfileDto);
-    expect(withAddon.skillsFound).toEqual(["Go", "Postgres", "React"]);
+    // Dictionary order and canonical names: the same list Matches scores against.
+    expect(withAddon.skillsFound).toEqual(["Go", "React", "PostgreSQL"]);
+  });
+});
+
+describe("seniority, years and minimum pay (section 4, Profile)", () => {
+  test("save through targeting, read back, keep when not sent, clear with null", async () => {
+    const saved = await json(
+      await call("PUT", "/profile", {
+        targeting: {
+          seniority: "senior",
+          yearsExperience: 7,
+          minPay: { amount: 150000, currency: "php", period: "month" },
+        },
+      }),
+      ProfileDto,
+    );
+    expect(saved.targeting).toMatchObject({
+      seniority: "senior",
+      yearsExperience: 7,
+      minPay: { amount: 150000, currency: "PHP", period: "month" },
+    });
+    const read = await json(await call("GET", "/profile"), ProfileDto);
+    expect(read.targeting).toEqual(saved.targeting);
+
+    // Saving other targeting keeps the three fields.
+    const kept = await json(await call("PUT", "/profile", { targeting: { targetTitles: ["Backend"] } }), ProfileDto);
+    expect(kept.targeting).toMatchObject({ seniority: "senior", yearsExperience: 7 });
+
+    const cleared = await json(
+      await call("PUT", "/profile", { targeting: { seniority: null, yearsExperience: null, minPay: null } }),
+      ProfileDto,
+    );
+    expect(cleared.targeting).toMatchObject({ seniority: null, yearsExperience: null, minPay: null });
+  });
+
+  test("years over 60, an unknown seniority or a bad pay is a 400 and saves nothing", async () => {
+    const tooMany = await json(
+      await call("PUT", "/profile", { targeting: { yearsExperience: 61 } }),
+      ApiErrorBody,
+      400,
+    );
+    expect(tooMany.error.code).toBe("invalid_input");
+    expect(JSON.stringify(tooMany.error.details)).toContain("Years of experience is at most 60.");
+    for (const targeting of [
+      { yearsExperience: -1 },
+      { yearsExperience: 2.5 },
+      { seniority: "manager" },
+      { minPay: { amount: 0, currency: "PHP", period: "month" } },
+      { minPay: { amount: 100, currency: "PESO", period: "month" } },
+      { minPay: { amount: 100, currency: "PHP", period: "fortnight" } },
+    ]) {
+      expect((await call("PUT", "/profile", { targeting })).status).toBe(400);
+    }
+    const read = await json(await call("GET", "/profile"), ProfileDto);
+    expect(read.targeting).toMatchObject({ seniority: null, yearsExperience: null, minPay: null });
   });
 });

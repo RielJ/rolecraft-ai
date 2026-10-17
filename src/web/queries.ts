@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   AddJobResult,
@@ -10,13 +10,17 @@ import {
   type DraftInput,
   type FactId,
   type ItemId,
-  JobList,
+  type JobId,
+  MatchDetail,
+  MatchList,
+  type MatchQueryInput,
   type OpportunityId,
   type OutputId,
   type PasteJobInput,
   ProfileDto,
   RefreshDto,
   type SaveAiKeyInput,
+  SavedJob,
   SettingsDto,
   SourceDto,
   type SourceId,
@@ -30,6 +34,7 @@ import {
   type UpdateSettingsInput,
   WorkspaceDto,
 } from "@/shared/api";
+import type { DismissReason } from "@/shared/enums";
 import { client, toApiError, unwrap } from "./api";
 
 export const keys = {
@@ -38,7 +43,9 @@ export const keys = {
   workspace: (id: OpportunityId) => ["workspace", id] as const,
   settings: ["settings"] as const,
   sources: ["sources"] as const,
-  jobs: ["jobs"] as const,
+  matches: ["matches"] as const,
+  matchList: (query: MatchQueryInput) => ["matches", "list", query] as const,
+  match: (id: JobId) => ["matches", "detail", id] as const,
   refresh: ["refresh"] as const,
 };
 
@@ -69,6 +76,8 @@ function useProfileMutation<I>(run: (input: I) => Promise<ProfileDto>) {
       // Standard answers and fact text feed every workspace's gate.
       void qc.invalidateQueries({ queryKey: ["workspace"] });
       void qc.invalidateQueries({ queryKey: keys.board });
+      // Confirmed facts and targeting set match levels, tags and the pay filter, on every read.
+      void qc.invalidateQueries({ queryKey: keys.matches });
     },
   });
 }
@@ -141,6 +150,8 @@ function useJobAdded() {
   return () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: keys.board }),
+      // A job added by link may be one Matches listed; saved jobs leave Matches.
+      qc.invalidateQueries({ queryKey: keys.matches }),
       qc.invalidateQueries({ queryKey: keys.settings }),
       // Other jobs' duplicate hints are computed on read.
       qc.invalidateQueries({ queryKey: ["workspace"] }),
@@ -319,6 +330,8 @@ function useSettingsMutation<I>(run: (input: I) => Promise<SettingsDto>) {
       qc.setQueryData(keys.settings, settings);
       // aiReady on every workspace follows the key.
       void qc.invalidateQueries({ queryKey: ["workspace"] });
+      // The view currency and rates set the pay shown and the pay filter on Matches.
+      void qc.invalidateQueries({ queryKey: keys.matches });
     },
   });
 }
@@ -355,10 +368,72 @@ export const useUpdateSource = () =>
 export const useDeleteSource = () =>
   useSourceMutation((id: SourceId) => unwrap(client.api.sources[":id"].$delete({ param: { id } }), SourceList));
 
-/** Open jobs from every source, for the plain Matches list. */
-export function useJobs() {
-  return useQuery({ queryKey: keys.jobs, queryFn: () => unwrap(client.api.jobs.$get(), JobList) });
+// ---------- Matches ----------
+
+/** The Matches list. The old list stays on screen while a new search or filter loads. */
+export function useMatches(query: MatchQueryInput) {
+  return useQuery({
+    queryKey: keys.matchList(query),
+    queryFn: () => unwrap(client.api.matches.$get({ query: matchQueryString(query) }), MatchList),
+    placeholderData: keepPreviousData,
+  });
 }
+
+/** Query strings carry only what is set. */
+function matchQueryString(query: MatchQueryInput): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(query).flatMap(([k, v]) => (v === undefined || v === "" ? [] : [[k, String(v)]])),
+  );
+}
+
+const matchDetailQuery = (id: JobId) => ({
+  queryKey: keys.match(id),
+  queryFn: () => unwrap(client.api.matches[":id"].$get({ param: { id } }), MatchDetail),
+});
+
+/** The reading pane. It keeps showing the previous job until the next one arrives (section 4). */
+export function useMatchDetail(id: JobId | null) {
+  return useQuery({
+    queryKey: id === null ? ["matches", "detail", "none"] : keys.match(id),
+    queryFn: id === null ? skipToken : matchDetailQuery(id).queryFn,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Load a job's pane before it is selected, so j and k land on a ready pane. */
+export function usePrefetchMatch() {
+  const qc = useQueryClient();
+  return (id: JobId) => qc.prefetchQuery({ ...matchDetailQuery(id), staleTime: 30_000 });
+}
+
+/**
+ * Save, dismiss and undo. The row leaves (or returns to) the list on the server's answer; the
+ * page moves the selection itself, so the list never waits on the network to move on.
+ */
+function useMatchMutation<T, R>(fn: (input: T) => Promise<R>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSettled: () =>
+      Promise.all([qc.invalidateQueries({ queryKey: keys.matches }), qc.invalidateQueries({ queryKey: keys.board })]),
+  });
+}
+
+export const useSaveJob = () =>
+  useMatchMutation((id: JobId) => unwrap(client.api.jobs[":id"].save.$post({ param: { id } }), SavedJob));
+
+export const useDismissJob = () =>
+  useMatchMutation(({ id, reason }: { id: JobId; reason: DismissReason | null }) =>
+    unwrap(
+      client.api.jobs[":id"].dismiss.$post({ param: { id }, json: { reason } }),
+      z.object({ ok: z.literal(true) }),
+    ),
+  );
+
+export const useUndoJob = () =>
+  useMatchMutation(({ id, action }: { id: JobId; action: "save" | "dismiss" }) =>
+    unwrap(client.api.jobs[":id"].undo.$post({ param: { id }, json: { action } }), z.object({ ok: z.literal(true) })),
+  );
 
 /** The newest refresh. Polls while it runs; the top bar shows its step. */
 export function useRefresh() {

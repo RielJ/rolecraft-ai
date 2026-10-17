@@ -24,19 +24,19 @@ const rootRoute = createRootRoute({
   ),
 });
 
-// Matches arrives in slice 7; until then the board is the home screen.
-const indexRoute = createRoute({
+// Matches is the home screen (section 4); /matches stays as an alias for old links.
+const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: MatchesPage });
+const matchesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/",
+  path: "/matches",
   beforeLoad: () => {
-    throw redirect({ to: "/board" });
+    throw redirect({ to: "/" });
   },
 });
 
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/board", component: BoardPage });
 const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: "/profile", component: ProfilePage });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage });
-const matchesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/matches", component: MatchesPage });
 const sourcesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/sources", component: SourcesPage });
 
 export const workspaceRoute = createRoute({

@@ -2,10 +2,12 @@ import { z } from "zod";
 import {
   AddonKind,
   AiProvider,
+  DismissReason,
   Eligibility,
   FactStatus,
   FileKind,
   ItemUsage,
+  MatchLevel,
   MustAnswer,
   OpenStatus,
   OpportunityStatus,
@@ -13,6 +15,7 @@ import {
   Outcome,
   OutdatedReason,
   OutputKind,
+  PayPeriod,
   ProfileItemKind,
   RateType,
   RoleFamily,
@@ -21,6 +24,7 @@ import {
   StyleRule,
   TaskKind,
   TaskStatus,
+  UserSeniority,
 } from "./enums";
 
 // ---------- Branded ids ----------
@@ -66,6 +70,10 @@ export const ERROR_CODES = [
   "ai_unavailable",
   "refresh_running",
   "source_exists",
+  /** Dismissing a job that is on the board: close it there instead. */
+  "on_board",
+  /** Undoing a save after work started on the job. */
+  "has_work",
   "unreadable_file",
   "internal",
 ] as const;
@@ -166,7 +174,25 @@ const ExcludeWord = z
   .max(60)
   .regex(/^[^,]+$/, "One word or phrase per entry, without commas.");
 
-/** What the role filter reads (section 3.7a). No families picked means only exclude words drop. */
+/** An ISO 4217 code such as PHP or USD. */
+export const CurrencyCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, "Use a three-letter currency code, such as PHP or USD.");
+
+/** `users.min_pay` (PLAN.md section 2): an amount per period in one currency. */
+export const Money = z.object({
+  amount: z.number().positive("Minimum pay must be more than zero.").max(1e9, "That amount is too large."),
+  currency: CurrencyCode,
+  period: PayPeriod,
+});
+export type Money = z.infer<typeof Money>;
+
+/**
+ * What the role filter reads (section 3.7a), plus what matching reads about you (section 3.7).
+ * No families picked means only exclude words drop. Null seniority, years or pay means not set.
+ */
 export const Targeting = z.object({
   /** Keywords for built-in boards whose own keywords are blank ("frontend engineer"). */
   targetTitles: z.array(z.string().trim().min(1).max(100)).max(30).transform(uniqueCaseless),
@@ -175,6 +201,15 @@ export const Targeting = z.object({
     .max(RoleFamily.options.length)
     .transform((families) => [...new Set(families)]),
   excludeTitleWords: z.array(ExcludeWord).max(50).transform(uniqueCaseless),
+  seniority: UserSeniority.nullable(),
+  yearsExperience: z
+    .number()
+    .int("Years of experience is a whole number.")
+    .min(0, "Years of experience cannot be negative.")
+    .max(60, "Years of experience is at most 60.")
+    .nullable(),
+  /** The default for the Matches pay filter (decision 20). */
+  minPay: Money.nullable(),
 });
 export type Targeting = z.infer<typeof Targeting>;
 
@@ -488,13 +523,6 @@ export type DraftInput = z.infer<typeof DraftInput>;
 
 // ---------- Settings ----------
 
-/** An ISO 4217 code such as PHP or USD. */
-export const CurrencyCode = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(/^[A-Z]{3}$/, "Use a three-letter currency code, such as PHP or USD.");
-
 /** One stored rate (Q12): view-currency units per 1 unit, and when the user set it. */
 export const FxRateEntry = z.object({ rate: z.number().positive(), setAt: z.iso.datetime() });
 export type FxRateEntry = z.infer<typeof FxRateEntry>;
@@ -698,19 +726,102 @@ export const RefreshDto = z.object({
 });
 export type RefreshDto = z.infer<typeof RefreshDto>;
 
-/** A row of the minimal Matches list (slice 6; slice 7 adds matching). */
-export const JobListItem = z.object({
+// ---------- Matches (section 3.7, section 4 Matches) ----------
+
+const StringBool = z.enum(["true", "false"]).transform((v) => v === "true");
+
+/** `GET /api/matches` filters. Query strings, so booleans arrive as "true" or "false". */
+export const MatchQuery = z.object({
+  /** Postgres full-text search over title, company and description. */
+  q: z.string().trim().max(200).optional(),
+  /** Show jobs that do not hire from the Philippines. Hidden by default (section 3.6). */
+  excluded: StringBool.optional(),
+  /** Show "Role unclear" jobs. Shown by default (section 3.7a). */
+  unsure: StringBool.optional(),
+  /**
+   * Hide jobs whose monthly pay in the view currency is under this (decision 20). Missing means
+   * the minimum pay saved on Profile; 0 turns the filter off.
+   */
+  payAtLeast: z.coerce.number().min(0).max(1e9).optional(),
+});
+export type MatchQuery = z.infer<typeof MatchQuery>;
+/** The query string as the SPA sends it. */
+export type MatchQueryInput = z.input<typeof MatchQuery>;
+
+export const MatchReason = z.object({ sign: z.enum(["positive", "negative", "neutral"]), text: z.string() });
+export type MatchReason = z.infer<typeof MatchReason>;
+
+/** Where a job was seen: source labels, primary first. */
+export const SeenOn = z.array(z.object({ label: z.string(), listingUrl: z.string() }));
+
+/** One row of the Matches list. */
+export const MatchItem = z.object({
   id: JobId,
   title: z.string(),
   company: z.string(),
   locationText: z.string(),
   firstSeenAt: z.string(),
   applyUrl: z.string().nullable(),
-  /** Where it was seen: source labels, primary first. */
-  seenOn: z.array(z.object({ label: z.string(), listingUrl: z.string() })),
+  seenOn: SeenOn,
+  level: MatchLevel,
+  /** The role filter's reason when it is unsure (section 3.7a), shown as the "Role unclear" chip. */
+  roleUnclear: z.string().nullable(),
+  eligibility: Eligibility,
+  /** Monthly in the view currency, or as posted; null when the posting states none. */
+  pay: z.string().nullable(),
+});
+export type MatchItem = z.infer<typeof MatchItem>;
+
+export const MatchList = z.object({
+  jobs: z.array(MatchItem),
+  counts: z.object({
+    /** Open jobs not yet saved or dismissed, before any filter. */
+    open: z.number().int(),
+    /** Of those, hidden because they exclude the Philippines and `excluded` is off. */
+    excluded: z.number().int(),
+    /** Hidden because the role is unclear and `unsure` is off. */
+    unsure: z.number().int(),
+    /** Hidden by the pay filter. */
+    belowPay: z.number().int(),
+    /** Not matching the search. */
+    search: z.number().int(),
+  }),
+  viewCurrency: z.string(),
+  /** The pay filter in force: monthly, in the view currency. */
+  payFilter: z.object({
+    /** Null when no filter applies. */
+    atLeast: z.number().nullable(),
+    /** "profile" when it is the minimum pay saved on Profile, "page" when set on Matches. */
+    from: z.enum(["profile", "page"]).nullable(),
+    /** The saved minimum pay's currency when it has no rate, so it cannot filter. */
+    missingRate: z.string().nullable(),
+  }),
+});
+export type MatchList = z.infer<typeof MatchList>;
+
+/** `GET /api/matches/:id`: the reading pane. */
+export const MatchDetail = z.object({
+  id: JobId,
+  title: z.string(),
+  company: z.string(),
+  description: z.string(),
+  applyUrl: z.string().nullable(),
+  seenOn: SeenOn,
+  level: MatchLevel,
+  reasons: z.array(MatchReason),
+  roleUnclear: z.string().nullable(),
+  facts: JobFacts,
+  /** Set once the job is saved or dismissed. */
   opportunityId: OpportunityId.nullable(),
 });
-export type JobListItem = z.infer<typeof JobListItem>;
+export type MatchDetail = z.infer<typeof MatchDetail>;
 
-export const JobList = z.object({ jobs: z.array(JobListItem) });
-export type JobList = z.infer<typeof JobList>;
+export const DismissInput = z.object({ reason: DismissReason.nullable() });
+export type DismissInput = z.infer<typeof DismissInput>;
+
+/** `POST /api/jobs/:id/undo`: put a job back in Matches after a save or dismiss. */
+export const UndoInput = z.object({ action: z.enum(["save", "dismiss"]) });
+export type UndoInput = z.infer<typeof UndoInput>;
+
+export const SavedJob = z.object({ opportunityId: OpportunityId });
+export type SavedJob = z.infer<typeof SavedJob>;

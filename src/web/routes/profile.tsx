@@ -10,6 +10,7 @@ import {
   type ProfileItemDto,
   type StandardAnswers,
   type Targeting,
+  Targeting as TargetingSchema,
 } from "@/shared/api";
 import {
   ADDON_KINDS,
@@ -17,10 +18,21 @@ import {
   ITEM_USAGES,
   ItemUsage,
   MUST_ANSWERS,
+  PAY_PERIODS,
+  PayPeriod,
   ROLE_FAMILIES,
   type RoleFamily,
+  USER_SENIORITIES,
+  UserSeniority,
 } from "@/shared/enums";
-import { itemKindLabel, itemUsageLabel, mustAnswerLabel, roleFamilyLabel } from "@/shared/labels";
+import {
+  itemKindLabel,
+  itemUsageLabel,
+  mustAnswerLabel,
+  payPeriodLabel,
+  roleFamilyLabel,
+  userSeniorityLabel,
+} from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
 import {
   useConfirmAllFacts,
@@ -54,6 +66,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 
@@ -166,43 +179,86 @@ const lines = (text: string) =>
     .map((l) => l.trim())
     .filter(Boolean);
 
+/** The Select's value for "not set": Radix Select cannot hold an empty value. */
+const NOT_SET = "none";
+
+/** Profile's targeting fields as the form holds them: text until saved. */
+type TargetingDraft = {
+  titles: string;
+  families: ReadonlySet<RoleFamily>;
+  exclude: string;
+  seniority: UserSeniority | null;
+  years: string;
+  payAmount: string;
+  payCurrency: string;
+  payPeriod: PayPeriod;
+};
+
+function draftOf(t: Targeting): TargetingDraft {
+  return {
+    titles: t.targetTitles.join("\n"),
+    families: new Set(t.roleFamilies),
+    exclude: t.excludeTitleWords.join("\n"),
+    seniority: t.seniority,
+    years: t.yearsExperience === null ? "" : String(t.yearsExperience),
+    payAmount: t.minPay === null ? "" : String(t.minPay.amount),
+    payCurrency: t.minPay?.currency ?? "PHP",
+    payPeriod: t.minPay?.period ?? "month",
+  };
+}
+
+/** The draft as the API takes it, checked with the API's own schema. Blank years or pay is "not set". */
+function parseDraft(d: TargetingDraft) {
+  return TargetingSchema.safeParse({
+    targetTitles: lines(d.titles),
+    roleFamilies: ROLE_FAMILIES.filter((f) => d.families.has(f)),
+    excludeTitleWords: lines(d.exclude),
+    seniority: d.seniority,
+    yearsExperience: d.years.trim() === "" ? null : Number(d.years),
+    minPay:
+      d.payAmount.trim() === ""
+        ? null
+        : { amount: Number(d.payAmount.replace(/,/g, "")), currency: d.payCurrency, period: d.payPeriod },
+  });
+}
+
 /**
- * What Refresh keeps (section 3.7a). Target titles are the keywords for built-in boards; role
- * families and exclude words drop postings that are surely not your role. Pasted and linked
- * jobs skip the filter.
+ * What Refresh keeps (section 3.7a) and what matching reads about you (section 3.7). Target
+ * titles are the keywords for built-in boards; role families and exclude words drop postings
+ * that are surely not your role. Seniority and years mark roles above or below you; minimum pay
+ * is where the Matches pay filter starts. Pasted and linked jobs skip the filter.
  */
 function TargetingForm({ targeting }: { targeting: Targeting }) {
   const id = useId();
   const update = useUpdateProfile();
-  const [titles, setTitles] = useState(targeting.targetTitles.join("\n"));
-  const [families, setFamilies] = useState<ReadonlySet<RoleFamily>>(new Set(targeting.roleFamilies));
-  const [exclude, setExclude] = useState(targeting.excludeTitleWords.join("\n"));
+  const [draft, setDraft] = useState(() => draftOf(targeting));
+  const [problem, setProblem] = useState<string | null>(null);
+  const set = <K extends keyof TargetingDraft>(key: K, value: TargetingDraft[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }));
 
   function toggle(family: RoleFamily, on: boolean) {
-    setFamilies((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(family);
-      else next.delete(family);
-      return next;
-    });
+    const next = new Set(draft.families);
+    if (on) next.add(family);
+    else next.delete(family);
+    set("families", next);
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    const parsed = parseDraft(draft);
+    if (!parsed.success) {
+      setProblem(parsed.error.issues[0]?.message ?? "Check the fields above.");
+      return;
+    }
+    setProblem(null);
     update.mutate(
-      {
-        targeting: {
-          targetTitles: lines(titles),
-          roleFamilies: ROLE_FAMILIES.filter((f) => families.has(f)),
-          excludeTitleWords: lines(exclude),
-        },
-      },
+      { targeting: parsed.data },
       { onSuccess: () => toast("Job targeting saved. The next Refresh uses it."), onError },
     );
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
+    <form onSubmit={submit} noValidate className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
       <div>
         <h2 id={`${id}-h`} className="font-semibold text-lg">
           Job targeting
@@ -214,7 +270,12 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
       </div>
       <div className="grid gap-2">
         <Label htmlFor={`${id}-titles`}>Target titles, one per line</Label>
-        <Textarea id={`${id}-titles`} className="min-h-20" value={titles} onChange={(e) => setTitles(e.target.value)} />
+        <Textarea
+          id={`${id}-titles`}
+          className="min-h-20"
+          value={draft.titles}
+          onChange={(e) => set("titles", e.target.value)}
+        />
         <p className="text-muted-foreground text-xs">
           For example "Frontend engineer". Built-in boards keep postings whose title or tags have one of these words.
           Blank keeps every posting.
@@ -227,7 +288,7 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
             <div key={family} className="flex items-center gap-2">
               <Checkbox
                 id={`${id}-fam-${family}`}
-                checked={families.has(family)}
+                checked={draft.families.has(family)}
                 onCheckedChange={(checked) => toggle(family, checked === true)}
               />
               <Label htmlFor={`${id}-fam-${family}`} className="font-normal">
@@ -243,13 +304,109 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
         <Textarea
           id={`${id}-exclude`}
           className="min-h-16"
-          value={exclude}
-          onChange={(e) => setExclude(e.target.value)}
+          value={draft.exclude}
+          onChange={(e) => set("exclude", e.target.value)}
         />
         <p className="text-muted-foreground text-xs">
           For example "Intern". A title with one of these is always dropped.
         </p>
       </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-seniority`}>Seniority</Label>
+          <Select
+            value={draft.seniority ?? NOT_SET}
+            onValueChange={(v) => {
+              const parsed = UserSeniority.safeParse(v);
+              set("seniority", parsed.success ? parsed.data : null);
+            }}
+          >
+            <SelectTrigger id={`${id}-seniority`} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NOT_SET}>Not set</SelectItem>
+              {USER_SENIORITIES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {userSeniorityLabel(s)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-years`}>Years of experience</Label>
+          <Input
+            id={`${id}-years`}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={60}
+            step={1}
+            className="tabular-nums"
+            value={draft.years}
+            onChange={(e) => set("years", e.target.value)}
+          />
+        </div>
+        <p className="text-muted-foreground text-xs sm:col-span-2">
+          Roles two or more levels from yours, or asking for more than a year beyond your experience, are not marked
+          Strong. Leave blank to skip the check.
+        </p>
+      </div>
+      <fieldset className="grid gap-2">
+        <legend className="mb-2 font-medium text-sm">Minimum pay</legend>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label htmlFor={`${id}-pay`} className="sr-only">
+            Minimum pay amount
+          </Label>
+          <Input
+            id={`${id}-pay`}
+            inputMode="decimal"
+            placeholder="Not set"
+            className="w-36 tabular-nums"
+            value={draft.payAmount}
+            onChange={(e) => set("payAmount", e.target.value)}
+          />
+          <Label htmlFor={`${id}-pay-currency`} className="sr-only">
+            Minimum pay currency
+          </Label>
+          <Input
+            id={`${id}-pay-currency`}
+            maxLength={3}
+            autoCapitalize="characters"
+            className="w-20 uppercase"
+            value={draft.payCurrency}
+            onChange={(e) => set("payCurrency", e.target.value)}
+          />
+          <Select
+            value={draft.payPeriod}
+            onValueChange={(v) => {
+              const parsed = PayPeriod.safeParse(v);
+              if (parsed.success) set("payPeriod", parsed.data);
+            }}
+          >
+            <SelectTrigger aria-label="Minimum pay period" className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAY_PERIODS.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {payPeriodLabel(p)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Matches starts its pay filter here. Jobs with no pay, or in a currency with no rate in Settings, are never
+          hidden. Leave blank for no minimum.
+        </p>
+      </fieldset>
+      {problem && (
+        <p role="alert" className="text-destructive text-sm">
+          {problem}
+        </p>
+      )}
       <Button type="submit" className="justify-self-start" disabled={update.isPending}>
         {update.isPending ? "Saving…" : "Save targeting"}
       </Button>

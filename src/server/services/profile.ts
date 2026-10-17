@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { factKey, findSkills } from "@/domain/citations";
+import { factKey } from "@/domain/citations";
 import { diffFacts } from "@/domain/facts-diff";
+import { skillsInFacts } from "@/domain/features";
 import {
   buildSplitPrompt,
   buildSplitRetryPrompt,
@@ -65,6 +66,9 @@ export async function loadContact(deps: Pick<Deps, "db" | "userId">): Promise<{
       targetTitles: user.targetTitles,
       roleFamilies: user.roleFamilies,
       excludeTitleWords: user.excludeTitleWords,
+      seniority: user.seniority,
+      yearsExperience: user.yearsExperience,
+      minPay: user.minPay,
     },
   };
 }
@@ -121,7 +125,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     cv: dtos.find((i) => i.kind === "cv") ?? null,
     addons: dtos.filter((i) => i.kind !== "cv"),
     facts: rows.map(({ no, seenRev, itemRev, ...row }) => ({ ...row, key: factKey(no), inLatest: seenRev >= itemRev })),
-    skillsFound: findSkills({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) }),
+    skillsFound: skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) }),
     aiReady: aiConfig !== null,
   };
 }
@@ -140,6 +144,10 @@ export async function updateProfile(deps: Deps, input: UpdateProfileInput): Prom
   if (input.targeting?.targetTitles) patch.targetTitles = input.targeting.targetTitles;
   if (input.targeting?.roleFamilies) patch.roleFamilies = input.targeting.roleFamilies;
   if (input.targeting?.excludeTitleWords) patch.excludeTitleWords = input.targeting.excludeTitleWords;
+  // Null clears these; a missing key keeps what is stored.
+  if (input.targeting?.seniority !== undefined) patch.seniority = input.targeting.seniority;
+  if (input.targeting?.yearsExperience !== undefined) patch.yearsExperience = input.targeting.yearsExperience;
+  if (input.targeting?.minPay !== undefined) patch.minPay = input.targeting.minPay;
   if (Object.keys(patch).length) await deps.db.update(users).set(patch).where(eq(users.id, deps.userId));
   return getProfile(deps);
 }
