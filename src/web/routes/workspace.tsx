@@ -271,9 +271,7 @@ function Files({
             blockers={blockersFor(ws, current.id)}
             blocked={!ws.gate.ok}
             saving={update.isPending}
-            onSave={(body) =>
-              update.mutate({ id: current.id, body }, { onSuccess: () => savedToast(current), onError })
-            }
+            onSave={(body) => update.mutateAsync({ id: current.id, body }).then(() => savedToast(current), onError)}
             drafting={drafting.has(current.id)}
             draftButton={
               <>
@@ -302,12 +300,21 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
   const dirty = draft !== saved;
   const frozen = ws.opportunity.frozen;
   const drafting = draftingIds(ws).has(answer.id);
+  // Clicking "Save answer" blurs the textarea first, so save() runs twice in one gesture, before
+  // `update.isPending` re-renders the button disabled. The ref drops the second call.
+  const inFlight = useRef(false);
   const save = () => {
-    if (!dirty) return;
-    update.mutate(
-      { id: answer.id, body: draft.trim() === "" ? null : draft },
-      { onSuccess: () => savedToast(answer), onError },
-    );
+    if (!dirty || inFlight.current) return;
+    inFlight.current = true;
+    // mutateAsync, not mutate(…, { onSuccess }): a save changes `editedAt`, which is part of this
+    // row's key, so the row can remount before per-call callbacks run, and TanStack Query drops
+    // them on unmount. The promise settles either way, so the toast always shows.
+    update
+      .mutateAsync({ id: answer.id, body: draft.trim() === "" ? null : draft })
+      .then(() => savedToast(answer), onError)
+      .finally(() => {
+        inFlight.current = false;
+      });
   };
 
   return (

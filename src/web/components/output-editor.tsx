@@ -1,5 +1,5 @@
 import { CopyIcon, FileDownIcon } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { GateBlocker, OutputDto } from "@/shared/api";
 import { PDF_KINDS } from "@/shared/enums";
@@ -139,7 +139,8 @@ export function OutputEditor({
   /** Whether the workspace gate blocks export. */
   blocked: boolean;
   saving: boolean;
-  onSave: (body: string | null) => void;
+  /** Settles when the save does; a second save while one is in flight is dropped. */
+  onSave: (body: string | null) => Promise<unknown>;
   /** True while a draft task is writing this output; the text stays readable but not editable. */
   drafting: boolean;
   /** Draft or Regenerate, or a hint when there is no key. */
@@ -153,8 +154,15 @@ export function OutputEditor({
   const dirty = draft !== saved;
   const label = outputKindLabel(output.kind);
 
+  // Clicking Save blurs the textarea first, so save() runs twice in one gesture, before `saving`
+  // re-renders the button disabled. The ref drops the second call.
+  const inFlight = useRef(false);
   const save = () => {
-    if (dirty) onSave(draft.trim() === "" ? null : draft);
+    if (!dirty || inFlight.current) return;
+    inFlight.current = true;
+    void onSave(draft.trim() === "" ? null : draft).finally(() => {
+      inFlight.current = false;
+    });
   };
 
   return (

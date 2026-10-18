@@ -204,8 +204,14 @@ test("Mark reviewed on a file and an answer; an edit clears it", async ({ page }
   // Editing the answer clears its review, and the page says it needs a new one.
   await row.getByLabel(question, { exact: true }).fill("I build payment systems. Acme runs the biggest one in Manila.");
   await expect(row.getByText("Saving this change clears it.")).toBeVisible();
+  // The click blurs the textarea first; both used to save, so count the PATCHes.
+  let patches = 0;
+  page.on("request", (r) => {
+    if (r.method() === "PATCH" && r.url().includes(`/api/outputs/${answer.id}`)) patches += 1;
+  });
   await row.getByRole("button", { name: "Save answer" }).click();
   await expect(page.getByText("Answer saved. Mark it reviewed again so the extension can use it.")).toBeVisible();
+  expect(patches).toBe(1);
   await expect(row.getByRole("button", { name: "Mark reviewed" })).toBeEnabled();
   await expect(row.getByText("Any change clears it.")).toHaveCount(0);
   // Unsaved text cannot be marked reviewed: the review would cover the old body.
@@ -216,8 +222,13 @@ test("Mark reviewed on a file and an answer; an edit clears it", async ({ page }
 
   // So does editing the resume.
   await file.getByLabel("Resume text").fill("# Summary\n- Built payment APIs in Go for 2M requests a day");
+  let filePatches = 0;
+  page.on("request", (r) => {
+    if (r.method() === "PATCH" && r.url().includes(`/api/outputs/${resume.id}`)) filePatches += 1;
+  });
   await file.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Resume saved. Mark it reviewed again so the extension can use it.")).toBeVisible();
+  expect(filePatches).toBe(1);
   await expect(file.getByRole("button", { name: "Mark reviewed" })).toBeVisible();
 
   const after = await workspace(page.request, opportunityId);
