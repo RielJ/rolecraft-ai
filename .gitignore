@@ -1,8 +1,23 @@
+# Dependencies and build output
 node_modules/
 dist/
 dist-extension/
+*.tsbuildinfo
+
+# Test output (Playwright writes here unless --output points elsewhere)
 test-results/
 playwright-report/
+blob-report/
+coverage/
+
+# Local configuration and secrets: only the example is tracked
 .env
-*.tsbuildinfo
+.env.*
+!.env.example
+
+# Runtime data (HB_DATA_DIR defaults to ./data)
 data/
+
+# Editor and OS files
+.DS_Store
+*.log

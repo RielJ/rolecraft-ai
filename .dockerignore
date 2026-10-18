@@ -5,6 +5,9 @@
 .pi
 node_modules
 dist
+dist-extension
+extension
+e2e-extension
 data
 test-results
 playwright-report
