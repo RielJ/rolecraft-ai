@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { skillsInFacts } from "@/domain/features";
 import { levelRank, type MatchJob, type MatchProfile, matcher, payBelow } from "@/domain/match";
-import { convert, type FxRates, monthlyInView, type Pay, toMonthly } from "@/domain/pay";
+import { convert, type FxRates, monthlyInView, payFromColumns, toMonthly } from "@/domain/pay";
 import { DESCRIPTION_HEAD_CHARS, roleFit } from "@/domain/roles";
 import type { JobId, MatchDetail, MatchItem, MatchList, MatchQuery, Money } from "@/shared/api";
 import type { RoleFamily } from "@/shared/enums";
@@ -63,23 +63,6 @@ async function loadTargeting(deps: Pick<Deps, "db" | "userId">): Promise<Targeti
     excludeWords: user.excludeTitleWords,
     viewCurrency: user.viewCurrency,
     rates: Object.fromEntries(Object.entries(user.fxRates).map(([code, e]) => [code, e.rate])),
-  };
-}
-
-type PayColumns = {
-  payMin: string | null;
-  payMax: string | null;
-  payCurrency: string | null;
-  payPeriod: Pay["period"];
-};
-
-function payOf(row: PayColumns): Omit<Pay, "phrase"> | null {
-  if (row.payMin === null || row.payCurrency === null) return null;
-  return {
-    min: Number(row.payMin),
-    max: row.payMax === null ? null : Number(row.payMax),
-    currency: row.payCurrency,
-    period: row.payPeriod,
   };
 }
 
@@ -209,7 +192,7 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
   const score = matcher(t.profile);
   const payFilter = payFilterOf(t, query.payAtLeast);
   const counts = { open: rows.length, excluded: 0, excludedOpen: 0, unsure: 0, belowPay: 0, search: 0 };
-  const shown: (MatchItem & { rank: number; seenAt: number })[] = [];
+  const shown: (MatchItem & { rank: number; coverage: number; skillsMatched: number; seenAt: number })[] = [];
   for (const row of rows) {
     const excluded = row.eligibility === "excluded" && !row.overridden;
     if (excluded) counts.excludedOpen++;
@@ -226,7 +209,7 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       counts.unsure++;
       continue;
     }
-    const pay = payOf(row);
+    const pay = payFromColumns(row);
     if (
       payFilter.atLeast !== null &&
       payBelow({ pay, atLeast: payFilter.atLeast, viewCurrency: t.viewCurrency, rates: t.rates })
@@ -246,11 +229,14 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       level: match.level,
       roleUnclear: unclear?.reason ?? null,
       eligibility: row.eligibility,
+      skills: match.skills,
       pay:
         pay === null
           ? null
           : (monthlyInView({ pay, viewCurrency: t.viewCurrency, rates: t.rates }) ?? row.payPhrase ?? null),
       rank: Number(row.rank),
+      coverage: match.skills.asked ? match.skills.matched / match.skills.asked : 0,
+      skillsMatched: match.skills.matched,
       seenAt: row.firstSeenAt.getTime(),
     });
   }
@@ -259,6 +245,9 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
     (a, b) =>
       levelRank(a.level) - levelRank(b.level) ||
       b.rank - a.rank ||
+      // Within a level, the jobs your skills cover best come first.
+      b.coverage - a.coverage ||
+      b.skillsMatched - a.skillsMatched ||
       b.seenAt - a.seenAt ||
       a.title.localeCompare(b.title),
   );
@@ -268,7 +257,10 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
     page.map((j) => j.id),
   );
   return {
-    jobs: page.map(({ rank: _rank, seenAt: _seenAt, ...item }) => ({ ...item, seenOn: listings.get(item.id) ?? [] })),
+    jobs: page.map(({ rank: _rank, coverage: _coverage, skillsMatched: _skillsMatched, seenAt: _seenAt, ...item }) => ({
+      ...item,
+      seenOn: listings.get(item.id) ?? [],
+    })),
     counts,
     viewCurrency: t.viewCurrency,
     payFilter,

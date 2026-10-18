@@ -1,14 +1,17 @@
+import { KeyRoundIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import { CurrencyCode, isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
 import { AI_PROVIDERS, type AiProvider } from "@/shared/enums";
 import { errorMessage } from "../api";
+import { ExtensionPairing } from "../components/extension-pairing";
+import { type PageSection, SectionHeading, SectionPage } from "../components/section-page";
+import { cn } from "../lib/utils";
 import { useRemoveAiKey, useSaveAiKey, useSettings, useUpdateSettings } from "../queries";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
-import { Separator } from "../ui/separator";
 import { Switch } from "../ui/switch";
 
 const onError = (error: unknown) => toast.error(errorMessage(error));
@@ -58,18 +61,15 @@ function KeyForm({ ai }: { ai: SettingsDto["ai"] }) {
   }
 
   return (
-    <form id="ai" onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          AI key
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Drafting uses your own key. It is stored in a file only this app can read, never in the database, and it is
-          never shown again.
-        </p>
-      </div>
+    <form onSubmit={submit} className="grid gap-5" aria-labelledby={`${id}-h`}>
+      <SectionHeading
+        id={`${id}-h`}
+        title="AI key"
+        description="Drafting uses your own key. It is stored in a file only this app can read, never in the database, and it is never shown again."
+      />
       {ai.provider && ai.keyHint && (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <KeyRoundIcon aria-hidden className="size-4 text-muted-foreground" />
           <span>
             Using {PROVIDERS[ai.provider].name} with the key ending{" "}
             <span className="font-mono tabular-nums">…{ai.keyHint}</span>
@@ -78,7 +78,7 @@ function KeyForm({ ai }: { ai: SettingsDto["ai"] }) {
             type="button"
             variant="link"
             size="sm"
-            className="h-auto px-0 text-destructive"
+            className="ml-2 h-auto px-0 text-destructive"
             disabled={remove.isPending}
             onClick={() => remove.mutate(undefined, { onSuccess: () => toast("Key removed."), onError })}
           >
@@ -105,7 +105,7 @@ function KeyForm({ ai }: { ai: SettingsDto["ai"] }) {
           ))}
         </RadioGroup>
       </fieldset>
-      <div className="grid gap-2">
+      <div className="grid max-w-md gap-2">
         <Label htmlFor={`${id}-key`}>{ai.keyHint ? "Replace the API key" : "API key"}</Label>
         <Input
           id={`${id}-key`}
@@ -156,11 +156,11 @@ function ModelsForm({ ai }: { ai: SettingsDto["ai"] }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
+    <form onSubmit={submit} className="grid gap-4" aria-labelledby={`${id}-h`}>
+      <div className="grid gap-1">
+        <h3 id={`${id}-h`} className="font-medium text-sm">
           Models
-        </h2>
+        </h3>
         <p className="text-muted-foreground text-sm">
           Leave a field empty to use the default. The writing model drafts files; the light model reads postings and
           splits your CV.
@@ -215,22 +215,9 @@ function SpendForm({ settings }: { settings: SettingsDto }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          Spend
-        </h2>
-        <p className="text-muted-foreground text-sm">Costs are in USD, counted by Manila calendar month.</p>
-      </div>
-      <p>
-        <span className="font-semibold text-2xl tabular-nums">{usd(spend.monthUsd)}</span>{" "}
-        <span className="text-muted-foreground">this month</span>
-        <span className="block text-muted-foreground text-sm tabular-nums">
-          {spend.calls} AI call{spend.calls === 1 ? "" : "s"}
-          {spend.unpricedCalls > 0 &&
-            `, ${spend.unpricedCalls} on a model with no known price (not counted in the total)`}
-        </span>
-      </p>
+    <form onSubmit={submit} className="grid gap-5" aria-labelledby={`${id}-h`}>
+      <SectionHeading id={`${id}-h`} title="Spend" description="Costs are in USD, counted by Manila calendar month." />
+      <SpendMeter spend={spend} cap={ai.monthlyCapUsd} />
       <div className="grid gap-2">
         <Label htmlFor={`${id}-cap`}>Monthly cap in USD</Label>
         <div className="flex max-w-xs gap-2">
@@ -258,11 +245,49 @@ function SpendForm({ settings }: { settings: SettingsDto }) {
   );
 }
 
+/** This month's spend, and how much of the cap it has used when there is one. */
+/** This month's spend as one line, with how much of the cap it has used when there is one. */
+function SpendMeter({ spend, cap }: { spend: SettingsDto["spend"]; cap: number | null }) {
+  const used = cap ? Math.min(spend.monthUsd / cap, 1) : 0;
+  const near = used >= 0.8;
+  return (
+    <div className="grid max-w-md gap-2.5">
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-semibold text-2xl tabular-nums tracking-tight">{usd(spend.monthUsd)}</span>
+        <span className="text-muted-foreground text-sm tabular-nums">
+          {cap ? `of ${usd(cap)} this month` : "this month"} · {spend.calls} AI call{spend.calls === 1 ? "" : "s"}
+        </span>
+      </p>
+      {cap !== null && (
+        <>
+          <meter className="sr-only" aria-label="Share of the monthly cap used" min={0} max={1} value={used} />
+          <div aria-hidden className="h-1.5 overflow-hidden rounded-full bg-muted">
+            {/* scaleX, not width: the bar changes without a layout pass. */}
+            <div
+              className={cn(
+                "h-full origin-left rounded-full transition-transform duration-300 ease-out",
+                near ? "bg-destructive" : "bg-primary",
+              )}
+              style={{ transform: `scaleX(${used > 0 ? Math.max(used, 0.02) : 0})` }}
+            />
+          </div>
+        </>
+      )}
+      {spend.unpricedCalls > 0 && (
+        <p className="text-muted-foreground text-sm tabular-nums">
+          {spend.unpricedCalls} call{spend.unpricedCalls === 1 ? " was" : "s were"} on a model with no known price, so
+          {spend.unpricedCalls === 1 ? " it is" : " they are"} not in the total.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function EligibilityToggle({ ai }: { ai: SettingsDto["ai"] }) {
   const id = useId();
   const update = useUpdateSettings();
   return (
-    <div className="flex max-w-2xl items-start gap-3">
+    <div className="flex items-start gap-3">
       <Switch
         id={id}
         className="mt-0.5"
@@ -339,7 +364,10 @@ function ViewCurrencyForm({ money }: { money: Money }) {
           Save currency
         </Button>
       </div>
-      <p id={`${id}-help`} className={parsed.success ? "text-muted-foreground text-sm" : "text-destructive text-sm"}>
+      <p
+        id={`${id}-help`}
+        className={cn("max-w-prose text-sm", parsed.success ? "text-muted-foreground" : "text-destructive")}
+      >
         {parsed.success
           ? "Pay shows as a monthly amount in this currency. Changing it clears your rates, since they are relative to it."
           : "Use a three-letter currency code, such as PHP or USD."}
@@ -365,49 +393,58 @@ function RateRow({ money, currency, rate, setAt }: { money: Money; currency: str
     );
   }
 
+  const changed = value !== null && value !== rate;
+
   return (
     <li>
-      <form onSubmit={submit} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <Label htmlFor={`${id}-rate`} className="w-14 font-normal tabular-nums">
-          1 {currency} =
+      <form onSubmit={submit} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+        <Label htmlFor={`${id}-rate`} className="w-16 font-normal tabular-nums">
+          1 {currency}
         </Label>
-        <Input
-          id={`${id}-rate`}
-          inputMode="decimal"
-          className="w-32 tabular-nums"
-          placeholder="No rate"
-          value={text}
-          aria-invalid={invalid}
-          aria-describedby={`${id}-note`}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <span className="text-muted-foreground">{money.viewCurrency}</span>
-        <Button
-          type="submit"
-          size="sm"
-          variant="secondary"
-          disabled={update.isPending || value === null || value === rate}
+        <div className="relative">
+          <Input
+            id={`${id}-rate`}
+            inputMode="decimal"
+            className="h-8 w-36 pr-12 tabular-nums"
+            placeholder="No rate"
+            value={text}
+            aria-invalid={invalid}
+            aria-describedby={`${id}-note`}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <span className="-translate-y-1/2 pointer-events-none absolute top-1/2 right-3 text-muted-foreground text-xs">
+            {money.viewCurrency}
+          </span>
+        </div>
+        <span
+          id={`${id}-note`}
+          // On a phone the note takes its own line under the field.
+          className={cn(
+            "order-last w-full text-sm sm:order-none sm:w-auto sm:min-w-0 sm:flex-1",
+            invalid ? "text-destructive" : "text-muted-foreground",
+          )}
         >
-          Save
-        </Button>
-        {rate !== undefined && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={update.isPending}
-            onClick={() => update.mutate({ fxRates: { [currency]: null } }, { onError })}
-          >
-            Remove
-          </Button>
-        )}
-        <span id={`${id}-note`} className={invalid ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
-          {invalid
-            ? "Enter a number above zero, like 57.80."
-            : setAt
-              ? `Set ${SET_ON.format(new Date(setAt))}`
-              : `${currency} pay shows as posted until you set a rate.`}
+          {invalid ? "Enter a number above zero, like 57.80." : setAt ? `Set ${SET_ON.format(new Date(setAt))}` : null}
         </span>
+        <div className="ml-auto flex gap-1">
+          {/* Enter saves too; the button shows once there is something to save. */}
+          {changed && (
+            <Button type="submit" size="sm" disabled={update.isPending}>
+              Save
+            </Button>
+          )}
+          {rate !== undefined && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={update.isPending}
+              onClick={() => update.mutate({ fxRates: { [currency]: null } }, { onError })}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
       </form>
     </li>
   );
@@ -447,7 +484,7 @@ function AddRateForm({ money }: { money: Money }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-1">
+    <form onSubmit={submit} className="grid gap-1 pt-1">
       <div className="flex flex-wrap items-end gap-2">
         <div className="grid gap-2">
           <Label htmlFor={`${id}-code`}>Currency</Label>
@@ -494,24 +531,31 @@ function AddRateForm({ money }: { money: Money }) {
 function MoneySection({ money }: { money: Money }) {
   const id = useId();
   return (
-    <section id="money" aria-labelledby={`${id}-h`} className="grid max-w-2xl scroll-mt-20 gap-6">
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          Money
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Rates are typed by hand and used as they are, so a change re-prices every job at once.
-        </p>
-      </div>
+    <section aria-labelledby={`${id}-h`} className="grid gap-6">
+      <SectionHeading
+        id={`${id}-h`}
+        title="Money"
+        description="Rates are typed by hand and used as they are, so a change re-prices every job at once."
+      />
       <ViewCurrencyForm key={money.viewCurrency} money={money} />
       <div className="grid gap-3">
-        <h3 className="font-medium text-sm">Rates</h3>
+        <h3 className="font-medium text-sm">
+          Rates{" "}
+          {money.missingRates.length > 0 && (
+            <span className="font-normal text-primary">· {money.missingRates.length} to set</span>
+          )}
+        </h3>
+        {money.missingRates.length > 0 && (
+          <p className="-mt-1 text-muted-foreground text-sm">
+            Until a currency has a rate, its pay shows as posted and the pay filter never hides it.
+          </p>
+        )}
         {money.fxRates.length === 0 && money.missingRates.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             No rates yet. Currencies from your jobs appear here when they need one.
           </p>
         ) : (
-          <ul className="grid gap-2 text-sm">
+          <ul className="divide-y border-y text-sm" aria-label="Rates">
             {money.missingRates.map((currency) => (
               <RateRow key={`missing:${currency}`} money={money} currency={currency} />
             ))}
@@ -536,22 +580,20 @@ function MoneySection({ money }: { money: Money }) {
 function PiRunner({ models }: { models: { light: string; writing: string } }) {
   const id = useId();
   return (
-    <section className="grid max-w-2xl gap-3" aria-labelledby={`${id}-h`}>
-      <h2 id={`${id}-h`} className="font-semibold text-lg">
-        AI runs through pi on this machine
-      </h2>
-      <p className="text-muted-foreground text-sm">
+    <section className="grid gap-4" aria-labelledby={`${id}-h`}>
+      <SectionHeading id={`${id}-h`} title="AI runs through pi on this machine" />
+      <p className="max-w-prose text-muted-foreground text-sm">
         This copy was started with <code className="font-mono">HB_AI=pi</code>, so drafting uses pi&apos;s own sign-in
         and no key is stored. If a draft says pi is not signed in, run <code className="font-mono">pi</code> and use{" "}
         <code className="font-mono">/login</code>.
       </p>
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-sm">
         <dt className="text-muted-foreground">Writing</dt>
         <dd className="font-mono">{models.writing}</dd>
         <dt className="text-muted-foreground">Light</dt>
         <dd className="font-mono">{models.light}</dd>
       </dl>
-      <p className="text-muted-foreground text-sm">
+      <p className="max-w-prose text-muted-foreground text-sm">
         Change them with <code className="font-mono">HB_PI_MODEL_WRITING</code> and{" "}
         <code className="font-mono">HB_PI_MODEL_LIGHT</code>. Spend below is the list-price cost pi reports, which a pi
         subscription does not bill.
@@ -573,18 +615,42 @@ export function SettingsPage() {
       </div>
     );
   }
-  const { ai, money } = settings.data;
-  return (
-    <div className="grid gap-10">
-      <h1 className="display text-3xl">Settings</h1>
-      {ai.piModels ? <PiRunner models={ai.piModels} /> : <KeyForm ai={ai} />}
-      <Separator />
-      <SpendForm key={String(ai.monthlyCapUsd)} settings={settings.data} />
-      <Separator />
-      {!ai.piModels && <ModelsForm key={`${ai.provider}:${ai.modelLight}:${ai.modelWriting}`} ai={ai} />}
-      <EligibilityToggle ai={ai} />
-      <Separator />
-      <MoneySection money={money} />
-    </div>
-  );
+  const { ai, money, spend } = settings.data;
+  const aiReady = ai.piModels !== null || ai.keyHint !== null;
+  const sections: PageSection[] = [
+    {
+      // The setup checklist links to `/settings#ai`.
+      id: "ai",
+      label: "AI",
+      hint: ai.piModels ? "pi" : ai.keyHint ? undefined : "No key",
+      attention: !aiReady,
+      content: (
+        <div className="grid gap-8">
+          {ai.piModels ? <PiRunner models={ai.piModels} /> : <KeyForm ai={ai} />}
+          {!ai.piModels && <ModelsForm key={`${ai.provider}:${ai.modelLight}:${ai.modelWriting}`} ai={ai} />}
+          <EligibilityToggle ai={ai} />
+        </div>
+      ),
+    },
+    {
+      id: "spend",
+      label: "Spend",
+      hint: usd(spend.monthUsd),
+      content: <SpendForm key={String(ai.monthlyCapUsd)} settings={settings.data} />,
+    },
+    {
+      id: "money",
+      label: "Money",
+      hint: money.missingRates.length > 0 ? `${money.missingRates.length} to set` : money.viewCurrency,
+      attention: money.missingRates.length > 0,
+      content: <MoneySection money={money} />,
+    },
+    {
+      // Not `extension`: the pairing section inside already has that id.
+      id: "chrome-extension",
+      label: "Chrome extension",
+      content: <ExtensionPairing />,
+    },
+  ];
+  return <SectionPage title="Settings" sections={sections} />;
 }

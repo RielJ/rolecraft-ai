@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Platform Engineer at Acme Inc</title>
+  </head>
+  <body>
+    <main>
+      <h1>Platform Engineer, Acme Inc</h1>
+      <form id="application" novalidate>
+        <p>
+          <label for="first">First name</label>
+          <input id="first" name="first_name" autocomplete="given-name" required />
+        </p>
+        <p>
+          <label for="last">Last name</label>
+          <input id="last" name="last_name" autocomplete="family-name" required />
+        </p>
+        <p>
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" required />
+        </p>
+        <p>
+          <!-- Already filled by the page: Prefill must leave it as is. -->
+          <label for="phone">Phone</label>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" value="+63 2 8123 4567" />
+        </p>
+        <p>
+          <!-- A pay question: never filled, even though the profile has a salary answer. -->
+          <label for="salary">Expected monthly salary (PHP)</label>
+          <input id="salary" name="expected_salary" />
+        </p>
+        <p>
+          <label for="resume">Resume/CV</label>
+          <input id="resume" name="resume" type="file" accept="application/pdf,.pdf" />
+        </p>
+        <button type="submit">Submit application</button>
+      </form>
+      <!-- Same-origin subframe. The extension never scans or listens to it. -->
+      <iframe src="frame" title="Embedded widget" width="300" height="80"></iframe>
+    </main>
+    <script>
+      // Every message event the page sees, so a test can prove nothing answered.
+      window.received = [];
+      window.addEventListener("message", (event) => window.received.push(event.data));
+
+      // A single-page app: submitting swaps the form for a confirmation, with no navigation.
+      document.getElementById("application").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const done = document.createElement("h2");
+        done.textContent = "Thanks for applying to Acme Inc.";
+        event.target.replaceWith(done);
+      });
+    </script>
+  </body>
+</html>

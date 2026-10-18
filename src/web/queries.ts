@@ -13,6 +13,7 @@ import {
   FilteredList,
   type ItemId,
   type JobId,
+  type MarkReviewedInput,
   MatchDetail,
   MatchList,
   type MatchQueryInput,
@@ -40,7 +41,8 @@ import {
   WorkspaceDto,
 } from "@/shared/api";
 import type { DismissReason } from "@/shared/enums";
-import { client, toApiError, unwrap } from "./api";
+import { CreatePairingResult, CreateSessionResult, PairingDto, type PairingId, PairingList } from "@/shared/extension";
+import { ApiError, client, toApiError, unwrap } from "./api";
 
 export const keys = {
   profile: ["profile"] as const,
@@ -58,7 +60,14 @@ export const keys = {
   match: (id: JobId) => ["matches", "detail", id] as const,
   refresh: ["refresh"] as const,
   setup: ["setup"] as const,
+  pairings: ["extension", "pairings"] as const,
 };
+
+/**
+ * /api/extension-web refuses a mutation that is not `Content-Type: application/json`, even one
+ * with no body (a plain HTML form cannot send that type). hc sets it only when `json` is passed.
+ */
+const JSON_HEADERS = { headers: { "Content-Type": "application/json" } };
 
 /** How often the workspace polls while a draft task runs. */
 const TASK_POLL_MS = 1000;
@@ -346,6 +355,39 @@ export function useMarkReady(opportunityId: OpportunityId) {
   });
 }
 
+/**
+ * "Mark reviewed" on a file or answer, with the body the page shows. Any later edit or redraft
+ * clears it on the server. If the body changed since it was shown (409 `output_changed`), the
+ * workspace is fetched again so the page shows the new text; the caller shows the message.
+ */
+export function useMarkReviewed(opportunityId: OpportunityId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...json }: { id: OutputId } & MarkReviewedInput) =>
+      unwrap(client.api.outputs[":id"].reviewed.$post({ param: { id }, json }), WorkspaceDto),
+    onSuccess: (ws) => {
+      qc.setQueryData(keys.workspace(opportunityId), ws);
+      void qc.invalidateQueries({ queryKey: keys.board });
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "output_changed") {
+        void qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) });
+      }
+    },
+  });
+}
+
+/**
+ * Record an application session for the Chrome extension (workspace Apply). Board status stays
+ * as it is: only the user's "Did you submit?" answer in the extension marks the job applied.
+ */
+export function useCreateApplicationSession() {
+  return useMutation({
+    mutationFn: (opportunityId: OpportunityId) =>
+      unwrap(client.api["extension-web"].sessions.$post({ json: { opportunityId } }), CreateSessionResult),
+  });
+}
+
 export async function fetchText(id: OutputId): Promise<string> {
   return (await unwrap(client.api.outputs[":id"].text.$get({ param: { id } }), TextExport)).text;
 }
@@ -400,6 +442,38 @@ export const useRemoveAiKey = () =>
 
 export const useUpdateSettings = () =>
   useSettingsMutation((json: UpdateSettingsInput) => unwrap(client.api.settings.$patch({ json }), SettingsDto));
+
+// ---------- Chrome extension pairing ----------
+
+/** How often the list refetches while a code waits, so a claim shows up without a reload. */
+const PAIRING_POLL_MS = 3000;
+
+export function usePairings() {
+  return useQuery({
+    queryKey: keys.pairings,
+    queryFn: () => unwrap(client.api["extension-web"].pairings.$get(), PairingList),
+    refetchInterval: (query) =>
+      query.state.data?.pairings.some((p) => p.status === "waiting") ? PAIRING_POLL_MS : false,
+  });
+}
+
+/** A new one-time code. The answer is the only place the code ever appears. */
+export function useCreatePairing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(client.api["extension-web"].pairings.$post({ json: {} }), CreatePairingResult),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.pairings }),
+  });
+}
+
+export function useRevokePairing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: PairingId) =>
+      unwrap(client.api["extension-web"].pairings[":id"].$delete({ param: { id } }, JSON_HEADERS), PairingDto),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.pairings }),
+  });
+}
 
 // ---------- Sources, refresh and matches ----------
 
@@ -500,6 +574,23 @@ export const useMergeJob = () =>
   useMatchMutation(({ id, into }: { id: JobId; into: JobId }) =>
     unwrap(client.api.jobs[":id"].merge.$post({ param: { id }, json: { into } }), MergeResult),
   );
+
+/**
+ * Start a draft from outside the workspace (Matches' "Save and write files"). The task runs on the
+ * server; the Board and the workspace pick it up when they next load.
+ */
+export function useStartDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ opportunityId, json }: { opportunityId: OpportunityId; json: DraftInput }) =>
+      unwrap(client.api.opportunities[":id"].draft.$post({ param: { id: opportunityId }, json }), TaskDto),
+    onSettled: (_data, _error, { opportunityId }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) }),
+        qc.invalidateQueries({ queryKey: keys.board }),
+      ]),
+  });
+}
 
 export const useUndoJob = () =>
   useMatchMutation(({ id, action }: { id: JobId; action: "save" | "dismiss" }) =>

@@ -83,6 +83,16 @@ export const ERROR_CODES = [
   /** gh is signed in as someone other than HB_GITHUB_USER. */
   "github_account",
   "github_unavailable",
+  /** Extension call without a valid bearer token or pairing code (docs/plans/chrome-extension.md). */
+  "unauthorized",
+  /** Request `Origin` is not the app (SPA routes) or not the paired extension (extension routes). */
+  "forbidden_origin",
+  /** Claiming an application session from a tab whose URL key differs, without `confirmMismatch`. */
+  "url_mismatch",
+  /** The application session is past its 15 minutes, superseded, or completed. */
+  "session_expired",
+  /** "Mark reviewed" sent a body other than the stored one: an edit or redraft landed since it was shown. */
+  "output_changed",
   "internal",
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -166,6 +176,8 @@ export const FactDto = z.object({
   id: FactId,
   key: FactKey,
   text: z.string(),
+  /** The job, project or heading the fact sits under, copied from the item's text. Null when none. */
+  section: z.string().nullable(),
   status: FactStatus,
   itemId: ItemId,
   itemKind: ProfileItemKind,
@@ -475,9 +487,23 @@ export const BoardItemDto = z.object({
   title: z.string(),
   company: z.string(),
   savedAt: z.string(),
+  /** When the source says the job was posted; null when it gave no date (pasted jobs, most feeds). */
+  postedAt: z.string().nullable(),
+  /** When a refresh or paste first found the job: the card's fallback when `postedAt` is null. */
+  firstSeenAt: z.string(),
   /** When the status last changed. */
   statusChangedAt: z.string(),
+  /** The eligibility verdict and the posting's location words: the card's "where it hires" line. */
+  eligibility: Eligibility,
+  locationText: z.string(),
+  /** Monthly in the view currency, compact ("₱289K–₱385K a month"), or as posted; null when none. */
+  pay: z.string().nullable(),
   ready: z.boolean(),
+  /**
+   * The latest draft task, while it runs or after it failed; null once it finished or if none
+   * ran. Matches' "Save and write files" drafts in the background, so the card says so.
+   */
+  drafting: z.enum(["running", "failed"]).nullable(),
   notes: z.string(),
   contract: ContractTerms.nullable(),
   /** Set on Applied rows with no change for FOLLOW_UP_DAYS or more: the quiet "follow up or close?" hint. */
@@ -596,6 +622,8 @@ export const OutputDto = z.object({
   position: z.number().int(),
   generatedAt: z.string().nullable(),
   editedAt: z.string().nullable(),
+  /** Set by "Mark reviewed"; cleared when a draft or an edit rewrites the body. Gates generated answers in prefill. */
+  reviewedAt: z.string().nullable(),
   citations: z.array(CitationDto),
   /** Style warnings (decision 43). They never block export. */
   styleHits: z.array(StyleHit),
@@ -747,15 +775,24 @@ export const WorkspaceDto = z.object({
 });
 export type WorkspaceDto = z.infer<typeof WorkspaceDto>;
 
+const OutputBody = z.string().max(100_000);
+
 export const UpdateOutputInput = z
   .object({
-    body: z.string().max(100_000).nullable().optional(),
+    body: OutputBody.nullable().optional(),
     included: z.boolean().optional(),
   })
   .refine((v) => v.body !== undefined || v.included !== undefined, {
     message: "Send body, included, or both.",
   });
 export type UpdateOutputInput = z.infer<typeof UpdateOutputInput>;
+
+/**
+ * "Mark reviewed": the body the user was shown. The server marks the output reviewed only if the
+ * stored body still reads the same, so an edit or redraft that landed meanwhile is never marked.
+ */
+export const MarkReviewedInput = z.object({ body: OutputBody });
+export type MarkReviewedInput = z.infer<typeof MarkReviewedInput>;
 
 export const AddQuestionInput = z.object({ question: z.string().trim().min(1).max(1000) });
 export type AddQuestionInput = z.infer<typeof AddQuestionInput>;
@@ -919,6 +956,8 @@ export const MatchItem = z.object({
   /** The role filter's reason when it is unsure (section 3.7a), shown as the "Role unclear" chip. */
   roleUnclear: z.string().nullable(),
   eligibility: Eligibility,
+  /** How many of the posting's known skills your confirmed facts name; `asked` is 0 when it names none. */
+  skills: z.object({ matched: z.number().int(), asked: z.number().int() }),
   /** Monthly in the view currency, or as posted; null when the posting states none. */
   pay: z.string().nullable(),
 });

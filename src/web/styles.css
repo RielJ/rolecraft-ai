@@ -167,6 +167,70 @@
   box-shadow: inset 0 1px 0 var(--sheen);
 }
 
+/*
+ * A Board column: a quiet lane between the page and its cards, so columns read as columns and an
+ * empty one still holds its place. Concentric with the cards: lane radius = card radius + padding.
+ */
+@utility board-lane {
+  border-radius: calc(var(--radius-xl) + 6px);
+  padding: 6px;
+  background-color: color-mix(in oklch, var(--card) 40%, var(--background));
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.03);
+}
+
+/*
+ * A card you can open (Board items). At rest: the glossy surface with a soft drop. On hover, with
+ * its menu open, or focused: an orange edge, a lighter fill and a slightly deeper drop. Color and
+ * shadow only, no movement: hover is frequent, so it changes in 150ms and never shifts the layout.
+ * Pressed: one step darker than hover, so a click or tap shows before the page changes.
+ */
+@utility lift-card {
+  position: relative;
+  border-radius: var(--radius-xl);
+  background-color: var(--card);
+  background-image: linear-gradient(180deg, oklch(1 0 0 / 0.035), oklch(1 0 0 / 0) 55%);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 var(--sheen),
+    0 1px 2px rgb(0 0 0 / 0.35);
+  transition-property: border-color, background-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+  /* The card draws its own pressed state; the gray tap flash would double it. */
+  -webkit-tap-highlight-color: transparent;
+
+  /* Needs a follow-up (decision 15): a warm edge at rest, so it is found without reading. */
+  &[data-follow-up] {
+    border-color: oklch(from var(--warning) l c h / 0.35);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      border-color: oklch(from var(--primary) l c h / 0.55);
+      background-color: oklch(0.215 0.018 50);
+      box-shadow:
+        inset 0 1px 0 oklch(1 0 0 / 0.1),
+        0 4px 12px -4px rgb(0 0 0 / 0.7);
+    }
+  }
+
+  &:has(> a:active) {
+    border-color: oklch(from var(--primary) l c h / 0.7);
+    background-color: oklch(0.2 0.016 50);
+    transition-duration: 0ms;
+  }
+
+  &:has([data-state="open"]) {
+    border-color: oklch(from var(--primary) l c h / 0.55);
+    background-color: oklch(0.215 0.018 50);
+  }
+
+  /* The link draws the ring itself (it fills the card); the card's edge follows it. */
+  &:has(> a:focus-visible) {
+    border-color: var(--ring);
+  }
+}
+
 /* A surface lit from below: for rare moments only (first run, an empty state, a done state). */
 @utility surface-glow {
   background-color: var(--card);

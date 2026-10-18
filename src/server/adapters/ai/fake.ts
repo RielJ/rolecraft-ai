@@ -1,5 +1,5 @@
 import { estimateTokens } from "@/domain/prompts";
-import { splitFacts } from "@/domain/split";
+import { splitSections } from "@/domain/split";
 import { sentenceSpans } from "@/domain/text";
 import { type AiCompletion, type AiCompletionRequest, AiError, type AiProviderClient } from "./types";
 
@@ -44,7 +44,7 @@ function defaultRewrite(request: AiCompletionRequest): string {
 function defaultSplit(request: AiCompletionRequest): string {
   const prompt = request.messages[0]?.content ?? "";
   const text = /^<<<\n([\s\S]*?)\n>>>$/m.exec(prompt)?.[1] ?? "";
-  return JSON.stringify({ facts: splitFacts({ text }).map((t) => ({ text: t })) });
+  return JSON.stringify({ facts: splitSections({ text }) });
 }
 
 /** The posting text between `<<<` and `>>>`. */

@@ -1,5 +1,6 @@
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { boardMetrics } from "@/domain/metrics";
+import { type FxRates, monthlyInView, payFromColumns } from "@/domain/pay";
 import type {
   BoardItemDto,
   BoardMetricsDto,
@@ -11,9 +12,10 @@ import type {
 import { FROZEN_STATUSES, MUST_ANSWERS, type OpportunityStatus, type OpportunityType } from "@/shared/enums";
 import { FOLLOW_UP_DAYS } from "@/shared/labels";
 import type { DbOrTx } from "../db/client";
-import { type HistoryEntry, jobs, opportunities, outputs } from "../db/schema";
+import { type HistoryEntry, jobs, opportunities, outputs, users } from "../db/schema";
 import { AppError, type Clock, type Deps, notFound } from "./context";
 import { loadContact } from "./profile";
+import { latestTask } from "./tasks";
 import { contractTerms, getWorkspace, isReady } from "./workspace";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,7 +39,20 @@ export function followUp({
 
 async function boardRows(deps: Deps, opportunityId?: OpportunityId) {
   return deps.db
-    .select({ opportunity: opportunities, title: jobs.title, company: jobs.company })
+    .select({
+      opportunity: opportunities,
+      title: jobs.title,
+      company: jobs.company,
+      postedAt: jobs.postedAt,
+      firstSeenAt: jobs.firstSeenAt,
+      eligibility: jobs.eligibility,
+      locationText: jobs.locationText,
+      payMin: jobs.payMin,
+      payMax: jobs.payMax,
+      payCurrency: jobs.payCurrency,
+      payPeriod: jobs.payPeriod,
+      payPhrase: jobs.payPhrase,
+    })
     .from(opportunities)
     .innerJoin(jobs, eq(jobs.id, opportunities.jobId))
     .where(
@@ -50,10 +65,34 @@ async function boardRows(deps: Deps, opportunityId?: OpportunityId) {
     .orderBy(desc(opportunities.statusChangedAt), desc(opportunities.createdAt));
 }
 
+/** The view currency and rates, read once per request, so card pay matches Matches. */
+type PayView = { viewCurrency: string; rates: FxRates };
+
+async function loadPayView(deps: Deps): Promise<PayView> {
+  const [user] = await deps.db
+    .select({ viewCurrency: users.viewCurrency, fxRates: users.fxRates })
+    .from(users)
+    .where(eq(users.id, deps.userId));
+  if (!user) throw notFound("Your profile");
+  return {
+    viewCurrency: user.viewCurrency,
+    rates: Object.fromEntries(Object.entries(user.fxRates).map(([code, e]) => [code, e.rate])),
+  };
+}
+
+/** Compact monthly pay in the view currency, else the posting's own words, as Matches shows it. */
+function cardPay(row: Awaited<ReturnType<typeof boardRows>>[number], view: PayView): string | null {
+  const pay = payFromColumns(row);
+  if (pay === null) return null;
+  return monthlyInView({ pay, ...view, compact: true }) ?? row.payPhrase ?? null;
+}
+
 async function toBoardItem(
   deps: Deps,
-  { opportunity: o, title, company }: Awaited<ReturnType<typeof boardRows>>[number],
+  row: Awaited<ReturnType<typeof boardRows>>[number],
+  view: PayView,
 ): Promise<BoardItemDto | null> {
+  const { opportunity: o, title, company, postedAt, firstSeenAt } = row;
   if (o.status === null) return null;
   const statusChangedAt = o.statusChangedAt ?? o.createdAt;
   return {
@@ -64,19 +103,33 @@ async function toBoardItem(
     title,
     company,
     savedAt: o.createdAt.toISOString(),
+    postedAt: postedAt?.toISOString() ?? null,
+    firstSeenAt: firstSeenAt.toISOString(),
     statusChangedAt: statusChangedAt.toISOString(),
+    eligibility: row.eligibility,
+    locationText: row.locationText,
+    pay: cardPay(row, view),
     ready: await isReady(deps, { opportunityId: o.id }),
+    drafting: await draftingState(deps, o.id),
     notes: o.notes,
     contract: contractTerms(o),
     followUp: followUp({ status: o.status, statusChangedAt, clock: deps.clock }),
   };
 }
 
+/** A running or failed draft, for the card; a finished, interrupted or absent one is null. */
+async function draftingState(deps: Deps, opportunityId: OpportunityId): Promise<BoardItemDto["drafting"]> {
+  const latest = await latestTask(deps, { kind: "draft", inputMatches: { opportunityId } });
+  const status = latest?.task.status;
+  return status === "running" || status === "failed" ? status : null;
+}
+
 /** Everything on the board, most recently moved first. Columns are grouped by the SPA. */
 export async function listBoard(deps: Deps): Promise<BoardItemDto[]> {
   const items: BoardItemDto[] = [];
+  const view = await loadPayView(deps);
   for (const row of await boardRows(deps)) {
-    const item = await toBoardItem(deps, row);
+    const item = await toBoardItem(deps, row, view);
     if (item) items.push(item);
   }
   return items;
@@ -103,7 +156,7 @@ export async function getBoardMetrics(deps: Deps): Promise<BoardMetricsDto> {
 
 async function boardItem(deps: Deps, opportunityId: OpportunityId): Promise<BoardItemDto> {
   const [row] = await boardRows(deps, opportunityId);
-  const item = row ? await toBoardItem(deps, row) : null;
+  const item = row ? await toBoardItem(deps, row, await loadPayView(deps)) : null;
   if (!item) throw notFound("That job");
   return item;
 }

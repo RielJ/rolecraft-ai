@@ -11,7 +11,12 @@ import { convert, type FxRates, type Pay, toMonthly } from "./pay";
 export type { MatchLevel, UserSeniority };
 export type ReasonSign = "positive" | "negative" | "neutral";
 export type Reason = { sign: ReasonSign; text: string };
-export type Match = { level: MatchLevel; reasons: Reason[] };
+export type Match = {
+  level: MatchLevel;
+  reasons: Reason[];
+  /** How many of the posting's known skills your confirmed facts name. Orders jobs within a level. */
+  skills: { matched: number; asked: number };
+};
 
 /** What the user brings: target titles, skills found in confirmed fact text, seniority and years. */
 export type MatchProfile = {
@@ -249,7 +254,11 @@ function score(p: Prepared, job: MatchJob): Match {
     years === null &&
     !eligibility.cap &&
     job.roleUnclear === null;
-  return { level: weak ? "weak" : strong ? "strong" : "possible", reasons };
+  return {
+    level: weak ? "weak" : strong ? "strong" : "possible",
+    reasons,
+    skills: { matched: matched.length, asked: job.skills.length },
+  };
 }
 
 /** A scorer for one profile, so target titles are tokenized once for a whole list of jobs. */

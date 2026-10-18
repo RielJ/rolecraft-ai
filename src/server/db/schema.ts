@@ -65,6 +65,17 @@ import {
   TASK_STATUSES,
   USER_SENIORITIES,
 } from "@/shared/enums";
+import {
+  APPLICATION_SESSION_STATUSES,
+  type ApplicationSessionId,
+  type ApplicationSessionStatus,
+  type PairingId,
+  PREFILL_CATEGORY_KEYS,
+  PREFILL_VALUE_TYPES,
+  type PreferenceId,
+  type PrefillCategory,
+  type TypedValue,
+} from "@/shared/extension";
 
 // Column names are snake_case via `casing: "snake_case"` (drizzle.config.ts and client.ts).
 
@@ -179,6 +190,8 @@ export const facts = pgTable(
       .references(() => profileItems.id, { onDelete: "cascade" })
       .$type<ItemId>(),
     text: text().notNull(),
+    /** The job, project or heading the fact sits under, copied from the item's text; null when none. */
+    section: text(),
     status: text().notNull().default("pending").$type<(typeof FACT_STATUSES)[number]>(),
     /** `text` facts compare `seen_rev` with the item's `rev`, `github` facts with its `github_rev`. */
     seenRev: integer().notNull(),
@@ -426,6 +439,8 @@ export const outputs = pgTable(
     styleHits: jsonb().$type<StyleHit[]>().notNull().default([]),
     generatedAt: timestamp({ withTimezone: true }),
     editedAt: timestamp({ withTimezone: true }),
+    /** Set by "Mark reviewed"; cleared when a draft rewrites the body. Gates generated answers in prefill. */
+    reviewedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -509,5 +524,111 @@ export const aiCalls = pgTable(
     check("ai_calls_purpose", oneOf("purpose", AI_PURPOSES)),
     check("ai_calls_provider", oneOf("provider", AI_PROVIDERS)),
     index("ai_calls_month").on(t.userId, t.createdAt),
+  ],
+);
+
+// ---------- Chrome extension (docs/plans/chrome-extension.md, migration 0008) ----------
+// None of these tables get an hb_sync grant: sync can neither read nor write them.
+
+/**
+ * One pairing per "Connect extension" click. Waiting until claimed with the one-time code, then
+ * active until revoked. Only hashes are stored; the code and the bearer token are shown once.
+ */
+export const extensionPairings = pgTable(
+  "extension_pairings",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<PairingId>(),
+    userId: userRef(),
+    /** `chrome-extension://<id>`, bound from the `Origin` header at claim. */
+    extensionOrigin: text(),
+    codeHash: text().notNull(),
+    codeExpiresAt: timestamp({ withTimezone: true }).notNull(),
+    tokenHash: text(),
+    claimedAt: timestamp({ withTimezone: true }),
+    revokedAt: timestamp({ withTimezone: true }),
+    lastUsedAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Claiming sets origin, token and claimed_at together.
+    check("extension_pairings_claim", sql`(claimed_at IS NULL) = (token_hash IS NULL)`),
+    check("extension_pairings_claim_origin", sql`(claimed_at IS NULL) = (extension_origin IS NULL)`),
+    check("extension_pairings_used", sql`last_used_at IS NULL OR claimed_at IS NOT NULL`),
+    check(
+      "extension_pairings_origin",
+      sql`extension_origin IS NULL OR extension_origin ~ '^chrome-extension://[a-p]{32}$'`,
+    ),
+    uniqueIndex("extension_pairings_code").on(t.codeHash),
+    uniqueIndex("extension_pairings_token").on(t.tokenHash),
+    index("extension_pairings_user").on(t.userId, t.createdAt.desc()),
+  ],
+);
+
+/**
+ * The workspace Apply handoff: a short-lived session the extension discovers and binds to a tab.
+ * At most one is live (pending or claimed) per user; creating one expires the others first.
+ */
+export const applicationSessions = pgTable(
+  "application_sessions",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<ApplicationSessionId>(),
+    userId: userRef(),
+    opportunityId: uuid()
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" })
+      .$type<OpportunityId>(),
+    applyUrl: text().notNull(),
+    /** `applyUrlKey(applyUrl)` from src/domain/dedup.ts. */
+    applyUrlKey: text().notNull(),
+    status: text().notNull().default("pending").$type<ApplicationSessionStatus>(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    claimedByPairingId: uuid()
+      .references(() => extensionPairings.id, { onDelete: "set null" })
+      .$type<PairingId>(),
+    claimedAt: timestamp({ withTimezone: true }),
+    completedAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("application_sessions_status", oneOf("status", APPLICATION_SESSION_STATUSES)),
+    check("application_sessions_pending", sql`status <> 'pending' OR claimed_at IS NULL`),
+    check("application_sessions_claimed", sql`status NOT IN ('claimed', 'completed') OR claimed_at IS NOT NULL`),
+    check("application_sessions_completed", sql`(status = 'completed') = (completed_at IS NOT NULL)`),
+    check("application_sessions_pairing", sql`claimed_by_pairing_id IS NULL OR claimed_at IS NOT NULL`),
+    uniqueIndex("application_sessions_one_live").on(t.userId).where(sql`status IN ('pending', 'claimed')`),
+    index("application_sessions_opportunity").on(t.opportunityId),
+  ],
+);
+
+/**
+ * Saved answers for prefill categories: one global default and one per-job override per category.
+ * Written only on an explicit save from the panel. No salary category exists (CHECK below).
+ */
+export const applicationPreferences = pgTable(
+  "application_preferences",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<PreferenceId>(),
+    userId: userRef(),
+    /** NULL for the global default. */
+    opportunityId: uuid()
+      .references(() => opportunities.id, { onDelete: "cascade" })
+      .$type<OpportunityId>(),
+    category: text().notNull().$type<PrefillCategory>(),
+    typedValue: jsonb().$type<TypedValue>().notNull(),
+    displayText: text().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("application_preferences_category", oneOf("category", PREFILL_CATEGORY_KEYS)),
+    check(
+      "application_preferences_typed_value",
+      sql`jsonb_typeof(typed_value) = 'object' AND ${oneOf("typed_value->>'valueType'", PREFILL_VALUE_TYPES)}`,
+    ),
+    check("application_preferences_display_text", sql`length(btrim(display_text)) > 0`),
+    uniqueIndex("application_preferences_global").on(t.userId, t.category).where(sql`opportunity_id IS NULL`),
+    uniqueIndex("application_preferences_job")
+      .on(t.userId, t.opportunityId, t.category)
+      .where(sql`opportunity_id IS NOT NULL`),
+    index("application_preferences_opportunity").on(t.opportunityId),
   ],
 );

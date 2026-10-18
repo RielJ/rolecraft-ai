@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { OpportunityId } from "@/shared/api";
 import { TopBar } from "./components/top-bar";
 import { BoardPage } from "./routes/board";
@@ -6,7 +6,7 @@ import { MatchesPage } from "./routes/matches";
 import { ProfilePage } from "./routes/profile";
 import { SettingsPage } from "./routes/settings";
 import { SourcesPage } from "./routes/sources";
-import { WorkspacePage } from "./routes/workspace";
+import { WorkspacePage, WorkspaceTab } from "./routes/workspace";
 import { Toaster } from "./ui/sonner";
 
 const rootRoute = createRootRoute({
@@ -46,9 +46,26 @@ export const workspaceRoute = createRoute({
     parse: (raw) => ({ opportunityId: OpportunityId.parse(raw.opportunityId) }),
     stringify: ({ opportunityId }) => ({ opportunityId }),
   },
+  // `?tab=posting` or `?tab=drafts`; without it the page picks one (see `defaultTab`).
+  validateSearch: (raw: Record<string, unknown>): { tab?: WorkspaceTab } => {
+    const tab = WorkspaceTab.safeParse(raw.tab);
+    return tab.success ? { tab: tab.data } : {};
+  },
   component: function WorkspaceRoute() {
     const { opportunityId } = workspaceRoute.useParams();
-    return <WorkspacePage key={opportunityId} opportunityId={opportunityId} />;
+    const { tab } = workspaceRoute.useSearch();
+    const navigate = useNavigate();
+    return (
+      <WorkspacePage
+        key={opportunityId}
+        opportunityId={opportunityId}
+        tab={tab}
+        // Replace, not push: Back leaves the job instead of stepping through its tabs.
+        onTab={(next) =>
+          void navigate({ to: "/jobs/$opportunityId", params: { opportunityId }, search: { tab: next }, replace: true })
+        }
+      />
+    );
   },
   errorComponent: () => (
     <p className="text-muted-foreground">That link does not point to a job. Open one from the Board.</p>

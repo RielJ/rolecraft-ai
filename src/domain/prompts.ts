@@ -202,9 +202,16 @@ export function promptText(prompt: Prompt): string {
 /** Output budget for one split call. The cap estimate uses the same number. */
 export const SPLIT_MAX_TOKENS = 3000;
 
-export type SplitItem = { kindLabel: string; title: string; body: string; skills: readonly string[] };
+export type SplitItem = {
+  kindLabel: string;
+  title: string;
+  body: string;
+  skills: readonly string[];
+  /** Facts already split from an earlier version, so a re-split keeps their wording (and their confirmation). */
+  saved: readonly string[];
+};
 
-const SPLIT_REPLY = 'Reply with JSON only: {"facts": [{"text": "..."}, ...]}';
+const SPLIT_REPLY = 'Reply with JSON only: {"facts": [{"text": "...", "section": "..." or null}, ...]}';
 
 /**
  * The light-tier split prompt. The item's text sits between `<<<` and `>>>`; the skills field is
@@ -219,7 +226,10 @@ export function buildSplitPrompt({ item }: { item: SplitItem }): Prompt {
     "- Keep their own words. Keep every number, name, tool, date and link exactly as written.",
     "- Add nothing the text does not say. Do not infer skills, years, titles or employers.",
     "- Skip headings and contact details (name, email, phone, address).",
+    '- Keep every line that lists skills, tools or technologies as one fact, worded as the text has it (for example "Databases & Tools: PostgreSQL, Redis"). Job matching reads skills only from facts, so a skipped skills line hides those skills.',
     "- Write each fact as a plain sentence or phrase, without bullets or numbering.",
+    "- Give each fact a section: the employer, project, school or heading it sits under, copied exactly as the text writes it (for a job, just the company name). Use null when it sits under none.",
+    "- When a saved fact still says what the text says, reuse its wording exactly, so the person does not have to confirm it again.",
   ].join("\n");
   const skills = item.skills.length ? item.skills.join(", ") : "(none)";
   const user = [
@@ -232,6 +242,9 @@ export function buildSplitPrompt({ item }: { item: SplitItem }): Prompt {
     item.body.trim(),
     ">>>",
     "",
+    ...(item.saved.length
+      ? ["SAVED FACTS (from an earlier version of this text)", ...item.saved.map((t) => `- ${t}`), ""]
+      : []),
     "TASK",
     "Split the text into facts.",
     SPLIT_REPLY,

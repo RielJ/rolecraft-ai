@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Backend Engineer</title>
+  </head>
+  <body>
+    <h1>Backend Engineer</h1>
+    <form id="apply" action="/submit" method="post">
+      <!-- Labelled controls the scan reports, in document order. -->
+      <label for="first">First name <span aria-hidden="true">*</span></label>
+      <input id="first" name="first_name" autocomplete="given-name" required />
+
+      <label>Last name <input name="last_name" type="text" /></label>
+
+      <span id="email-label">Email address</span>
+      <input name="email" type="email" aria-labelledby="email-label" />
+
+      <input name="phone" type="tel" aria-label="Phone number" />
+
+      <input name="linkedin" type="url" placeholder="LinkedIn profile" />
+
+      <label for="location">Current city</label>
+      <input id="location" name="location" value="Manila" />
+
+      <label for="years">Years of experience</label>
+      <input id="years" name="years" type="number" />
+
+      <label for="start">Earliest start date</label>
+      <input id="start" name="start" type="date" />
+
+      <label for="why">Why do you want to work here?</label>
+      <textarea id="why" name="why"></textarea>
+
+      <label for="arrangement">Preferred work arrangement</label>
+      <select id="arrangement" name="arrangement">
+        <option value="">Select…</option>
+        <option value="remote">Remote</option>
+        <option value="hybrid">Hybrid</option>
+        <option value="onsite" disabled>On-site (full)</option>
+      </select>
+
+      <fieldset>
+        <legend>Will you require visa sponsorship?</legend>
+        <label><input type="radio" name="sponsorship" value="yes" /> Yes</label>
+        <label><input type="radio" name="sponsorship" value="no" /> No</label>
+      </fieldset>
+
+      <label><input type="checkbox" name="relocate" /> I am willing to relocate</label>
+
+      <label for="resume">Resume</label>
+      <input id="resume" name="resume" type="file" accept="application/pdf" />
+
+      <label for="rate">Expected monthly rate</label>
+      <input id="rate" name="rate" />
+
+      <!-- Controls the scan must skip. -->
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" />
+
+      <input name="csrf" type="hidden" value="t0ken" />
+
+      <label for="ref">Reference number</label>
+      <input id="ref" name="ref" readonly value="" />
+
+      <label for="disabled">Disabled field</label>
+      <input id="disabled" name="disabled_field" disabled />
+
+      <fieldset disabled>
+        <legend>Locked section</legend>
+        <label for="locked">Locked field</label>
+        <input id="locked" name="locked_field" />
+      </fieldset>
+
+      <div style="display: none">
+        <label for="collapsed">Collapsed field</label>
+        <input id="collapsed" name="collapsed_field" />
+      </div>
+
+      <div hidden>
+        <input name="hidden_attr_field" aria-label="Hidden by attribute" />
+      </div>
+
+      <div aria-hidden="true">
+        <input name="aria_hidden_field" aria-label="Hidden from assistive tech" />
+      </div>
+
+      <input name="invisible_field" aria-label="Invisible" style="visibility: hidden" />
+
+      <input name="transparent_field" aria-label="Transparent" style="opacity: 0" />
+
+      <label for="hp">Leave this field blank</label>
+      <input id="hp" name="contact_me_by_fax" tabindex="-1" autocomplete="off" />
+
+      <input name="honeypot" aria-label="Website" />
+
+      <div class="g-recaptcha">
+        <textarea name="g-recaptcha-response" aria-label="Captcha response"></textarea>
+      </div>
+
+      <label for="captcha">Type the characters you see</label>
+      <input id="captcha" name="captcha_answer" />
+
+      <label for="q">Search jobs</label>
+      <input id="q" name="q" type="search" />
+
+      <label for="langs">Languages</label>
+      <select id="langs" name="langs" multiple>
+        <option value="en">English</option>
+        <option value="tl">Tagalog</option>
+      </select>
+
+      <button type="submit" id="submit">Submit application</button>
+    </form>
+  </body>
+</html>

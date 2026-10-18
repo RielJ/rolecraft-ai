@@ -53,6 +53,16 @@ describe("monthlyInView", () => {
     const pay = { min: 60000, max: 80000, currency: "USD", period: "year" as const };
     expect(monthlyInView({ pay, viewCurrency: "PHP", rates: { USD: 57.8 } })).toBe("₱289,000–₱385,333 a month");
   });
+  test("compact, for a Board card: three significant digits, K and M", () => {
+    const pay = { min: 60000, max: 80000, currency: "USD", period: "year" as const };
+    expect(monthlyInView({ pay, viewCurrency: "PHP", rates: { USD: 57.8 }, compact: true })).toBe(
+      "₱289K–₱385K a month",
+    );
+    const big = { min: 30000, max: null, currency: "USD", period: "month" as const };
+    expect(monthlyInView({ pay: big, viewCurrency: "PHP", rates: { USD: 57.8 }, compact: true })).toBe(
+      "₱1.73M a month",
+    );
+  });
   test("a EUR job with no rate shows as posted (no conversion)", () => {
     const pay = { min: 50000, max: null, currency: "EUR", period: "year" as const };
     expect(monthlyInView({ pay, viewCurrency: "PHP", rates: { USD: 57.8 } })).toBeNull();

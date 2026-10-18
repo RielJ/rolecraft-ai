@@ -398,6 +398,78 @@ export function refreshedLabel({ at, now }: { at: Date | null; now: Date }): str
   return `Refreshed ${count(Math.floor(ms / DAY_MS), "day")} ago`;
 }
 
+/**
+ * "Posted 12d ago" on a Board card, from the source's posting date. Without one it says when
+ * the job was first found ("Found 3d ago"), so the card never claims a date it does not have.
+ * Whole days; a date a little ahead of the clock counts as today.
+ */
+export function postedLabel({
+  postedAt,
+  firstSeenAt,
+  now,
+}: {
+  postedAt: Date | null;
+  firstSeenAt: Date;
+  now: Date;
+}): string {
+  const verb = postedAt === null ? "Found" : "Posted";
+  const days = wholeDays({ from: postedAt ?? firstSeenAt, now });
+  if (days === 0) return `${verb} today`;
+  if (days === 1) return `${verb} yesterday`;
+  return `${verb} ${shortDays(days)} ago`;
+}
+
+/** Whole days from `from` to `now`; a time a little ahead of the clock counts as 0. */
+function wholeDays({ from, now }: { from: Date; now: Date }): number {
+  return Math.max(0, Math.floor((now.getTime() - from.getTime()) / DAY_MS));
+}
+
+/** "12d", "2mo", "3y": a day count short enough for a Board card. */
+function shortDays(days: number): string {
+  if (days < 60) return `${days}d`;
+  if (days < 730) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
+/**
+ * How long a card has sat in its column: `short` on the card ("20d"), `long` for its tooltip and
+ * screen readers ("for 20 days"), after the column name.
+ */
+export function inColumnLabel({ since, now }: { since: Date; now: Date }): { short: string; long: string } {
+  const days = wholeDays({ from: since, now });
+  if (days === 0) return { short: "Today", long: "since today" };
+  return { short: shortDays(days), long: `for ${count(days, "day")}` };
+}
+
+/**
+ * Where a Board card says the job hires: the eligibility verdict, short, when it is known; for an
+ * unclear one, the posting's own location words; null when there is nothing to say.
+ */
+export function boardLocationLabel({
+  eligibility,
+  locationText,
+}: {
+  eligibility: Eligibility;
+  locationText: string;
+}): string | null {
+  switch (eligibility) {
+    case "ph":
+      return "Open to PH";
+    case "excluded":
+      return "Excludes PH";
+    case "worldwide":
+    case "apac":
+    case "americas":
+      return eligibilityLabel(eligibility);
+    case "unclear":
+      return locationText.trim() || null;
+    default: {
+      const _exhaustive: never = eligibility;
+      return _exhaustive;
+    }
+  }
+}
+
 /** "No jobs", "1 job", "1,204 jobs": the top bar's count of what Matches can show. */
 export function jobCountLabel(n: number): string {
   if (n === 0) return "No jobs";

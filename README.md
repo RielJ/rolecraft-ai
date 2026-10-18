@@ -6,7 +6,7 @@ Hanapbuhay is a job search tool for one person in the Philippines who applies to
 - It keeps the jobs you care about on a board, from Saved to Closed.
 - It drafts a tailored resume, cover letter, short message, and answers for each job. Every claim in a draft comes from facts you confirmed.
 
-It never submits an application and never fills in a form on another site. You copy or export the files and apply yourself.
+It never submits an application. You copy or export the files and apply yourself, or let the optional Chrome extension fill the empty fields of the form after you check them.
 
 Each person runs their own copy, with their own database and their own AI key. There is no login.
 
@@ -70,6 +70,16 @@ PDF export needs Chromium. If `HB_CHROMIUM_PATH` is empty, the app uses Playwrig
 
 To serve the built app from one process, run `bun run build`, then `bun run start`.
 
+## Use the Chrome extension
+
+The extension adds a side panel that fills empty fields on a job's application form from your profile and reviewed answers, after you click **Prefill**. It never submits, never overwrites a field, and never fills a pay question.
+
+1. Run `bun run build:extension`.
+2. In `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select `dist-extension/`.
+3. Pair it with a code from **Settings** > **Chrome extension**.
+
+[docs/EXTENSION.md](docs/EXTENSION.md) covers pairing, revoking, permissions, stored data, the threat model, the limits, and the manual checks.
+
 ## Environment variables
 
 `src/server/env.ts` parses these at startup. If one is invalid, the process stops and prints the problem. `.env.example` lists the common ones.
@@ -78,6 +88,8 @@ To serve the built app from one process, run `bun run build`, then `bun run star
 |---|---|---|
 | `DATABASE_URL` | `postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay` | The app database. |
 | `PORT` | `3000` | The API port. In production the same port serves the SPA. |
+| `HB_HOST` | `127.0.0.1` | The interface the server listens on. The app has no login, so keep it on loopback. The Docker image sets `0.0.0.0`, and Compose publishes the port on `127.0.0.1` only. |
+| `HB_ALLOWED_HOSTS` | unset | Extra hostnames, comma-separated and without a port, that the server answers to. It always answers to `localhost`, `127.0.0.1`, and `[::1]`. A request with any other `Host` header gets 403, which blocks DNS rebinding. |
 | `HB_AI` | `live` | Where AI calls go. See the next table. |
 | `HB_DATA_DIR` | `./data` | Where the AI key file is written, with mode 0600. |
 | `HB_CHROMIUM_PATH` | unset | The Chromium binary for PDF export. Unset uses Playwright's Chromium. |
@@ -160,6 +172,7 @@ Domain code may not read the clock or use randomness. Callers pass `now`.
 |---|---|
 | `bun run check` | Biome, `tsc --noEmit`, and `bun test`. The unit tests and the service tests run against a real Postgres database, `hanapbuhay_test`. |
 | `bun run e2e` | Playwright specs in `e2e/`. Run `bun run build` first. The suite starts the server on port 3100 with `HB_AI=fake` and `HB_SOURCES=fixture`, against `hanapbuhay_e2e`. |
+| `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. Run `bun run build` first. See [docs/EXTENSION.md](docs/EXTENSION.md). |
 | `bun run eval ...` | The evaluation set. It makes real AI calls, so it costs money. |
 
 Start Postgres with `bun run db:up` before `bun run check` or `bun run e2e`.

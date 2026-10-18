@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import type { ApiErrorBody } from "@/shared/api";
 import { AppError, type Deps } from "../services/context";
+import { localGuard } from "./local-guard";
 import { boardRoutes } from "./routes/board";
+import { extensionRoutes } from "./routes/extension";
+import { extensionWebRoutes } from "./routes/extension-web";
 import { filteredRoutes } from "./routes/filtered";
 import { jobRoutes } from "./routes/jobs";
 import { matchRoutes } from "./routes/matches";
@@ -12,9 +15,12 @@ import { sourceRoutes } from "./routes/sources";
 import { taskRoutes } from "./routes/tasks";
 import { workspaceRoutes } from "./routes/workspace";
 
-export function createApp(deps: Deps) {
+/** `allowedHosts`: HB_ALLOWED_HOSTS. Tests omit it; app.request sends Host localhost, which passes. */
+export function createApp(deps: Deps, { allowedHosts = [] }: { allowedHosts?: readonly string[] } = {}) {
   const app = new Hono()
     .basePath("/api")
+    // First, so it runs before every route (Host check, and Origin check on mutating calls).
+    .use(localGuard({ allowedHosts }))
     .route("/", setupRoutes(deps))
     .route("/", profileRoutes(deps))
     .route("/", jobRoutes(deps))
@@ -24,7 +30,10 @@ export function createApp(deps: Deps) {
     .route("/", workspaceRoutes(deps))
     .route("/", settingsRoutes(deps))
     .route("/", sourceRoutes(deps))
-    .route("/", taskRoutes(deps));
+    .route("/", taskRoutes(deps))
+    // Prefixed mounts, so their middleware (JSON check; bearer guard and CORS) stays inside them.
+    .route("/extension-web", extensionWebRoutes(deps))
+    .route("/extension", extensionRoutes(deps));
 
   app.onError((err, c) => {
     if (err instanceof AppError) {

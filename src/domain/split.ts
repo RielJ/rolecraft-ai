@@ -17,46 +17,97 @@ function sentences(paragraph: string): string[] {
     .filter((s) => s !== "");
 }
 
+/** A fact candidate and the part of the text it sits under: a job, a project or a heading. */
+export type FactCandidate = { text: string; section: string | null };
+
+/** A line that can name the bullets under it: short, and not a sentence. */
+function isLead(line: string): boolean {
+  return line.length <= 100 && !/[.!?]$/.test(line);
+}
+
 /**
  * Rule-based fact candidates: one per bullet, one per sentence of prose.
  * Every candidate is a verbatim span of the input, so nothing is invented.
+ *
+ * Each candidate also gets a section, copied from the text: a short line right above a run of
+ * bullets (a CV's "Acme Corp, 2019 to 2023" line), and failing that the latest heading.
  */
-export function splitFacts({ text }: { text: string }): string[] {
-  const candidates: string[] = [];
+export function splitSections({ text }: { text: string }): FactCandidate[] {
+  const candidates: FactCandidate[] = [];
   let paragraph: string[] = [];
+  let heading: string | null = null;
+  let lead: string | null = null;
+  let inBullets = false;
 
-  const flush = () => {
-    if (paragraph.length) candidates.push(...sentences(paragraph.join(" ")));
+  const flush = (section: string | null) => {
+    if (paragraph.length) {
+      for (const s of sentences(paragraph.join(" "))) candidates.push({ text: s, section });
+    }
     paragraph = [];
   };
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line === "") {
-      flush();
+      flush(heading);
       continue;
     }
     if (BULLET.test(line)) {
-      flush();
+      if (!inBullets) {
+        // A one-line paragraph just above the bullets names them, and belongs with them.
+        const last = paragraph.at(-1);
+        if (paragraph.length === 1 && last && isLead(last)) lead = last;
+        flush(paragraph.length === 1 && lead === paragraph[0] ? lead : heading);
+      }
+      inBullets = true;
       const item = line.replace(BULLET, "").trim();
-      if (item !== "" && !isHeading(item)) candidates.push(item);
+      if (item !== "" && !isHeading(item)) candidates.push({ text: item, section: lead ?? heading });
       continue;
     }
+    inBullets = false;
     if (isHeading(line)) {
-      flush();
+      flush(heading);
+      heading = line.replace(/:$/, "").trim();
+      lead = null;
       continue;
+    }
+    if (paragraph.length === 0 && isLead(line)) {
+      // A new name line ends the previous job's bullets.
+      lead = null;
     }
     paragraph.push(line);
   }
-  flush();
+  flush(heading);
 
   const seen = new Set<string>();
   return candidates.filter((c) => {
-    const key = normalize(c);
+    const key = normalize(c.text);
     if (key === "" || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+/** Rule-based fact candidates without their sections. */
+export function splitFacts({ text }: { text: string }): string[] {
+  return splitSections({ text }).map((c) => c.text);
+}
+
+/**
+ * A section label is kept only when the item's text contains it, words in order, so a label
+ * cannot invent an employer. Anything else becomes null and the fact shows ungrouped.
+ */
+export function sectionIn({
+  section,
+  evidence,
+}: {
+  section: string | null | undefined;
+  evidence: string;
+}): string | null {
+  const label = section?.replace(/\s+/g, " ").trim().replace(/:$/, "") ?? "";
+  const key = normalize(label);
+  if (key === "" || label.length > 120) return null;
+  return ` ${normalize(evidence)} `.includes(` ${key} `) ? label : null;
 }
 
 // ---------- Checking candidates against the item's own text (section 3.3, step 2) ----------

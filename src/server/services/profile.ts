@@ -13,7 +13,8 @@ import {
   SPLIT_MAX_TOKENS,
   type SplitItem,
 } from "@/domain/prompts";
-import { checkCandidates, splitFacts } from "@/domain/split";
+import { checkCandidates, type FactCandidate, sectionIn, splitSections } from "@/domain/split";
+import { normalize } from "@/domain/text";
 import {
   type AddonInput,
   type Contact,
@@ -127,6 +128,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
         id: facts.id,
         no: facts.no,
         text: facts.text,
+        section: facts.section,
         status: facts.status,
         seenRev: facts.seenRev,
         origin: facts.origin,
@@ -186,8 +188,19 @@ export async function updateProfile(deps: Deps, input: UpdateProfileInput): Prom
 
 // ---------- Split (section 3.3, steps 2 and 3) ----------
 
-function splitItem(row: Pick<ItemRow, "kind" | "title" | "body" | "skills">): SplitItem {
-  return { kindLabel: itemKindLabel(row.kind), title: row.title, body: row.body, skills: row.skills };
+/** The text facts an item's earlier versions produced, oldest first. A new item has none. */
+async function savedTexts(deps: Pick<Deps, "db">, itemId: ItemId | null): Promise<string[]> {
+  if (!itemId) return [];
+  const rows = await deps.db
+    .select({ text: facts.text })
+    .from(facts)
+    .where(and(eq(facts.itemId, itemId), eq(facts.origin, "text")))
+    .orderBy(asc(facts.no));
+  return rows.map((r) => r.text);
+}
+
+function splitItem(row: Pick<ItemRow, "kind" | "title" | "body" | "skills">, saved: readonly string[]): SplitItem {
+  return { kindLabel: itemKindLabel(row.kind), title: row.title, body: row.body, skills: row.skills, saved };
 }
 
 /** The item's own text is the only evidence a fact may rest on. An add-on's title is part of it. */
@@ -213,9 +226,11 @@ async function checkSplitCap(
   });
 }
 
-const SplitResult = z.object({ facts: z.array(z.object({ text: z.string() })) });
+const SplitResult = z.object({
+  facts: z.array(z.object({ text: z.string(), section: z.string().nullish() })),
+});
 
-function parseSplit(text: string): { ok: true; facts: string[] } | { ok: false; error: string } {
+function parseSplit(text: string): { ok: true; facts: FactCandidate[] } | { ok: false; error: string } {
   let json: unknown;
   try {
     json = JSON.parse(cleanModelText(text));
@@ -224,7 +239,7 @@ function parseSplit(text: string): { ok: true; facts: string[] } | { ok: false; 
   }
   const parsed = SplitResult.safeParse(json);
   if (!parsed.success) return { ok: false, error: z.prettifyError(parsed.error) };
-  return { ok: true, facts: parsed.data.facts.map((f) => f.text) };
+  return { ok: true, facts: parsed.data.facts.map((f) => ({ text: f.text, section: f.section ?? null })) };
 }
 
 /** Light-tier split with one retry on an unreadable reply, then the task fails with the parse error. */
@@ -232,7 +247,7 @@ async function aiCandidates(
   deps: Deps,
   ctx: TaskContext,
   { item, config, confirmOverCap }: { item: SplitItem; config: AiConfig; confirmOverCap: boolean },
-): Promise<string[]> {
+): Promise<FactCandidate[]> {
   const ai = (prompt: Prompt) =>
     runAi(deps, {
       tier: "light",
@@ -274,7 +289,7 @@ type SplitOutcome =
  */
 async function applySplit(
   deps: Deps,
-  { itemId, rev, candidates }: { itemId: ItemId; rev: number; candidates: readonly string[] },
+  { itemId, rev, candidates }: { itemId: ItemId; rev: number; candidates: readonly FactCandidate[] },
 ) {
   return deps.db.transaction(async (tx) => {
     const [locked] = await tx
@@ -290,13 +305,29 @@ async function applySplit(
       .select({ id: facts.id, text: facts.text, status: facts.status })
       .from(facts)
       .where(and(eq(facts.itemId, itemId), eq(facts.origin, "text")));
-    const diff = diffFacts({ existing, candidates });
-    if (diff.unchanged.length) {
-      await tx.update(facts).set({ seenRev: rev }).where(inArray(facts.id, diff.unchanged));
+    const diff = diffFacts({ existing, candidates: candidates.map((c) => c.text) });
+    const sectionOf = new Map(candidates.map((c) => [normalize(c.text), c.section]));
+    const textOf = new Map(existing.map((f) => [f.id, f.text]));
+    // An unchanged fact keeps its status but takes this version's section: one update per section.
+    const bySection = new Map<string | null, FactId[]>();
+    for (const id of diff.unchanged) {
+      const section = sectionOf.get(normalize(textOf.get(id) ?? "")) ?? null;
+      bySection.set(section, [...(bySection.get(section) ?? []), id]);
+    }
+    for (const [section, ids] of bySection) {
+      await tx.update(facts).set({ seenRev: rev, section }).where(inArray(facts.id, ids));
     }
     if (diff.removed.length) await tx.delete(facts).where(inArray(facts.id, diff.removed));
     if (diff.added.length) {
-      await tx.insert(facts).values(diff.added.map((text) => ({ userId: deps.userId, itemId, text, seenRev: rev })));
+      await tx.insert(facts).values(
+        diff.added.map((text) => ({
+          userId: deps.userId,
+          itemId,
+          text,
+          section: sectionOf.get(normalize(text)) ?? null,
+          seenRev: rev,
+        })),
+      );
     }
     return {
       kind: "applied",
@@ -316,19 +347,23 @@ async function runSplit(
   const [row] = await deps.db.select().from(profileItems).where(eq(profileItems.id, itemId));
   if (!row) return { kind: "skipped", reason: "item_deleted" };
   const what = row.kind === "cv" ? "your CV" : `"${row.title}"`;
-  const item = splitItem(row);
+  const item = splitItem(row, await savedTexts(deps, row.id));
 
   const config = await loadAiConfig(deps);
   await ctx.step(`Splitting ${what} into facts${config ? " with AI" : ""}`);
   const candidates = config
     ? await aiCandidates(deps, ctx, { item, config, confirmOverCap })
-    : splitFacts({ text: row.body });
+    : splitSections({ text: row.body });
 
   await ctx.step("Checking each fact against your text");
-  const { kept, dropped } = checkCandidates({ candidates, evidence: evidenceOf(row) });
+  const evidence = evidenceOf(row);
+  const { kept, dropped } = checkCandidates({ candidates: candidates.map((c) => c.text), evidence });
+  // A section must be in the text too; one that isn't is dropped and the fact shows ungrouped.
+  const sectionOf = new Map(candidates.map((c) => [normalize(c.text), sectionIn({ section: c.section, evidence })]));
+  const checked = kept.map((text) => ({ text, section: sectionOf.get(normalize(text)) ?? null }));
 
   await ctx.step("Comparing with your current facts");
-  const applied = await applySplit(deps, { itemId, rev: row.rev, candidates: kept });
+  const applied = await applySplit(deps, { itemId, rev: row.rev, candidates: checked });
   if (applied.kind === "skipped") return applied;
   return { ...applied, method: config ? "ai" : "rules", dropped: dropped.map((d) => d.text) };
 }
@@ -348,7 +383,7 @@ export async function retrySplit(deps: Deps, input: unknown, { confirmOverCap }:
     throw new AppError({ code: "invalid_input", message: "This task's input is unreadable. Save the item again." });
   }
   const row = await loadItem(deps, parsed.data.itemId);
-  await checkSplitCap(deps, { item: splitItem(row), confirmOverCap });
+  await checkSplitCap(deps, { item: splitItem(row, await savedTexts(deps, row.id)), confirmOverCap });
   return startSplit(deps, { itemId: row.id, confirmOverCap });
 }
 
@@ -377,18 +412,25 @@ export async function saveCv(
     confirmOverCap = false,
   }: { text: string; fileName?: string | null; confirmOverCap?: boolean | undefined },
 ): Promise<ProfileDto> {
-  await checkSplitCap(deps, { item: { kindLabel: "CV", title: "CV", body: text, skills: [] }, confirmOverCap });
+  const [cv] = await deps.db
+    .select({ id: profileItems.id })
+    .from(profileItems)
+    .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")));
+  const saved = await savedTexts(deps, cv?.id ?? null);
+  await checkSplitCap(deps, { item: { kindLabel: "CV", title: "CV", body: text, skills: [], saved }, confirmOverCap });
   const now = deps.clock.now();
   const itemId = await deps.db.transaction(async (tx) => {
     const [existing] = await tx
-      .select({ id: profileItems.id, rev: profileItems.rev })
+      .select({ id: profileItems.id, rev: profileItems.rev, body: profileItems.body, fileName: profileItems.fileName })
       .from(profileItems)
       .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")))
       .for("update");
     if (existing) {
+      // Saving the same text again (to split it again) keeps the name of the file it came from.
+      const name = fileName ?? (existing.body === text ? existing.fileName : null);
       await tx
         .update(profileItems)
-        .set({ body: text, fileName, rev: existing.rev + 1, updatedAt: now })
+        .set({ body: text, fileName: name, rev: existing.rev + 1, updatedAt: now })
         .where(eq(profileItems.id, existing.id));
       return existing.id;
     }
@@ -453,7 +495,7 @@ function addonValues(input: AddonInput) {
 export async function createAddon(deps: Deps, input: AddonInput): Promise<ProfileDto> {
   const values = addonValues(input);
   const confirmOverCap = input.confirmOverCap ?? false;
-  await checkSplitCap(deps, { item: splitItem(values), confirmOverCap });
+  await checkSplitCap(deps, { item: splitItem(values, []), confirmOverCap });
   const [created] = await deps.db
     .insert(profileItems)
     .values({ userId: deps.userId, ...values })
@@ -479,7 +521,7 @@ export async function updateAddon(
     row.title !== values.title ||
     row.body !== values.body ||
     row.skills.join("\n") !== values.skills.join("\n");
-  if (resplit) await checkSplitCap(deps, { item: splitItem(values), confirmOverCap });
+  if (resplit) await checkSplitCap(deps, { item: splitItem(values, await savedTexts(deps, itemId)), confirmOverCap });
   await deps.db
     .update(profileItems)
     .set({ ...values, updatedAt: deps.clock.now(), ...(resplit ? { rev: row.rev + 1 } : {}) })

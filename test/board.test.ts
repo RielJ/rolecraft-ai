@@ -160,6 +160,39 @@ describe("status changes", () => {
   });
 });
 
+describe("drafting on the card", () => {
+  /** A draft task row as the task runner leaves it, at a given age so the latest one wins. */
+  const draftTask = (ws: WorkspaceDto, status: string, minutesAgo: number) =>
+    testSql()`INSERT INTO tasks (user_id, kind, status, input, created_at)
+      VALUES (${deps.userId}, 'draft', ${status}, ${testSql().json({ opportunityId: ws.opportunity.id })},
+        now() - make_interval(mins => ${minutesAgo}))`;
+  const drafting = async () => (await board()).map((r) => r.drafting);
+
+  test("shows the latest draft while it runs or after it failed, and nothing once it is done", async () => {
+    const ws = await pasteJob();
+    expect(await drafting()).toEqual([null]);
+    await draftTask(ws, "running", 3);
+    expect(await drafting()).toEqual(["running"]);
+    await draftTask(ws, "failed", 2);
+    expect(await drafting()).toEqual(["failed"]);
+    await draftTask(ws, "done", 1);
+    expect(await drafting()).toEqual([null]);
+  });
+
+  test("another job's draft does not show on this card", async () => {
+    await pasteJob();
+    const other = await pasteJob({ ...JOB, url: "https://jobs.lever.co/acme/456", title: "Platform Engineer" });
+    await draftTask(other, "running", 1);
+    const rows = await board();
+    expect(rows.map((r) => [r.title, r.drafting])).toEqual(
+      expect.arrayContaining([
+        ["Senior Backend Engineer", null],
+        ["Platform Engineer", "running"],
+      ]),
+    );
+  });
+});
+
 describe("contracts", () => {
   test("a contract keeps rate, rate type, currency and platform, and says Proposal sent for applied", async () => {
     const ws = await pasteJob();
@@ -366,5 +399,40 @@ describe("notes", () => {
     expect((await board())[0]?.notes).toBe("Referred by Ana.\nFollow up Monday.");
     const cleared = await json(await patch(ws, { notes: "" }), WorkspaceDto);
     expect(cleared.opportunity.notes).toBe("");
+  });
+});
+
+describe("posting date on the card", () => {
+  test("the board carries the posting date, null when the source gave none, and when it was first seen", async () => {
+    const ws = await pasteJob();
+    const [none] = await board();
+    expect(none?.postedAt).toBeNull();
+    const [seen] = await testSql()`SELECT first_seen_at FROM jobs`;
+    expect(none?.firstSeenAt).toBe(new Date(seen?.first_seen_at as string).toISOString());
+
+    await testSql()`UPDATE jobs SET posted_at = '2026-09-20T03:00:00Z'`;
+    expect((await board())[0]?.postedAt).toBe("2026-09-20T03:00:00.000Z");
+    // A move answers with the same shape.
+    const moved = await json(await move(ws, { status: "applied" }), BoardItemDto);
+    expect(moved.postedAt).toBe("2026-09-20T03:00:00.000Z");
+  });
+
+  test("the card carries where it hires and the pay, compact and monthly in the view currency", async () => {
+    await pasteJob();
+    const [plain] = await board();
+    expect(plain?.pay).toBeNull();
+    expect(typeof plain?.locationText).toBe("string");
+
+    await json(await call("PATCH", "/settings", { viewCurrency: "PHP", fxRates: { USD: 57.8 } }), z.unknown());
+    await testSql()`UPDATE jobs SET pay_min = 60000, pay_max = 80000, pay_currency = 'USD', pay_period = 'year',
+      eligibility = 'worldwide', location_text = 'Anywhere'`;
+    const [paid] = await board();
+    expect(paid?.pay).toBe("₱289K–₱385K a month");
+    expect(paid?.eligibility).toBe("worldwide");
+    expect(paid?.locationText).toBe("Anywhere");
+
+    // No rate for the currency: the posting's own words, as Matches shows them.
+    await testSql()`UPDATE jobs SET pay_currency = 'EUR', pay_phrase = '€50k a year'`;
+    expect((await board())[0]?.pay).toBe("€50k a year");
   });
 });

@@ -138,20 +138,48 @@ const PERIOD_WORDS: Readonly<Record<PayPeriod, string>> = {
   year: "a year",
 };
 
-function money({ amount, currency }: { amount: number; currency: string }): string {
+/** "₱289,000", or "₱289K" when compact (three significant digits, for tight spots like a Board card). */
+function money({ amount, currency, compact = false }: { amount: number; currency: string; compact?: boolean }): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     currencyDisplay: "narrowSymbol",
-    maximumFractionDigits: amount < 100 ? 2 : 0,
-    minimumFractionDigits: 0,
+    ...(compact
+      ? { notation: "compact", maximumSignificantDigits: 3 }
+      : { maximumFractionDigits: amount < 100 ? 2 : 0, minimumFractionDigits: 0 }),
   }).format(amount);
 }
 
-/** "₱289,000–₱385,333" or "₱289,000". */
-function range({ min, max, currency }: { min: number; max: number | null; currency: string }): string {
-  const low = money({ amount: min, currency });
-  return max === null || max === min ? low : `${low}–${money({ amount: max, currency })}`;
+/** "₱289,000–₱385,333" or "₱289,000"; "₱289K–₱385K" when compact. */
+function range({
+  min,
+  max,
+  currency,
+  compact = false,
+}: {
+  min: number;
+  max: number | null;
+  currency: string;
+  compact?: boolean;
+}): string {
+  const low = money({ amount: min, currency, compact });
+  return max === null || max === min ? low : `${low}–${money({ amount: max, currency, compact })}`;
+}
+
+/** Pay from the `jobs` pay columns, or null when the posting stated none. */
+export function payFromColumns(row: {
+  payMin: string | null;
+  payMax: string | null;
+  payCurrency: string | null;
+  payPeriod: PayPeriod | null;
+}): Omit<Pay, "phrase"> | null {
+  if (row.payMin === null || row.payCurrency === null) return null;
+  return {
+    min: Number(row.payMin),
+    max: row.payMax === null ? null : Number(row.payMax),
+    currency: row.payCurrency,
+    period: row.payPeriod,
+  };
 }
 
 /** The posted pay in plain words, for pay that came as data rather than text. */
@@ -168,10 +196,13 @@ export function monthlyInView({
   pay,
   viewCurrency,
   rates,
+  compact = false,
 }: {
   pay: Omit<Pay, "phrase">;
   viewCurrency: string;
   rates: FxRates;
+  /** "₱289K–₱385K a month" instead of "₱289,000–₱385,333 a month". */
+  compact?: boolean;
 }): string | null {
   const { period } = pay;
   if (period === null) return null;
@@ -180,5 +211,6 @@ export function monthlyInView({
   const min = toView(pay.min);
   if (min === null) return null;
   const max = pay.max === null ? null : toView(pay.max);
-  return `${range({ min: Math.round(min), max: max === null ? null : Math.round(max), currency: viewCurrency })} a month`;
+  const rounded = { min: Math.round(min), max: max === null ? null : Math.round(max) };
+  return `${range({ ...rounded, currency: viewCurrency, compact })} a month`;
 }

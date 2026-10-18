@@ -175,6 +175,7 @@ function toOutputDto(
     position: row.position,
     generatedAt: row.generatedAt?.toISOString() ?? null,
     editedAt: row.editedAt?.toISOString() ?? null,
+    reviewedAt: row.reviewedAt?.toISOString() ?? null,
     citations: citations.map((c) => ({ key: c.factKey, text: c.factText, deleted: c.deleted })),
     styleHits: row.styleHits,
     outdated: frozen ? [] : outdatedChanges(row.kind, citations),
@@ -315,6 +316,8 @@ export async function updateOutput(
     if (input.body !== undefined) {
       patch.body = input.body;
       patch.editedAt = deps.clock.now();
+      // A new body has not been reviewed (Task 6, docs/plans/chrome-extension.md).
+      patch.reviewedAt = null;
       // Edits re-run the style check without AI so the warnings stay current (section 3.4, step 4a).
       patch.styleHits = input.body === null ? [] : checkStyle(input.body);
     }
@@ -476,6 +479,64 @@ function needsInput(gate: Extract<GateResult, { ok: false }>): AppError {
     message: "This job still needs your input. Fix the items listed, then try again.",
     details: gate.blockers,
   });
+}
+
+/**
+ * "Mark reviewed": the user read this body and stands by it. Prefill fills a generated answer only
+ * once it is reviewed and not redrafted or edited since (both clear `reviewed_at`).
+ *
+ * `body` is the text the user was shown; `shown` turns the stored body into that view (the web
+ * shows it as stored, the panel shows the fill text). The row is locked and compared in one
+ * transaction, so an edit or redraft that landed after the user read it is refused, never marked.
+ */
+export async function markReviewed(
+  deps: Deps,
+  {
+    outputId,
+    body,
+    shown = (stored) => stored,
+  }: { outputId: OutputId; body: string; shown?: (stored: string) => string },
+): Promise<WorkspaceDto> {
+  const { output } = await loadOutput(deps, outputId);
+  await deps.db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ body: outputs.body })
+      .from(outputs)
+      .where(and(eq(outputs.id, outputId), eq(outputs.userId, deps.userId)))
+      .for("update");
+    if (!locked) throw notFound("That file or answer");
+    const stored = locked.body ?? "";
+    if (shown(stored) !== body) {
+      throw new AppError({
+        code: "output_changed",
+        message: "This text changed since you opened it. Read the new version, then mark it reviewed.",
+      });
+    }
+    if (stored.trim() === "") {
+      throw new AppError({
+        code: "invalid_input",
+        message: `${outputKindLabel(output.kind)} is empty. Draft or write it, then mark it reviewed.`,
+      });
+    }
+    await tx.update(outputs).set({ reviewedAt: deps.clock.now() }).where(eq(outputs.id, outputId));
+  });
+  return getWorkspace(deps, { opportunityId: output.opportunityId });
+}
+
+/** Every output of one of this user's opportunities, as the workspace shows them (bodies included). */
+export async function listOutputs(
+  deps: Deps,
+  { opportunityId }: { opportunityId: OpportunityId },
+): Promise<OutputDto[]> {
+  const { opportunity } = await loadOpportunity(deps, opportunityId);
+  const [{ standardAnswers }, loaded] = await Promise.all([loadContact(deps), loadOutputs(deps.db, opportunityId)]);
+  const frozen = isFrozen(opportunity.status);
+  return loaded.map((o) => toOutputDto(o, standardAnswers, frozen));
+}
+
+/** The opportunity an output of this user belongs to; 404 when there is no such output. */
+export async function outputOpportunity(deps: Deps, { outputId }: { outputId: OutputId }): Promise<OpportunityId> {
+  return (await loadOutput(deps, outputId)).output.opportunityId;
 }
 
 export async function markReady(
@@ -693,7 +754,14 @@ async function draftOne(
   await deps.db.transaction(async (tx) => {
     await tx
       .update(outputs)
-      .set({ body, aiCallId, generatedAt: deps.clock.now(), editedAt: null, styleHits: checkStyle(body) })
+      .set({
+        body,
+        aiCallId,
+        generatedAt: deps.clock.now(),
+        editedAt: null,
+        reviewedAt: null,
+        styleHits: checkStyle(body),
+      })
       .where(eq(outputs.id, outputId));
     await tx.delete(outputFacts).where(eq(outputFacts.outputId, outputId));
     if (cited.length) {

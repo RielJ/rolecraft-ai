@@ -9,9 +9,9 @@ const DATE = new Intl.DateTimeFormat("en-PH", {
   timeZone: "Asia/Manila",
 });
 
-function Row({ term, children }: { term: string; children: ReactNode }) {
+function Row({ term, stacked, children }: { term: string; stacked: boolean; children: ReactNode }) {
   return (
-    <div className="grid gap-x-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
+    <div className={stacked ? "grid gap-0.5" : "grid gap-x-4 sm:grid-cols-[7rem_minmax(0,1fr)]"}>
       <dt className="text-muted-foreground">{term}</dt>
       <dd className="min-w-0 break-words">{children}</dd>
     </div>
@@ -22,22 +22,32 @@ function Row({ term, children }: { term: string; children: ReactNode }) {
  * Who can apply, the hours in PH time and the pay in the view currency (decisions 7 and 20).
  * The phrase that decided each value is shown so a wrong verdict is easy to spot.
  */
-export function JobFacts({ job }: { job: JobFactsDto }) {
+export function JobFacts({
+  job,
+  location = true,
+  stacked = false,
+}: {
+  job: JobFactsDto;
+  /** False where the header already shows the location. */
+  location?: boolean;
+  /** Label above value, for a narrow column. */
+  stacked?: boolean;
+}) {
   const { eligibility, hours, pay } = job;
   return (
-    <dl className="grid max-w-[68ch] gap-1.5 text-sm">
-      <Row term="Who can apply">
+    <dl className={stacked ? "grid gap-3 text-sm" : "grid max-w-[68ch] gap-1.5 text-sm"}>
+      <Row term="Who can apply" stacked={stacked}>
         <span className="font-medium">{eligibility.label}</span>
         {eligibility.phrase && <q className="ml-2 text-muted-foreground">{eligibility.phrase}</q>}
-        {job.locationText && <span className="block text-muted-foreground">{job.locationText}</span>}
+        {location && job.locationText && <span className="block text-muted-foreground">{job.locationText}</span>}
       </Row>
       {hours && (
-        <Row term="Hours">
+        <Row term="Hours" stacked={stacked}>
           <span className="tabular-nums">{hours.manila}</span>
           <span className="ml-2 text-muted-foreground">posted as “{hours.phrase}”</span>
         </Row>
       )}
-      <Row term="Pay">
+      <Row term="Pay" stacked={stacked}>
         {pay === null ? (
           <span className="text-muted-foreground">Pay not stated</span>
         ) : (
@@ -57,7 +67,7 @@ export function JobFacts({ job }: { job: JobFactsDto }) {
         )}
       </Row>
       {job.expiresAt && (
-        <Row term="Closes">
+        <Row term="Closes" stacked={stacked}>
           <time dateTime={job.expiresAt} className="tabular-nums">
             {DATE.format(new Date(job.expiresAt))}
           </time>

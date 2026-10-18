@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**", "!dist", "!drizzle", "!playwright-report", "!test-results", "!docs", "!.pi"]
+    "includes": ["**", "!dist", "!dist-extension", "!drizzle", "!playwright-report", "!test-results", "!docs", "!.pi"]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
   "css": { "parser": { "tailwindDirectives": true } },

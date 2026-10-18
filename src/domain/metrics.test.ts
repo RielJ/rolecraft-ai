@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { OpportunityStatus } from "@/shared/enums";
-import { durationLabel, metricsLine, refreshedLabel } from "@/shared/labels";
+import {
+  boardLocationLabel,
+  durationLabel,
+  inColumnLabel,
+  metricsLine,
+  postedLabel,
+  refreshedLabel,
+} from "@/shared/labels";
 import { boardMetrics, METRICS_WINDOW_DAYS, type Timeline } from "./metrics";
 
 const NOW = new Date("2026-10-31T12:00:00Z");
@@ -188,5 +195,32 @@ describe("labels", () => {
     expect(refreshedLabel({ at: ago(0, -125), now: NOW })).toBe("Refreshed 2 hours ago");
     expect(refreshedLabel({ at: ago(1), now: NOW })).toBe("Refreshed 1 day ago");
     expect(refreshedLabel({ at: ago(3, -60), now: NOW })).toBe("Refreshed 3 days ago");
+  });
+
+  test("posting age on a Board card: the posting date, else when it was first seen", () => {
+    const seen = ago(40);
+    expect(postedLabel({ postedAt: ago(0, -30), firstSeenAt: seen, now: NOW })).toBe("Posted today");
+    // A posting date a little ahead of the clock is still today, not negative.
+    expect(postedLabel({ postedAt: ago(0, 90), firstSeenAt: seen, now: NOW })).toBe("Posted today");
+    expect(postedLabel({ postedAt: ago(1), firstSeenAt: seen, now: NOW })).toBe("Posted yesterday");
+    expect(postedLabel({ postedAt: ago(12, -60), firstSeenAt: seen, now: NOW })).toBe("Posted 12d ago");
+    expect(postedLabel({ postedAt: ago(75), firstSeenAt: seen, now: NOW })).toBe("Posted 2mo ago");
+    expect(postedLabel({ postedAt: null, firstSeenAt: ago(3), now: NOW })).toBe("Found 3d ago");
+    expect(postedLabel({ postedAt: null, firstSeenAt: ago(0, -5), now: NOW })).toBe("Found today");
+  });
+
+  test("time in a column, short and long: the card shows the short one, the tooltip the long one", () => {
+    expect(inColumnLabel({ since: ago(0, -30), now: NOW })).toEqual({ short: "Today", long: "since today" });
+    expect(inColumnLabel({ since: ago(1), now: NOW })).toEqual({ short: "1d", long: "for 1 day" });
+    expect(inColumnLabel({ since: ago(20), now: NOW })).toEqual({ short: "20d", long: "for 20 days" });
+    expect(inColumnLabel({ since: ago(400), now: NOW })).toEqual({ short: "13mo", long: "for 400 days" });
+  });
+
+  test("where a Board card says it hires: the verdict when it is known, else the posting's own words", () => {
+    expect(boardLocationLabel({ eligibility: "worldwide", locationText: "Anywhere" })).toBe("Worldwide");
+    expect(boardLocationLabel({ eligibility: "ph", locationText: "" })).toBe("Open to PH");
+    expect(boardLocationLabel({ eligibility: "excluded", locationText: "US only" })).toBe("Excludes PH");
+    expect(boardLocationLabel({ eligibility: "unclear", locationText: "  Remote, EMEA " })).toBe("Remote, EMEA");
+    expect(boardLocationLabel({ eligibility: "unclear", locationText: "" })).toBeNull();
   });
 });

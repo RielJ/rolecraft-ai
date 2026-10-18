@@ -3,12 +3,14 @@ import { Kbd } from "../ui/kbd";
 
 /** The Matches keyboard model, worded as in PLAN.md section 4. */
 const SHORTCUTS: readonly { keys: readonly (readonly string[])[]; action: string }[] = [
-  { keys: [["j"], ["↓"]], action: "Next job" },
-  { keys: [["k"], ["↑"]], action: "Previous job" },
+  { keys: [["j"], ["↓"], ["→"]], action: "Next job" },
+  { keys: [["k"], ["↑"], ["←"]], action: "Previous job" },
   { keys: [["Home"], ["End"]], action: "First or last job" },
-  { keys: [["Space"], ["Shift", "Space"]], action: "Scroll the reading pane" },
-  { keys: [["Enter"], ["o"]], action: "Open the workspace (saves to the board as Saved)" },
-  { keys: [["s"]], action: "Save to the board and move to the next job" },
+  { keys: [["l"]], action: "Switch between the list and one job at a time" },
+  { keys: [["Space"], ["Shift", "Space"]], action: "Scroll the posting" },
+  { keys: [["Enter"], ["o"]], action: "Start application: save to the board and open the workspace" },
+  { keys: [["s"]], action: "Save for later and move to the next job" },
+  { keys: [["Shift", "s"]], action: "Save, write the files in the background, and move on" },
   { keys: [["d"]], action: "Dismiss: 1 wrong stack, 2 too senior, 3 pay, 4 location, 5 other, Enter without a reason" },
   { keys: [["z"]], action: "Undo the last save or dismiss" },
   { keys: [["v"]], action: "Open the posting in a new tab" },

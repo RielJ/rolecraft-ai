@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Hanapbuhay",
+  "version": "0.1.0",
+  "description": "Prefill job applications from your local Hanapbuhay. Never submits.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "downloads"],
+  "optional_host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "panel.html" },
+  "action": { "default_title": "Open Hanapbuhay" }
+}

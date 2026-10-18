@@ -1,6 +1,16 @@
-import { CheckIcon, ExternalLinkIcon, InfoIcon, SparklesIcon, Trash2Icon } from "lucide-react";
-import { type FormEvent, type ReactElement, useId, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { ArrowRightIcon, CheckIcon, ExternalLinkIcon, InfoIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import {
+  type ComponentProps,
+  type FormEvent,
+  type MouseEvent,
+  type ReactElement,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 import type {
   ContractTerms,
   ContractTermsInput,
@@ -21,17 +31,23 @@ import {
   rateTypeLabel,
   statusLabel,
 } from "@/shared/labels";
+import { webUrl } from "@/shared/web-url";
 import { ApiError, errorMessage } from "../api";
 import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
 import { JobFacts, PossibleDuplicates } from "../components/job-facts";
 import { NeedsInput } from "../components/needs-input";
 import { OutdatedNotice, OutputEditor } from "../components/output-editor";
+import { PostingText } from "../components/posting-text";
+import { panelId, TabList, tabId } from "../components/tab-list";
+import { readReturn } from "../lib/matches-return";
 import {
   useAddQuestion,
   useChangeStatus,
+  useCreateApplicationSession,
   useDeleteQuestion,
   useMarkOutputCurrent,
   useMarkReady,
+  useMarkReviewed,
   useRetryTask,
   useSuggestQuestions,
   useUpdateOpportunity,
@@ -119,6 +135,49 @@ function Outdated({ ws, output, actions }: { ws: WorkspaceDto; output: OutputDto
   );
 }
 
+/**
+ * "Mark reviewed" on a file or answer, or its reviewed state. The extension fills a generated
+ * answer only once it is reviewed. Any edit or redraft clears the review on the server, so this
+ * always describes the body as saved. It sends the saved body shown here; if that changed meanwhile,
+ * the server refuses, the workspace reloads and the toast says to read the new version. Salary
+ * answers get no control: the extension never fills pay.
+ */
+function ReviewControl({ ws, output, busy }: { ws: WorkspaceDto; output: OutputDto; busy: boolean }) {
+  const mark = useMarkReviewed(ws.opportunity.id);
+  const body = output.body;
+  if (body === null || body.trim() === "" || output.mustAnswer === "salary") return null;
+  return (
+    <span aria-live="polite" className="inline-flex items-center">
+      {output.reviewedAt === null ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || mark.isPending}
+          title={busy ? "Save your changes first" : undefined}
+          onClick={() => mark.mutate({ id: output.id, body }, { onError })}
+        >
+          Mark reviewed
+        </Button>
+      ) : (
+        <span className="inline-flex items-center gap-1.5 text-sm">
+          <CheckIcon className="size-4 text-primary" aria-hidden />
+          Reviewed.
+          <span className="text-muted-foreground">
+            {busy ? "Saving this change clears it." : "Any change clears it."}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** After saving a body that was reviewed: the server cleared the review, so say so. */
+function savedToast(output: OutputDto): void {
+  if (output.reviewedAt === null) return;
+  const what = output.kind === "answer" ? "Answer" : outputKindLabel(output.kind);
+  toast(`${what} saved. Mark it reviewed again so the extension can use it.`);
+}
+
 /** "Draft all" for the included files, the task's progress, and the no-key hint. */
 function DraftBar({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions }) {
   const included = ws.files.filter((f) => f.included);
@@ -175,28 +234,26 @@ function Files({
   return (
     <section aria-label="Files" className="grid gap-4">
       <DraftBar ws={ws} actions={actions} />
-      <div role="tablist" aria-label="Files" className="flex gap-1 border-b">
-        {ws.files.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            role="tab"
-            id={`tab-${f.id}`}
-            aria-selected={f.id === current.id}
-            aria-controls={`panel-${f.id}`}
-            onClick={() => onSelect(f.id)}
-            className="-mb-px flex items-center gap-2 border-transparent border-b-2 px-3 py-2 text-muted-foreground text-sm transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-selected:border-primary aria-selected:text-foreground"
-          >
-            <span className={f.included ? "" : "line-through decoration-1"}>{outputKindLabel(f.kind)}</span>
-            {drafting.has(f.id) && <span className="text-muted-foreground text-xs">drafting</span>}
-            {f.included && f.outdated.length > 0 && <span className="text-warning-foreground text-xs">outdated</span>}
-            {f.included && blockersFor(ws, f.id).length > 0 && (
-              <span className="size-1.5 rounded-full bg-warning" role="img" aria-label="needs input" />
-            )}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" id={`panel-${current.id}`} aria-labelledby={`tab-${current.id}`} className="grid gap-4">
+      <TabList
+        label="Files"
+        variant="pill"
+        value={current.id}
+        onChange={onSelect}
+        tabs={ws.files.map((f) => ({
+          value: f.id,
+          label: (
+            <>
+              <span className={f.included ? "" : "line-through decoration-1"}>{outputKindLabel(f.kind)}</span>
+              {drafting.has(f.id) && <span className="text-muted-foreground text-xs">drafting</span>}
+              {f.included && f.outdated.length > 0 && <span className="text-warning-foreground text-xs">outdated</span>}
+              {f.included && blockersFor(ws, f.id).length > 0 && (
+                <span className="size-1.5 rounded-full bg-warning" role="img" aria-label="needs input" />
+              )}
+            </>
+          ),
+        }))}
+      />
+      <div role="tabpanel" id={panelId(current.id)} aria-labelledby={tabId(current.id)} className="grid gap-4">
         <div className="flex items-center gap-2">
           <Checkbox
             id={`include-${current.id}`}
@@ -214,9 +271,16 @@ function Files({
             blockers={blockersFor(ws, current.id)}
             blocked={!ws.gate.ok}
             saving={update.isPending}
-            onSave={(body) => update.mutate({ id: current.id, body }, { onError })}
+            onSave={(body) =>
+              update.mutate({ id: current.id, body }, { onSuccess: () => savedToast(current), onError })
+            }
             drafting={drafting.has(current.id)}
-            draftButton={<DraftOne ws={ws} output={current} actions={actions} />}
+            draftButton={
+              <>
+                <DraftOne ws={ws} output={current} actions={actions} />
+                {!drafting.has(current.id) && <ReviewControl ws={ws} output={current} busy={update.isPending} />}
+              </>
+            }
             outdated={<Outdated ws={ws} output={current} actions={actions} />}
           />
         ) : (
@@ -239,7 +303,11 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
   const frozen = ws.opportunity.frozen;
   const drafting = draftingIds(ws).has(answer.id);
   const save = () => {
-    if (dirty) update.mutate({ id: answer.id, body: draft.trim() === "" ? null : draft }, { onError });
+    if (!dirty) return;
+    update.mutate(
+      { id: answer.id, body: draft.trim() === "" ? null : draft },
+      { onSuccess: () => savedToast(answer), onError },
+    );
   };
 
   return (
@@ -300,7 +368,10 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
           {drafting ? (
             <span className="text-muted-foreground text-sm">Drafting…</span>
           ) : (
-            <DraftOne ws={ws} output={answer} actions={actions} />
+            <>
+              <DraftOne ws={ws} output={answer} actions={actions} />
+              <ReviewControl ws={ws} output={answer} busy={dirty || update.isPending} />
+            </>
           )}
         </div>
       </div>
@@ -541,10 +612,27 @@ function MarkApplied({ ws }: { ws: WorkspaceDto }) {
   );
 }
 
+/**
+ * The actions column. On wide screens it stays pinned under the top bar, lined up with the title,
+ * and scrolls on its own when it is taller than the window. Apply sits first.
+ */
 function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void }) {
   const ready = useMarkReady(ws.opportunity.id);
   return (
-    <aside className="grid content-start gap-6 lg:sticky lg:top-20">
+    <aside
+      aria-label="Apply and track"
+      className="grid content-start gap-6 lg:sticky lg:top-[calc(57px+1.5rem)] lg:-mx-1 lg:max-h-[calc(100dvh-57px-3rem)] lg:overflow-y-auto lg:overscroll-contain lg:px-1 lg:pb-1"
+    >
+      {ws.job.applyUrl && (
+        // On narrow screens Apply lives in the header instead, above the long posting.
+        <ApplyLink
+          opportunityId={ws.opportunity.id}
+          applyUrl={ws.job.applyUrl}
+          variant="default"
+          size="default"
+          className="hidden w-full lg:inline-flex"
+        />
+      )}
       <NeedsInput gate={ws.gate} onJump={onJump} />
       <div className="grid gap-2">
         {ws.opportunity.ready ? (
@@ -562,6 +650,7 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
         )}
         <MarkApplied ws={ws} />
       </div>
+      <KindAndTerms ws={ws} />
       <Notes ws={ws} />
       <section aria-labelledby="facts-rail" className="grid gap-2">
         <h2 id="facts-rail" className="font-medium text-sm">
@@ -570,7 +659,7 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
         {ws.facts.length === 0 ? (
           <p className="text-muted-foreground text-sm">None yet. Paste and confirm your CV on the Profile page.</p>
         ) : (
-          <ul className="grid max-h-80 gap-1.5 overflow-y-auto overscroll-contain pr-1 text-sm">
+          <ul className="grid gap-1.5 text-sm">
             {ws.facts.map((f) => (
               <li key={f.key} className="flex gap-2">
                 <span className="w-14 shrink-0 font-mono text-muted-foreground text-xs leading-5 tabular-nums">
@@ -703,34 +792,160 @@ function KindAndTerms({ ws }: { ws: WorkspaceDto }) {
   );
 }
 
-function Posting({ ws }: { ws: WorkspaceDto }) {
+/**
+ * Send the blank tab to `url`. The location setter works on any window this page opened, so this
+ * never touches the tab's document. No referrer is sent: the app page's policy is `no-referrer`
+ * (index.html), and this page starts the navigation. Does nothing if the user closed the tab.
+ */
+function navigateTab({ tab, url }: { tab: Window; url: string }): void {
+  if (tab.closed) return;
+  tab.location.replace(url);
+}
+
+/**
+ * Apply: records an application session so the Chrome extension knows which job the new tab is
+ * for, then opens the apply URL as stored. The tab opens blank inside the click, which popup
+ * blockers allow, and is cut from this page (`opener = null`) before it leaves for the job site.
+ * A failed session still opens the page. The board status does not change: only the user's own
+ * "Mark applied" or the extension's "Did you submit?" does that.
+ */
+function ApplyLink({
+  opportunityId,
+  applyUrl,
+  variant = "outline",
+  size = "sm",
+  className,
+}: {
+  opportunityId: OpportunityId;
+  applyUrl: string;
+} & Pick<ComponentProps<typeof Button>, "variant" | "size" | "className">) {
+  const session = useCreateApplicationSession();
+  // Only http(s) leaves the app: a `javascript:` URL from a job source would run as this app.
+  const url = webUrl(applyUrl);
+  if (url === null) return null;
+
+  function onClick(event: MouseEvent<HTMLAnchorElement>) {
+    if (url === null) return;
+    // Middle, Ctrl, Cmd and Shift clicks open the link the browser's way, with no session.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const tab = window.open("", "_blank");
+    // Blocked anyway: the link opens the page itself while the session is recorded.
+    if (tab !== null) {
+      event.preventDefault();
+      tab.opener = null;
+    }
+    // mutateAsync, not mutate: the tab must still navigate if this page unmounts meanwhile.
+    session
+      .mutateAsync(opportunityId)
+      .catch((error: unknown) =>
+        toast("The apply page opened, but the extension won't pick it up.", { description: errorMessage(error) }),
+      )
+      .finally(() => {
+        if (tab !== null) navigateTab({ tab, url });
+      });
+  }
+
   return (
-    <div className="grid gap-4">
+    <Button asChild size={size} variant={variant} className={className}>
+      <a href={url} target="_blank" rel="noreferrer" onClick={onClick}>
+        <ExternalLinkIcon aria-hidden />
+        Apply
+      </a>
+    </Button>
+  );
+}
+
+/** The posting as the source gave it, after who can apply, the pay and any likely duplicates. */
+function Posting({ ws }: { ws: WorkspaceDto }) {
+  const text = ws.job.description.trim();
+  return (
+    <div className="grid gap-6">
+      <JobFacts job={ws.job} />
       <PossibleDuplicates duplicates={ws.job.possibleDuplicates} />
-      <details className="group rounded-lg border px-4 py-3">
-        <summary className="cursor-pointer select-none font-medium text-sm">The posting</summary>
-        <div className="mt-3 max-w-[68ch] whitespace-pre-wrap font-serif text-sm leading-relaxed">
-          {ws.job.description}
-        </div>
-      </details>
+      {text === "" ? (
+        <p className="border-t pt-6 text-muted-foreground text-sm">
+          The source gave no description. Open the posting with Apply to read it there.
+        </p>
+      ) : (
+        <article aria-label="The posting" className="border-t pt-6">
+          <PostingText text={text} />
+        </article>
+      )}
     </div>
   );
 }
 
-function Workspace({ ws }: { ws: WorkspaceDto }) {
+export const WorkspaceTab = z.enum(["posting", "drafts"]);
+export type WorkspaceTab = z.infer<typeof WorkspaceTab>;
+
+/**
+ * Without `?tab=`: the posting for a job with nothing written yet, so you read before you write;
+ * the drafts once any file or answer has text, or the job is applied.
+ */
+function defaultTab(ws: WorkspaceDto): WorkspaceTab {
+  const written = [...ws.files, ...ws.answers].some((o) => o.body !== null && o.body.trim() !== "");
+  return written || ws.opportunity.frozen ? "drafts" : "posting";
+}
+
+/** "Drafts" plus how many items need input, so the count is visible from the Posting tab too. */
+function DraftsTabLabel({ gate }: { gate: WorkspaceDto["gate"] }) {
+  return (
+    <>
+      Drafts
+      {!gate.ok && (
+        <span className="rounded-full bg-warning/15 px-1.5 text-warning-foreground text-xs tabular-nums leading-5">
+          {gate.blockers.length}
+          <span className="sr-only"> need your input</span>
+        </span>
+      )}
+    </>
+  );
+}
+
+function Workspace({
+  ws,
+  tab: chosen,
+  onTab,
+}: {
+  ws: WorkspaceDto;
+  tab: WorkspaceTab | undefined;
+  onTab: (tab: WorkspaceTab) => void;
+}) {
   const firstFile = ws.files[0];
   const [selected, setSelected] = useState<OutputId | null>(firstFile?.id ?? null);
+  // Picked once on open: a draft finishing later must not pull the page off the posting.
+  const [fallback] = useState(() => defaultTab(ws));
+  const tab = chosen ?? fallback;
   const actions = useDraftActions(ws);
 
+  const band = useRef<HTMLDivElement>(null);
+  const panels = useRef<HTMLDivElement>(null);
+
+  /**
+   * Switch tabs. When the band is pinned and the page is scrolled into the old panel, start the
+   * new panel just under the band instead of somewhere in its middle.
+   */
+  function switchTab(next: WorkspaceTab) {
+    onTab(next);
+    requestAnimationFrame(() => {
+      if (!band.current || !panels.current) return;
+      const gap = panels.current.getBoundingClientRect().top - band.current.getBoundingClientRect().bottom;
+      if (gap < 0 && getComputedStyle(band.current).position === "sticky") window.scrollBy({ top: gap - 32 });
+    });
+  }
+
   function jump(id: OutputId) {
+    if (tab !== "drafts") switchTab("drafts");
     if (ws.files.some((f) => f.id === id)) {
       setSelected(id);
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`#panel-${id} textarea`)?.focus());
+      requestAnimationFrame(() => document.querySelector<HTMLElement>(`#${panelId(id)} textarea`)?.focus());
       return;
     }
-    const row = document.getElementById(`output-${id}`);
-    row?.scrollIntoView({ block: "center" });
-    row?.querySelector<HTMLElement>("textarea")?.focus();
+    requestAnimationFrame(() => {
+      const row = document.getElementById(`output-${id}`);
+      row?.scrollIntoView({ block: "center" });
+      row?.querySelector<HTMLElement>("textarea")?.focus();
+    });
   }
 
   const { status, outcome } = ws.opportunity;
@@ -738,46 +953,103 @@ function Workspace({ ws }: { ws: WorkspaceDto }) {
     ? [statusLabel({ type: ws.opportunity.type, status }), outcome && outcomeLabel(outcome)].filter(Boolean).join(": ")
     : null;
 
+  // Opened by Start application in Matches: offer the way back to the job after this one.
+  const fromMatches = readReturn()?.opportunityId === ws.opportunity.id;
+
   return (
-    <div className="grid gap-8">
-      <header className="grid gap-4">
-        <div className="grid gap-1">
-          <h1 className="display text-2xl sm:text-3xl">{ws.job.title}</h1>
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-            <span>{ws.job.company}</span>
-            {kindStatus && <Badge variant="secondary">{kindStatus}</Badge>}
-            {ws.job.applyUrl && (
-              <a
-                href={ws.job.applyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-sm underline-offset-4 hover:text-foreground hover:underline"
+    <div className="grid gap-x-10 gap-y-12 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid min-w-0 content-start gap-8">
+        {/*
+         * Title, company and tabs stay pinned under the top bar on wide screens, so switching
+         * between the posting and the drafts never needs a scroll back up. The negative margin
+         * keeps the page's top spacing while giving the pinned band room to breathe.
+         */}
+        <div
+          ref={band}
+          className="-mt-6 grid gap-5 pt-6 lg:sticky lg:top-[57px] lg:z-[5] lg:bg-background/85 lg:backdrop-blur-md"
+        >
+          <header className="grid gap-1.5">
+            <div className="flex items-start justify-between gap-4">
+              <h1
+                title={ws.job.title}
+                className="display min-w-0 text-balance break-words text-2xl sm:text-[1.75rem] lg:line-clamp-2"
               >
-                Apply link <ExternalLinkIcon className="size-3.5" aria-hidden />
-              </a>
+                {ws.job.title}
+              </h1>
+              {ws.job.applyUrl && (
+                <div className="shrink-0 pt-0.5 lg:hidden">
+                  <ApplyLink opportunityId={ws.opportunity.id} applyUrl={ws.job.applyUrl} />
+                </div>
+              )}
+            </div>
+            <p className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+              <span className="min-w-0 break-words">{ws.job.company}</span>
+              {kindStatus && <Badge variant="secondary">{kindStatus}</Badge>}
+              {fromMatches && (
+                <Button variant="ghost" size="sm" className="-my-1 ml-auto text-muted-foreground" asChild>
+                  <Link to="/">
+                    Next match
+                    <ArrowRightIcon aria-hidden />
+                  </Link>
+                </Button>
+              )}
+            </p>
+            {/* About the whole job, so it shows on either tab. */}
+            {ws.opportunity.frozen && (
+              <p className="text-muted-foreground text-sm">
+                This job is marked applied, so its files and answers stay as you sent them.
+              </p>
             )}
-          </p>
-          {ws.opportunity.frozen && (
-            <p className="text-sm">This job is marked applied, so its files and answers stay as you sent them.</p>
-          )}
+          </header>
+          <TabList
+            label="This job"
+            idPrefix="page-"
+            value={tab}
+            onChange={switchTab}
+            tabs={[
+              { value: "posting", label: "Posting" },
+              { value: "drafts", label: <DraftsTabLabel gate={ws.gate} /> },
+            ]}
+          />
         </div>
-        <JobFacts job={ws.job} />
-        <KindAndTerms ws={ws} />
-      </header>
-      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="grid content-start gap-10">
-          {selected && <Files ws={ws} selected={selected} onSelect={setSelected} actions={actions} />}
-          <Questions ws={ws} actions={actions} />
-          <Posting ws={ws} />
+        {/* Both panels stay mounted, so switching tabs never drops an unsaved edit. */}
+        <div ref={panels} className="grid min-w-0">
+          <div
+            role="tabpanel"
+            id={panelId("posting", "page-")}
+            aria-labelledby={tabId("posting", "page-")}
+            hidden={tab !== "posting"}
+          >
+            <Posting ws={ws} />
+          </div>
+          <div
+            role="tabpanel"
+            id={panelId("drafts", "page-")}
+            aria-labelledby={tabId("drafts", "page-")}
+            hidden={tab !== "drafts"}
+            // A focused editor or answer scrolls into view clear of the pinned band.
+            className="grid content-start gap-12 lg:[&_[id^=output-]]:scroll-mt-56 lg:[&_textarea]:scroll-mt-56"
+          >
+            {selected && <Files ws={ws} selected={selected} onSelect={setSelected} actions={actions} />}
+            <Questions ws={ws} actions={actions} />
+          </div>
         </div>
-        <Rail ws={ws} onJump={jump} />
       </div>
+      <Rail ws={ws} onJump={jump} />
       {actions.dialogs}
     </div>
   );
 }
 
-export function WorkspacePage({ opportunityId }: { opportunityId: OpportunityId }) {
+export function WorkspacePage({
+  opportunityId,
+  tab,
+  onTab,
+}: {
+  opportunityId: OpportunityId;
+  tab: WorkspaceTab | undefined;
+  onTab: (tab: WorkspaceTab) => void;
+}) {
   const ws = useWorkspace(opportunityId);
   if (ws.isPending) return <p className="text-muted-foreground">Loading the job…</p>;
   if (ws.isError) {
@@ -790,5 +1062,5 @@ export function WorkspacePage({ opportunityId }: { opportunityId: OpportunityId 
       </div>
     );
   }
-  return <Workspace ws={ws.data} />;
+  return <Workspace ws={ws.data} tab={tab} onTab={onTab} />;
 }

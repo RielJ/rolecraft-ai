@@ -5,6 +5,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { RefreshResult } from "@/shared/api";
 import { jobCountLabel, refreshedLabel, sourceStatusLabel } from "@/shared/labels";
+import { useMinuteClock } from "../lib/use-minute-clock";
 import { keys, useRefresh } from "../queries";
 import { Button } from "../ui/button";
 import {
@@ -61,16 +62,6 @@ const FINISHED = new Intl.DateTimeFormat("en-PH", {
   timeStyle: "short",
   timeZone: "Asia/Manila",
 });
-
-/** The time now, moved on once a minute, so "Refreshed 5 minutes ago" ages without a reload. */
-function useMinuteClock(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
 
 /**
  * "Refreshed 3 days ago" next to the button, so a stale feed is visible (decision 11). It reads the

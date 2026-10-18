@@ -28,7 +28,7 @@ export type Deps = {
   clock: Clock;
 };
 
-type Status = 400 | 402 | 404 | 409 | 422 | 429 | 500 | 503;
+type Status = 400 | 401 | 402 | 403 | 404 | 409 | 422 | 429 | 500 | 503;
 
 const STATUS: Record<ErrorCode, Status> = {
   invalid_input: 400,
@@ -50,6 +50,11 @@ const STATUS: Record<ErrorCode, Status> = {
   github_rate_limited: 429,
   github_account: 409,
   github_unavailable: 503,
+  unauthorized: 401,
+  forbidden_origin: 403,
+  url_mismatch: 409,
+  session_expired: 409,
+  output_changed: 409,
   internal: 500,
 };
 

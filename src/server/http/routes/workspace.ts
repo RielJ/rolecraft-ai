@@ -4,6 +4,7 @@ import {
   AddQuestionInput,
   ConfirmOverCapInput,
   DraftInput,
+  MarkReviewedInput,
   OpportunityId,
   OutputId,
   UpdateOutputInput,
@@ -18,6 +19,7 @@ import {
   getWorkspace,
   markOutputCurrent,
   markReady,
+  markReviewed,
   startSuggestQuestions,
   updateOutput,
 } from "../../services/workspace";
@@ -62,6 +64,9 @@ export function workspaceRoutes(deps: Deps) {
     )
     .post("/outputs/:id/mark-current", validate("param", OutputParam), async (c) =>
       c.json(await markOutputCurrent(deps, { outputId: c.req.valid("param").id })),
+    )
+    .post("/outputs/:id/reviewed", validate("param", OutputParam), validate("json", MarkReviewedInput), async (c) =>
+      c.json(await markReviewed(deps, { outputId: c.req.valid("param").id, body: c.req.valid("json").body })),
     )
     .delete("/outputs/:id", validate("param", OutputParam), async (c) =>
       c.json(await deleteQuestion(deps, { outputId: c.req.valid("param").id })),

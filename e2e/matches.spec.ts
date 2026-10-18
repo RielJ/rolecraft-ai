@@ -284,3 +284,113 @@ test("the reading pane offers Merge for a likely duplicate, and merging leaves o
   );
   expect(left.map((r) => r.title)).toEqual(["Sr. Frontend Engineer (Remote)"]);
 });
+
+test("one at a time: l switches, arrows move, the layout is remembered, s saves with Open in the toast", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(list(page)).toBeFocused();
+  await page.keyboard.press("l");
+  await expect(list(page)).toBeHidden();
+  await expect(page.getByRole("radio", { name: "One at a time" })).toBeChecked();
+  await expect(pane(page).getByText("1 of 5")).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Bravo Engineer");
+  await expect(pane(page).getByText("2 of 5")).toBeVisible();
+  await pane(page).getByRole("button", { name: "Next job" }).click();
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Charlie Engineer");
+  await page.keyboard.press("ArrowLeft");
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Bravo Engineer");
+
+  // The posting keeps a reading measure; the details sit in a column beside it.
+  const about = pane(page).getByRole("complementary", { name: "About this job" });
+  await expect(about).toBeVisible();
+  const text = await pane(page).getByText("Bravo Engineer at Acme.").boundingBox();
+  const side = await about.boundingBox();
+  expect(text && side && side.x > text.x + 300).toBe(true);
+
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "One at a time" })).toBeChecked();
+  await expect(list(page)).toBeHidden();
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Alpha Engineer");
+
+  // Save for later moves on; the toast's Open goes to the saved job's workspace.
+  await page.keyboard.press("s");
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Bravo Engineer");
+  await expect(pane(page).getByText("1 of 4")).toBeVisible();
+  const toast = page.getByRole("listitem").filter({ hasText: "Saved to Board" });
+  await toast.getByRole("button", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Alpha Engineer" })).toBeVisible();
+
+  await page.goto("/");
+  await page.keyboard.press("l");
+  await expect(list(page)).toBeVisible();
+});
+
+test("Start application opens the workspace; Next match comes back to the job after it", async ({ page }) => {
+  await page.goto("/");
+  await expect(list(page)).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Bravo Engineer");
+  await pane(page).getByRole("button", { name: "Start application" }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Bravo Engineer" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Next match" }).click();
+  await expect(selected(page)).toContainText("Charlie Engineer");
+  await expect(list(page).getByRole("option")).toHaveCount(TITLES.length - 1);
+});
+
+test("Save and write files saves, starts the draft, and moves on", async ({ page }) => {
+  await page.goto("/");
+  await expect(selected(page)).toContainText("Alpha Engineer");
+  const draft = page.waitForRequest(
+    (r) => r.method() === "POST" && /\/api\/opportunities\/[^/]+\/draft$/.test(r.url()),
+  );
+  await page.keyboard.press("Shift+S");
+  await draft;
+  await expect(selected(page)).toContainText("Bravo Engineer");
+  // Started, or refused for a reason the toast names; either way the job is saved.
+  await expect(page.getByRole("listitem").filter({ hasText: /^Saved/ })).toBeVisible();
+  await page.goto("/board");
+  await expect(page.getByRole("link", { name: /Alpha Engineer/ })).toBeVisible();
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("tapping a row opens the job alone, with actions in reach; All matches goes back to the list", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(list(page).getByRole("option")).toHaveCount(TITLES.length);
+    await expect(pane(page)).toBeHidden();
+
+    await list(page)
+      .getByRole("option", { name: /Charlie Engineer/ })
+      .tap();
+    await expect(list(page)).toBeHidden();
+    await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Charlie Engineer");
+    // One action row, pinned under the thumb: Start application fills it, the rest are icons.
+    await expect(pane(page).getByRole("button", { name: "Start application" })).toBeInViewport();
+    await expect(pane(page).getByRole("button", { name: "Save for later" })).toBeInViewport();
+    await expect(pane(page).getByRole("button", { name: "Dismiss" })).toBeInViewport();
+    await pane(page).getByRole("button", { name: "More" }).tap();
+    await expect(page.getByRole("menuitem", { name: "View posting" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // Next and previous without going back to the list.
+    await pane(page).getByRole("button", { name: "Next job" }).tap();
+    await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Delta Engineer");
+    await expect(pane(page).getByText("4 of 5")).toBeVisible();
+    await pane(page).getByRole("button", { name: "Previous job" }).tap();
+    await expect(pane(page).getByRole("heading", { level: 2 })).toHaveText("Charlie Engineer");
+
+    await pane(page).getByRole("button", { name: "All matches" }).tap();
+    await expect(pane(page)).toBeHidden();
+    await expect(selected(page)).toContainText("Charlie Engineer");
+    await expect(selected(page)).toBeInViewport();
+  });
+});

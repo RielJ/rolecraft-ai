@@ -61,15 +61,18 @@ test("contract terms, caution and notes in the workspace; moves on the board fre
   await expect(page.getByLabel("Rate", { exact: true })).toHaveValue("35.5");
   await expect(page.getByLabel("Platform")).toHaveValue("Upwork");
 
-  // Back on the board: the row carries the terms. Key 2 on the focused row moves it.
+  // Back on the board: the card carries a Contract badge, the terms and the notes' first line.
+  // Key 2 on the focused card moves it.
   await page.getByRole("link", { name: "Board", exact: true }).click();
   const row = page.getByRole("link", { name: /Backend Contractor/ });
-  await expect(row).toContainText("Contract · USD 35.5 hourly · Upwork");
+  await expect(row.getByText("Contract", { exact: true })).toBeVisible();
+  await expect(row).toContainText("USD 35.50 hourly · Upwork");
+  await expect(row).toContainText("Spoke to Maria. Send the proposal by Friday.");
   await row.focus();
   await page.keyboard.press("2");
   const applied = column(page, /^Applied \/ Proposal sent 1/);
   await expect(applied.getByRole("link", { name: /Backend Contractor/ })).toBeFocused();
-  await expect(applied.getByText("Proposal sent · USD 35.5 hourly · Upwork")).toBeVisible();
+  await expect(applied.getByText("USD 35.50 hourly · Upwork")).toBeVisible();
 
   // The workspace is frozen now: no drafting, no edits, notes still editable.
   await applied.getByRole("link", { name: /Backend Contractor/ }).click();
