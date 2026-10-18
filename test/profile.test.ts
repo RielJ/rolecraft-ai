@@ -356,6 +356,72 @@ describe("re-import", () => {
   });
 });
 
+describe("fact sections: grouping by job", () => {
+  const CV = [
+    "EXPERIENCE",
+    "Acme Corp — Senior Engineer, 2019 to 2023",
+    "- Built a payments API in Go serving 2M requests a day",
+    "- Led a team of 4 engineers",
+  ].join("\n");
+  const reply = (...facts: { text: string; section: string | null }[]) => JSON.stringify({ facts });
+
+  test("the AI's section is saved when the CV has it; an invented one is dropped and the fact stays", async () => {
+    await saveKey();
+    deps.fake.queue(
+      reply(
+        { text: "Built a payments API in Go serving 2M requests a day", section: "Acme Corp" },
+        { text: "Led a team of 4 engineers", section: "Globex" },
+      ),
+    );
+    const profile = await pasteCv(CV);
+    expect(profile.facts.map((f) => [f.text, f.section])).toEqual([
+      ["Built a payments API in Go serving 2M requests a day", "Acme Corp"],
+      ["Led a team of 4 engineers", null],
+    ]);
+  });
+
+  test("splitting again sends the saved facts, keeps their confirmation and fills in their section", async () => {
+    await saveKey();
+    // Facts split before sections existed: no section.
+    deps.fake.queue(splitReply("Built a payments API in Go serving 2M requests a day", "Led a team of 4 engineers"));
+    await pasteCv(CV);
+    const before = await json(await call("POST", "/facts/confirm-all"), ProfileDto);
+    expect(before.facts.map((f) => f.section)).toEqual([null, null]);
+
+    deps.fake.queue(
+      reply(
+        { text: "Built a payments API in Go serving 2M requests a day", section: "Acme Corp" },
+        { text: "Led a team of 4 engineers", section: "Acme Corp" },
+      ),
+    );
+    const after = await pasteCv(CV);
+    const prompt = deps.fake.calls[1]?.messages[0]?.content ?? "";
+    expect(prompt).toContain("SAVED FACTS");
+    expect(prompt).toContain("- Led a team of 4 engineers");
+    expect(after.facts.map((f) => ({ id: f.id, status: f.status, section: f.section }))).toEqual(
+      before.facts.map((f) => ({ id: f.id, status: "confirmed", section: "Acme Corp" })),
+    );
+  });
+
+  test("without AI, the rule splitter groups bullets under the line above them", async () => {
+    const profile = await pasteCv(CV);
+    expect(fact(profile, "payments API").section).toBe("Acme Corp — Senior Engineer, 2019 to 2023");
+  });
+
+  test("re-saving the same CV text keeps the uploaded file's name", async () => {
+    await json(
+      await upload("cv.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+      ProfileDto,
+    );
+    const first = await json(await call("GET", "/profile"), ProfileDto);
+    expect(first.cv?.fileName).toBe("cv.docx");
+    const again = await pasteCv(first.cv?.body ?? "");
+    expect(again.cv?.fileName).toBe("cv.docx");
+    const edited = await pasteCv(`${first.cv?.body ?? ""}\n- Wrote the on-call runbook`);
+    expect(edited.cv?.fileName).toBeNull();
+  });
+});
+
 describe("add-ons", () => {
   const MENTORING: AddonInput = {
     kind: "other",

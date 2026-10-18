@@ -32,7 +32,7 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   const review = page.getByRole("list", { name: "Facts to review" });
   await expect(review.getByRole("listitem")).toHaveCount(3);
   await page.getByRole("button", { name: "Confirm all" }).click();
-  await expect(page.getByRole("list", { name: "Confirmed facts" }).getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByRole("region", { name: "Confirmed facts" }).getByRole("listitem")).toHaveCount(3);
 
   // 2. Add a job by link. LinkedIn is never fetched: the dialog becomes the paste form, keeping
   // the link as the apply URL.
@@ -49,9 +49,12 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   await dialog.getByRole("button", { name: "Add job" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Senior Backend Engineer" })).toBeVisible();
   await expect(page.getByText("Needs your input (3)")).toBeVisible();
-  // The header shows who can apply, with the phrase that decided it, and that pay is not stated.
+  // The Posting tab shows who can apply, with the phrase that decided it, and that pay is not stated.
   await expect(page.getByText("Worldwide", { exact: true })).toBeVisible();
   await expect(page.getByText("Pay not stated")).toBeVisible();
+  // Nothing is written yet, so the job opens on its posting; the files are on the Drafts tab.
+  await expect(page.getByRole("tab", { name: "Posting" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: /^Drafts/ }).click();
 
   // 3. Write the resume, citing facts.
   await page

@@ -87,3 +87,46 @@ test("links are one line, and a fact edits in a multi-line box that grows with i
   await box.press("Escape");
   await expect(review.getByRole("listitem")).toContainText(long);
 });
+
+test("confirmed facts group by job: closed past 8 facts, a search opens the groups that match", async ({ page }) => {
+  const cv = [
+    "EXPERIENCE",
+    "Lakbay Labs — Senior Engineer, 2021 to 2024",
+    "- Built a billing service in TypeScript and Postgres",
+    "- Cut invoice processing time from 40 minutes to 5 minutes",
+    "- Mentored 3 junior engineers through code review",
+    "- Moved deploys from a VM to Fly.io",
+    "",
+    "Jeepney Data Co — Engineer, 2018 to 2021",
+    "- Loaded 42 routes from Cebu open data into SQLite",
+    "- Wrote the route search API in Go",
+    "- Ran the weekly on-call rotation",
+    "- Added tracing with OpenTelemetry",
+  ].join("\n");
+  await page.goto("/profile");
+  await page.getByLabel("CV text").fill(cv);
+  await page.getByRole("button", { name: "Save and split into facts" }).click();
+  const review = page.getByRole("list", { name: "Facts to review" });
+  await expect(review).toContainText("Wrote the route search API in Go");
+  // Outside a group, a fact to review names its job.
+  await expect(review.getByText("Jeepney Data Co — Engineer, 2018 to 2021").first()).toBeVisible();
+  await page.getByRole("button", { name: "Confirm all" }).click();
+
+  const confirmed = page.getByRole("region", { name: "Confirmed facts" });
+  const lakbay = confirmed.locator("details").filter({ hasText: "Lakbay Labs" });
+  const jeepney = confirmed.locator("details").filter({ hasText: "Jeepney Data Co" });
+  await expect(lakbay.locator("summary")).toContainText("5");
+  await expect(jeepney.locator("summary")).toContainText("5");
+  await expect(lakbay).not.toHaveAttribute("open");
+  await expect(confirmed.getByText("Wrote the route search API in Go")).toBeHidden();
+
+  await jeepney.locator("summary").click();
+  await expect(confirmed.getByText("Wrote the route search API in Go")).toBeVisible();
+  await jeepney.locator("summary").click();
+
+  await page.getByRole("searchbox", { name: "Search confirmed facts" }).fill("sqlite cebu");
+  await expect(confirmed.getByText("Loaded 42 routes from Cebu open data into SQLite")).toBeVisible();
+  await expect(lakbay).toHaveCount(0);
+  await page.getByRole("searchbox", { name: "Search confirmed facts" }).fill("");
+  await expect(jeepney).not.toHaveAttribute("open");
+});

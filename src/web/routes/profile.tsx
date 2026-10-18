@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { LockIcon } from "lucide-react";
-import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
+import { ChevronRightIcon, LockIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AddonInput,
@@ -37,7 +37,9 @@ import {
 } from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
 import { FileDropZone } from "../components/file-drop-zone";
+import { type PageSection, SaveRow, SectionHeading, SectionPage } from "../components/section-page";
 import { SetupChecklist } from "../components/setup-checklist";
+import { cn } from "../lib/utils";
 import {
   useConfirmAllFacts,
   useConfirmFact,
@@ -72,7 +74,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 
 const onError = (error: unknown) => toast.error(errorMessage(error));
@@ -80,7 +81,9 @@ const onError = (error: unknown) => toast.error(errorMessage(error));
 function ContactForm({ contact }: { contact: Contact }) {
   const id = useId();
   const update = useUpdateProfile();
-  const [form, setForm] = useState({ ...contact, links: contact.links.join(", ") });
+  const [saved] = useState(() => ({ ...contact, links: contact.links.join(", ") }));
+  const [form, setForm] = useState(saved);
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
   const fields = [
     { key: "fullName", label: "Full name", type: "text", autoComplete: "name" },
     { key: "email", label: "Email", type: "email", autoComplete: "email" },
@@ -95,15 +98,12 @@ function ContactForm({ contact }: { contact: Contact }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          Contact
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          The header of every PDF you export. Empty fields fill in from your CV when you save it.
-        </p>
-      </div>
+    <form onSubmit={submit} className="grid gap-5" aria-labelledby={`${id}-h`}>
+      <SectionHeading
+        id={`${id}-h`}
+        title="Contact"
+        description="The header of every PDF you export. Empty fields fill in from your CV when you save it."
+      />
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map((f) => (
           <div key={f.key} className="grid gap-2">
@@ -135,9 +135,7 @@ function ContactForm({ contact }: { contact: Contact }) {
           Separate links with commas.
         </p>
       </div>
-      <Button type="submit" className="justify-self-start" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save contact"}
-      </Button>
+      <SaveRow dirty={dirty} pending={update.isPending} label="Save contact" />
     </form>
   );
 }
@@ -145,9 +143,11 @@ function ContactForm({ contact }: { contact: Contact }) {
 function StandardAnswersForm({ answers }: { answers: StandardAnswers }) {
   const id = useId();
   const update = useUpdateProfile();
-  const [form, setForm] = useState<Record<string, string>>(() =>
+  const [saved] = useState<Record<string, string>>(() =>
     Object.fromEntries(MUST_ANSWERS.map((k) => [k, answers[k] ?? ""])),
   );
+  const [form, setForm] = useState(saved);
+  const dirty = MUST_ANSWERS.some((k) => form[k] !== saved[k]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -158,29 +158,25 @@ function StandardAnswersForm({ answers }: { answers: StandardAnswers }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          Standard answers
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Questions about salary, work authorization, notice, start date and references are never drafted for you.
-          Answer them once here.
-        </p>
+    <form onSubmit={submit} className="grid gap-5" aria-labelledby={`${id}-h`}>
+      <SectionHeading
+        id={`${id}-h`}
+        title="Standard answers"
+        description="Questions about salary, work authorization, notice, start date and references are never drafted for you. Answer them once here."
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {MUST_ANSWERS.map((k) => (
+          <div key={k} className="grid gap-2">
+            <Label htmlFor={`${id}-${k}`}>{mustAnswerLabel(k)}</Label>
+            <Input
+              id={`${id}-${k}`}
+              value={form[k] ?? ""}
+              onChange={(e) => setForm((prev) => ({ ...prev, [k]: e.target.value }))}
+            />
+          </div>
+        ))}
       </div>
-      {MUST_ANSWERS.map((k) => (
-        <div key={k} className="grid gap-2">
-          <Label htmlFor={`${id}-${k}`}>{mustAnswerLabel(k)}</Label>
-          <Input
-            id={`${id}-${k}`}
-            value={form[k] ?? ""}
-            onChange={(e) => setForm((prev) => ({ ...prev, [k]: e.target.value }))}
-          />
-        </div>
-      ))}
-      <Button type="submit" className="justify-self-start" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save answers"}
-      </Button>
+      <SaveRow dirty={dirty} pending={update.isPending} label="Save answers" />
     </form>
   );
 }
@@ -243,7 +239,9 @@ function parseDraft(d: TargetingDraft) {
 function TargetingForm({ targeting }: { targeting: Targeting }) {
   const id = useId();
   const update = useUpdateProfile();
-  const [draft, setDraft] = useState(() => draftOf(targeting));
+  const [saved] = useState(() => draftOf(targeting));
+  const [draft, setDraft] = useState(saved);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const [problem, setProblem] = useState<string | null>(null);
   const set = <K extends keyof TargetingDraft>(key: K, value: TargetingDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -270,32 +268,42 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
   }
 
   return (
-    <form id="targeting" onSubmit={submit} noValidate className="grid max-w-2xl gap-5" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          Job targeting
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Refresh keeps postings that fit. A posting is dropped only when it is surely another kind of role; anything
-          unclear is kept.
-        </p>
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor={`${id}-titles`}>Target titles, one per line</Label>
-        <Textarea
-          id={`${id}-titles`}
-          className="min-h-20"
-          value={draft.titles}
-          onChange={(e) => set("titles", e.target.value)}
-        />
-        <p className="text-muted-foreground text-xs">
-          For example "Frontend engineer". Built-in boards keep postings whose title or tags have one of these words.
-          Blank keeps every posting.
-        </p>
+    <form onSubmit={submit} noValidate className="grid gap-6" aria-labelledby={`${id}-h`}>
+      <SectionHeading
+        id={`${id}-h`}
+        title="Job targeting"
+        description="Refresh keeps postings that fit. A posting is dropped only when it is surely another kind of role; anything unclear is kept."
+      />
+      <div className="grid items-start gap-x-4 gap-y-6 md:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-titles`}>Target titles, one per line</Label>
+          <Textarea
+            id={`${id}-titles`}
+            className="max-h-64 min-h-32"
+            value={draft.titles}
+            onChange={(e) => set("titles", e.target.value)}
+          />
+          <p className="text-muted-foreground text-xs">
+            For example "Frontend engineer". Built-in boards keep postings whose title or tags have one of these words.
+            Blank keeps every posting.
+          </p>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-exclude`}>Exclude title words, one per line</Label>
+          <Textarea
+            id={`${id}-exclude`}
+            className="max-h-64 min-h-32"
+            value={draft.exclude}
+            onChange={(e) => set("exclude", e.target.value)}
+          />
+          <p className="text-muted-foreground text-xs">
+            For example "Intern". A title with one of these is always dropped.
+          </p>
+        </div>
       </div>
       <fieldset className="grid gap-3">
-        <legend className="mb-2 font-medium text-sm">Role families</legend>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <legend className="mb-3 font-medium text-sm">Role families</legend>
+        <div className="grid gap-x-4 gap-y-2.5 sm:grid-cols-2 md:grid-cols-3">
           {ROLE_FAMILIES.map((family) => (
             <div key={family} className="flex items-center gap-2">
               <Checkbox
@@ -311,18 +319,6 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
         </div>
         <p className="text-muted-foreground text-xs">None picked means only the exclude words drop postings.</p>
       </fieldset>
-      <div className="grid gap-2">
-        <Label htmlFor={`${id}-exclude`}>Exclude title words, one per line</Label>
-        <Textarea
-          id={`${id}-exclude`}
-          className="min-h-16"
-          value={draft.exclude}
-          onChange={(e) => set("exclude", e.target.value)}
-        />
-        <p className="text-muted-foreground text-xs">
-          For example "Intern". A title with one of these is always dropped.
-        </p>
-      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor={`${id}-seniority`}>Seniority</Label>
@@ -414,14 +410,13 @@ function TargetingForm({ targeting }: { targeting: Targeting }) {
           hidden. Leave blank for no minimum.
         </p>
       </fieldset>
-      {problem && (
-        <p role="alert" className="text-destructive text-sm">
-          {problem}
-        </p>
-      )}
-      <Button type="submit" className="justify-self-start" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save targeting"}
-      </Button>
+      <SaveRow dirty={dirty} pending={update.isPending} label="Save targeting">
+        {problem && (
+          <p role="alert" className="text-destructive text-sm">
+            {problem}
+          </p>
+        )}
+      </SaveRow>
     </form>
   );
 }
@@ -707,16 +702,12 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
   }
 
   return (
-    <form id="cv" onSubmit={submit} className="grid max-w-2xl gap-4" aria-labelledby={`${id}-h`}>
-      <div>
-        <h2 id={`${id}-h`} className="font-semibold text-lg">
-          CV
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Upload your CV or paste it as text. {aiReady ? "AI splits it" : "It is split"} into short facts for you to
-          confirm. The file itself is not kept.
-        </p>
-      </div>
+    <form onSubmit={submit} className="grid gap-5" aria-labelledby={`${id}-h`}>
+      <SectionHeading
+        id={`${id}-h`}
+        title="CV"
+        description={`Upload your CV or paste it as text. ${aiReady ? "AI splits it" : "It is split"} into short facts for you to confirm. The file itself is not kept.`}
+      />
       <div className="grid gap-2">
         <FileDropZone
           id={`${id}-file`}
@@ -779,7 +770,16 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
 
 // ---------- Facts ----------
 
-function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
+function FactRow({
+  fact,
+  showSource,
+  showSection = false,
+}: {
+  fact: FactDto;
+  showSource: boolean;
+  /** Outside a group, name the job or project the fact sits under. */
+  showSection?: boolean;
+}) {
   const confirm = useConfirmFact();
   const remove = useDeleteFact();
   const update = useUpdateFact();
@@ -798,7 +798,7 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
   }
 
   return (
-    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
+    <li className="group flex flex-wrap items-start gap-x-3 gap-y-2 py-2.5">
       <span className="w-16 shrink-0 pt-0.5 font-mono text-muted-foreground text-xs tabular-nums">{fact.key}</span>
       {editing ? (
         <form
@@ -837,9 +837,10 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
         </form>
       ) : (
         <div className="grid min-w-0 flex-1 gap-1">
-          <p className="text-sm">{fact.text}</p>
-          {(showSource || fact.usage === "letters_only" || fact.evidence) && (
+          <p className="text-pretty text-sm leading-relaxed">{fact.text}</p>
+          {(showSource || (showSection && fact.section) || fact.usage === "letters_only" || fact.evidence) && (
             <p className="flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
+              {showSection && fact.section && <span className="font-medium">{fact.section}</span>}
               {showSource && <span>From {fact.itemKind === "cv" ? "your CV" : fact.itemTitle}</span>}
               {fact.evidence && <Evidence evidence={fact.evidence} />}
               {fact.usage === "letters_only" && <span>Letters and answers only</span>}
@@ -848,7 +849,14 @@ function FactRow({ fact, showSource }: { fact: FactDto; showSource: boolean }) {
         </div>
       )}
       {!editing && (
-        <div className="flex gap-1">
+        <div
+          className={cn(
+            "-my-1 flex gap-1",
+            // A confirmed fact rarely needs its actions: they wait for hover or focus, where there is a pointer.
+            fact.status === "confirmed" &&
+              "transition-opacity pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100",
+          )}
+        >
           {fact.status === "pending" && (
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm.mutate(fact.id, { onError })}>
               Confirm
@@ -896,17 +904,17 @@ function VanishedRow({ fact }: { fact: FactDto }) {
   const remove = useDeleteFact();
   const busy = keep.isPending || remove.isPending;
   return (
-    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-2.5">
       <span className="w-16 shrink-0 pt-0.5 font-mono text-muted-foreground text-xs tabular-nums">{fact.key}</span>
       <div className="grid min-w-0 flex-1 gap-1">
-        <p className="text-sm">{fact.text}</p>
+        <p className="text-pretty text-sm leading-relaxed">{fact.text}</p>
         {fact.evidence && (
           <p className="flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
             <Evidence evidence={fact.evidence} />
           </p>
         )}
       </div>
-      <div className="flex gap-1">
+      <div className="-my-1 flex gap-1">
         <Button size="sm" variant="secondary" disabled={busy} onClick={() => keep.mutate(fact.id, { onError })}>
           Keep
         </Button>
@@ -928,8 +936,108 @@ const VANISHED_HINT: Record<FactDto["origin"], string> = {
   github: "You confirmed these, but the latest read of the repo did not find them again. Keep them, or delete them.",
 };
 
+/** Facts whose key or text has every word of the query, in any order. */
+function matching(facts: FactDto[], query: string): FactDto[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return facts;
+  return facts.filter((f) => {
+    const hay = `${f.key} ${f.text}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** Past this many confirmed facts, a search box helps find one. */
+const SEARCH_FROM = 8;
+
+type FactGroup = { key: string; label: string; facts: FactDto[] };
+
+/** The name facts are grouped under: their section, else the add-on they came from. CV facts with neither are "Other". */
+function groupLabel(fact: FactDto): string | null {
+  if (fact.section) return fact.section;
+  return fact.itemKind === "cv" ? null : fact.itemTitle;
+}
+
+/**
+ * Confirmed facts grouped by job, project or add-on, in the order each group first appears,
+ * so a CV's groups keep the CV's order. Facts with no group come last, under "Other".
+ */
+function groupFacts(facts: FactDto[]): FactGroup[] {
+  const groups = new Map<string, FactGroup>();
+  const other: FactDto[] = [];
+  for (const fact of facts) {
+    const label = groupLabel(fact);
+    if (label === null) {
+      other.push(fact);
+      continue;
+    }
+    const key = label
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+    const group = groups.get(key) ?? { key, label, facts: [] };
+    group.facts.push(fact);
+    groups.set(key, group);
+  }
+  const list = [...groups.values()];
+  if (other.length) list.push({ key: "", label: list.length ? "Other" : "All facts", facts: other });
+  return list;
+}
+
+/** One collapsible group of confirmed facts. Closed by default; a search opens it. */
+function FactGroupRow({ group, open, showSource }: { group: FactGroup; open: boolean; showSource: boolean }) {
+  return (
+    <details open={open} className="group/fg">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2.5 text-sm hover:text-foreground pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out group-open/fg:rotate-90 motion-reduce:transition-none"
+        />
+        <span className="min-w-0 truncate font-medium">{group.label}</span>
+        <span className="ml-auto pl-3 text-muted-foreground tabular-nums">{group.facts.length}</span>
+      </summary>
+      <ul className="mb-2 ml-6 divide-y border-t" aria-label={`Confirmed facts: ${group.label}`}>
+        {group.facts.map((f) => (
+          <FactRow key={f.id} fact={f} showSource={showSource} />
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/** Offers to split the CV again when its confirmed facts predate grouping and so have no section. */
+function RegroupNote({ cv, ungrouped }: { cv: ProfileItemDto; ungrouped: number }) {
+  const paste = usePasteCv();
+  const overCap = useOverCap();
+  const running = cv.splitTask?.status === "running";
+
+  function regroup(confirmOverCap = false) {
+    paste.mutate(
+      { text: cv.body, confirmOverCap },
+      {
+        onSuccess: () => toast("Splitting your CV again. Facts that still match keep their confirmation."),
+        onError: overCap.onError(() => regroup(true)),
+      },
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+      <p className="min-w-0 flex-1 text-muted-foreground">
+        {ungrouped} fact{ungrouped === 1 ? "" : "s"} from your CV {ungrouped === 1 ? "has" : "have"} no job yet. Split
+        your CV again to group them; facts that still match stay confirmed.
+      </p>
+      <Button size="sm" variant="outline" disabled={paste.isPending || running} onClick={() => regroup()}>
+        {paste.isPending || running ? "Splitting…" : "Group by job"}
+      </Button>
+      {overCap.dialog}
+    </div>
+  );
+}
+
 function Facts({ profile }: { profile: ProfileDto }) {
+  const id = useId();
   const confirmAll = useConfirmAllFacts();
+  const [query, setQuery] = useState("");
   const { facts, skillsFound } = profile;
   const items = [...(profile.cv ? [profile.cv] : []), ...profile.addons];
   // While an item is being split or read, its facts' `inLatest` is about to change; wait for the result.
@@ -949,19 +1057,41 @@ function Facts({ profile }: { profile: ProfileDto }) {
     )
     .filter((group) => group.facts.length > 0);
   const showSource = profile.addons.length > 0;
+  const shown = useMemo(() => matching(confirmed, query), [confirmed, query]);
+  const groups = useMemo(() => groupFacts(shown), [shown]);
+  const searching = query.trim() !== "";
+  // Grouping only helps once the CV's facts carry a section; until then, offer to split the CV again.
+  const ungroupedCv = confirmed.filter((f) => f.itemKind === "cv" && !f.section).length;
+  const offerRegroup =
+    profile.cv && ungroupedCv > SEARCH_FROM && !confirmed.some((f) => f.itemKind === "cv" && f.section);
 
   return (
-    <section id="facts" aria-labelledby="facts-h" className="grid max-w-3xl gap-6">
-      <div>
-        <h2 id="facts-h" className="font-semibold text-lg">
-          Facts
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Only confirmed facts can be cited. Cite one in a file by writing its key, like [FACT-1].
-        </p>
-      </div>
+    <section aria-labelledby={`${id}-h`} className="grid gap-8">
+      <SectionHeading
+        id={`${id}-h`}
+        title="Facts"
+        description="Only confirmed facts can be cited. Cite one in a file by writing its key, like [FACT-1]."
+      />
       {facts.length === 0 && (
         <p className="text-muted-foreground text-sm">No facts yet. Upload or paste your CV above.</p>
+      )}
+      {facts.length > 0 && (
+        <div className="grid gap-2">
+          <h3 className="font-medium text-sm">Skills found in your confirmed facts</h3>
+          {skillsFound.length > 0 ? (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Skills found">
+              {skillsFound.map((skill) => (
+                <li key={skill}>
+                  <Badge variant="secondary">{skill}</Badge>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              None yet. A skill counts for matching once a confirmed fact names it.
+            </p>
+          )}
+        </div>
       )}
       {pending.length > 0 && (
         <div>
@@ -981,7 +1111,7 @@ function Facts({ profile }: { profile: ProfileDto }) {
           </div>
           <ul className="mt-2 divide-y border-y" aria-label="Facts to review">
             {pending.map((f) => (
-              <FactRow key={f.id} fact={f} showSource={showSource} />
+              <FactRow key={f.id} fact={f} showSource={showSource} showSection />
             ))}
           </ul>
         </div>
@@ -1001,34 +1131,52 @@ function Facts({ profile }: { profile: ProfileDto }) {
       ))}
       {confirmed.length > 0 && (
         <div>
-          <h3 className="font-medium text-sm">
-            Confirmed <span className="text-muted-foreground tabular-nums">{confirmed.length}</span>
-          </h3>
-          <ul className="mt-2 divide-y border-y" aria-label="Confirmed facts">
-            {confirmed.map((f) => (
-              <FactRow key={f.id} fact={f} showSource={showSource} />
-            ))}
-          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="font-medium text-sm">
+              Confirmed <span className="text-muted-foreground tabular-nums">{confirmed.length}</span>
+            </h3>
+            {confirmed.length > SEARCH_FROM && (
+              <div className="relative ml-auto w-full sm:w-64">
+                <SearchIcon
+                  aria-hidden
+                  className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 size-3.5 text-muted-foreground"
+                />
+                <Input
+                  type="search"
+                  aria-label="Search confirmed facts"
+                  placeholder="Search facts"
+                  className="h-8 pl-8"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+          {offerRegroup && profile.cv && (
+            <div className="mt-3">
+              <RegroupNote cv={profile.cv} ungrouped={ungroupedCv} />
+            </div>
+          )}
+          {shown.length > 0 ? (
+            <section aria-label="Confirmed facts" className="mt-2 divide-y border-y">
+              {groups.map((g) => (
+                // Groups start closed once there are enough facts to need it. A search opens every
+                // group with a match; clearing it closes them again.
+                <FactGroupRow
+                  key={`${g.key}-${searching}`}
+                  group={g}
+                  open={searching || groups.length === 1 || confirmed.length <= SEARCH_FROM}
+                  showSource={showSource}
+                />
+              ))}
+            </section>
+          ) : (
+            <p className="mt-2 border-y py-6 text-center text-muted-foreground text-sm" aria-live="polite">
+              No confirmed fact has “{query.trim()}”.
+            </p>
+          )}
         </div>
       )}
-      <div>
-        <h3 id="skills-h" className="font-medium text-sm">
-          Skills found in your confirmed facts
-        </h3>
-        {skillsFound.length > 0 ? (
-          <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Skills found">
-            {skillsFound.map((skill) => (
-              <li key={skill}>
-                <Badge variant="secondary">{skill}</Badge>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            None yet. A skill counts for matching once a confirmed fact names it.
-          </p>
-        )}
-      </div>
     </section>
   );
 }
@@ -1341,20 +1489,23 @@ function Addons({ addons, facts, aiReady }: { addons: ProfileItemDto[]; facts: F
   const [dialog, setDialog] = useState<{ item: ProfileItemDto | null; key: number } | null>(null);
   const open = (item: ProfileItemDto | null) => setDialog({ item, key: Date.now() });
   return (
-    <section aria-labelledby="addons-h" className="grid max-w-3xl gap-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 id="addons-h" className="font-semibold text-lg">
-            Add-ons
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            Work, open source, challenges and anything else your CV leaves out.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => open(null)}>
-          Add an add-on
-        </Button>
-      </div>
+    <section aria-labelledby="addons-h" className="grid gap-5">
+      <SectionHeading
+        id="addons-h"
+        title="Add-ons"
+        description="Work, open source, challenges and anything else your CV leaves out."
+        action={
+          <Button variant="outline" onClick={() => open(null)}>
+            <PlusIcon aria-hidden />
+            Add an add-on
+          </Button>
+        }
+      />
+      {addons.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          Nothing yet. A side project, a talk or a GitHub repo gives drafts more to cite.
+        </p>
+      )}
       {addons.length > 0 && (
         <ul className="divide-y border-y" aria-label="Add-ons">
           {addons.map((item) => (
@@ -1396,21 +1547,51 @@ export function ProfilePage() {
     );
   }
   const { contact, standardAnswers, targeting, cv, addons, facts, aiReady } = profile.data;
-  return (
-    <div className="grid gap-10">
-      <h1 className="display text-3xl">Profile</h1>
-      <SetupChecklist />
-      {/* A CV save can fill empty fields on the server; the form picks them up. */}
-      <ContactForm key={JSON.stringify(contact)} contact={contact} />
-      <Separator />
-      <CvForm key={cv?.rev ?? 0} cv={cv} contact={contact} aiReady={aiReady} />
-      <Facts profile={profile.data} />
-      <Separator />
-      <Addons addons={addons} facts={facts} aiReady={aiReady} />
-      <Separator />
-      <StandardAnswersForm answers={standardAnswers} />
-      <Separator />
-      <TargetingForm targeting={targeting} />
-    </div>
-  );
+  const toReview = facts.filter((f) => f.status === "pending").length;
+  const confirmed = facts.length - toReview;
+  const answered = MUST_ANSWERS.filter((k) => standardAnswers[k]?.trim()).length;
+  // The anchors (`/profile#cv`, `#facts`, `#targeting`) are what the setup checklist links to.
+  const sections: PageSection[] = [
+    {
+      id: "contact",
+      label: "Contact",
+      hint: contact.fullName && contact.email ? undefined : "Incomplete",
+      attention: true,
+      // A CV save can fill empty fields on the server; the form picks them up.
+      content: <ContactForm key={JSON.stringify(contact)} contact={contact} />,
+    },
+    {
+      id: "cv",
+      label: "CV",
+      hint: cv ? undefined : "Missing",
+      attention: true,
+      content: <CvForm key={cv?.rev ?? 0} cv={cv} contact={contact} aiReady={aiReady} />,
+    },
+    {
+      id: "facts",
+      label: "Facts",
+      hint: toReview > 0 ? `${toReview} to review` : confirmed > 0 ? String(confirmed) : undefined,
+      attention: toReview > 0,
+      content: <Facts profile={profile.data} />,
+    },
+    {
+      id: "addons",
+      label: "Add-ons",
+      hint: addons.length > 0 ? String(addons.length) : undefined,
+      content: <Addons addons={addons} facts={facts} aiReady={aiReady} />,
+    },
+    {
+      id: "answers",
+      label: "Standard answers",
+      hint: `${answered}/${MUST_ANSWERS.length}`,
+      attention: answered < MUST_ANSWERS.length,
+      content: <StandardAnswersForm answers={standardAnswers} />,
+    },
+    {
+      id: "targeting",
+      label: "Job targeting",
+      content: <TargetingForm targeting={targeting} />,
+    },
+  ];
+  return <SectionPage title="Profile" intro={<SetupChecklist />} sections={sections} />;
 }

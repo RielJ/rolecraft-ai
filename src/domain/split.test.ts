@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { splitFacts } from "./split";
+import { sectionIn, splitFacts, splitSections } from "./split";
 
 describe("splitFacts", () => {
   test("bullets become one candidate each, without the bullet marker", () => {
@@ -53,5 +53,68 @@ describe("splitFacts", () => {
     for (const fact of splitFacts({ text })) {
       expect(text.includes(fact)).toBe(true);
     }
+  });
+});
+
+describe("splitSections", () => {
+  const cv = [
+    "EXPERIENCE",
+    "Acme Corp, Senior Engineer, 2019 to 2023",
+    "- Built a payments API in Go",
+    "- Led a team of 4 engineers",
+    "",
+    "Globex — Engineer",
+    "- Cut build time from 20 to 6 minutes",
+    "",
+    "EDUCATION",
+    "- BS Computer Science, 2015",
+  ].join("\n");
+
+  test("bullets sit under the short line above them, the rest under the latest heading", () => {
+    expect(splitSections({ text: cv })).toEqual([
+      { text: "Acme Corp, Senior Engineer, 2019 to 2023", section: "Acme Corp, Senior Engineer, 2019 to 2023" },
+      { text: "Built a payments API in Go", section: "Acme Corp, Senior Engineer, 2019 to 2023" },
+      { text: "Led a team of 4 engineers", section: "Acme Corp, Senior Engineer, 2019 to 2023" },
+      { text: "Globex — Engineer", section: "Globex — Engineer" },
+      { text: "Cut build time from 20 to 6 minutes", section: "Globex — Engineer" },
+      { text: "BS Computer Science, 2015", section: "EDUCATION" },
+    ]);
+  });
+
+  test("a sentence above bullets does not name them", () => {
+    const text = "SUMMARY\nI build web apps.\n- Built X for Y in 2021";
+    expect(splitSections({ text })).toEqual([
+      { text: "I build web apps.", section: "SUMMARY" },
+      { text: "Built X for Y in 2021", section: "SUMMARY" },
+    ]);
+  });
+
+  test("text with no headings has no sections", () => {
+    expect(splitSections({ text: "I moved our jobs to Postgres in 2022." })).toEqual([
+      { text: "I moved our jobs to Postgres in 2022.", section: null },
+    ]);
+  });
+
+  test("every section is a line of the source text", () => {
+    for (const { section } of splitSections({ text: cv })) {
+      if (section) expect(cv.split("\n")).toContain(section);
+    }
+  });
+});
+
+describe("sectionIn", () => {
+  const evidence = "CASHFLOWY — Senior Engineer\nJanuary 2026 – June 2026\n- Led the design";
+
+  test("keeps a label the text contains, ignoring case and punctuation", () => {
+    expect(sectionIn({ section: "Cashflowy", evidence })).toBe("Cashflowy");
+    expect(sectionIn({ section: " CASHFLOWY — Senior Engineer: ", evidence })).toBe("CASHFLOWY — Senior Engineer");
+  });
+
+  test("drops a label the text does not contain, or only contains part of a word of", () => {
+    expect(sectionIn({ section: "Globex", evidence })).toBeNull();
+    expect(sectionIn({ section: "Cash", evidence })).toBeNull();
+    expect(sectionIn({ section: "", evidence })).toBeNull();
+    expect(sectionIn({ section: null, evidence })).toBeNull();
+    expect(sectionIn({ section: "x".repeat(121), evidence: "x".repeat(121) })).toBeNull();
   });
 });

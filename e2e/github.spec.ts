@@ -72,7 +72,7 @@ test("read a repo → facts with evidence links → confirm one; Re-read asks be
 
   // Confirm one by one.
   await routes.getByRole("button", { name: "Confirm" }).click();
-  const confirmed = page.getByRole("list", { name: "Confirmed facts" });
+  const confirmed = page.getByRole("region", { name: "Confirmed facts" });
   await expect(confirmed).toContainText("Load 42 routes from Cebu open data into SQLite");
 
   // The repo moves on: that commit is gone. Re-read keeps it until the user decides.
