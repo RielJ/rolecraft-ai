@@ -1,4 +1,11 @@
-import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  type QueryClient,
+  skipToken,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { z } from "zod";
 import {
   AddJobResult,
@@ -10,6 +17,7 @@ import {
   type ChangeStatusInput,
   type DraftInput,
   type FactId,
+  FillRatesResponse,
   FilteredList,
   HiddenCompanies,
   type ItemId,
@@ -422,21 +430,34 @@ export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: () => unwrap(client.api.settings.$get(), SettingsDto) });
 }
 
+/** Store new settings and reload what they feed. */
+function settingsChanged(qc: QueryClient, settings: SettingsDto): void {
+  qc.setQueryData(keys.settings, settings);
+  // aiReady on every workspace follows the key.
+  void qc.invalidateQueries({ queryKey: ["workspace"] });
+  // The view currency and rates set the pay shown and the pay filter on Matches.
+  void qc.invalidateQueries({ queryKey: keys.matches });
+  // The top bar counts what Matches can show.
+  void qc.invalidateQueries({ queryKey: keys.refresh });
+  // The AI key is a setup step.
+  void qc.invalidateQueries({ queryKey: keys.setup });
+}
+
 function useSettingsMutation<I>(run: (input: I) => Promise<SettingsDto>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: run,
-    onSuccess: (settings) => {
-      qc.setQueryData(keys.settings, settings);
-      // aiReady on every workspace follows the key.
-      void qc.invalidateQueries({ queryKey: ["workspace"] });
-      // The view currency and rates set the pay shown and the pay filter on Matches.
-      void qc.invalidateQueries({ queryKey: keys.matches });
-      // The top bar counts what Matches can show.
-      void qc.invalidateQueries({ queryKey: keys.refresh });
-      // The AI key is a setup step.
-      void qc.invalidateQueries({ queryKey: keys.setup });
-    },
+    onSuccess: (settings) => settingsChanged(qc, settings),
+  });
+}
+
+/** Fill rates now (decision 67). A failed fetch is still recorded, so Settings reloads either way. */
+export function useFillRates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(client.api.settings.rates.fill.$post(), FillRatesResponse),
+    onSuccess: ({ settings }) => settingsChanged(qc, settings),
+    onError: () => qc.invalidateQueries({ queryKey: keys.settings }),
   });
 }
 

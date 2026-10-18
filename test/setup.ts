@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
+import { offlineFx } from "@/server/adapters/fx";
 import { createPublicReader } from "@/server/adapters/github";
 import { createHttpClient, type HttpClient } from "@/server/adapters/http";
 import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
@@ -69,7 +70,7 @@ export function offlineHttp(): HttpClient {
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource" | "github">> = {},
+  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource" | "github" | "fx">> = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
@@ -85,6 +86,8 @@ export async function testDeps(
     // Sources read through the same injected client, so a test's fake fetch serves both.
     sources: over.sources ?? createSourceAdapters(http),
     github: over.github ?? createPublicReader({ http, user: null }),
+    // Rate sources refuse every call unless a test passes its own (decision 67).
+    fx: over.fx ?? offlineFx(),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
     fake,
   };

@@ -122,6 +122,8 @@ export function RefreshButton() {
     void qc.invalidateQueries({ queryKey: keys.sources });
     void qc.invalidateQueries({ queryKey: keys.board });
     void qc.invalidateQueries({ queryKey: keys.setup });
+    // A Refresh ends by filling exchange rates (decision 67).
+    void qc.invalidateQueries({ queryKey: keys.settings });
     if (task.status === "done" && refresh.data?.result) toast(`Refresh done. ${summary(refresh.data.result)}`);
     else if (task.status === "failed") toast.error(`Refresh failed. ${task.error ?? ""}`.trim());
   }, [task, watching, refresh.data?.result, qc]);

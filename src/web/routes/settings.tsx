@@ -1,13 +1,14 @@
 import { KeyRoundIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
-import { CurrencyCode, isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
+import { CurrencyCode, type FxRateBy, isValidCap, MIN_CAP_USD, type SettingsDto } from "@/shared/api";
 import { AI_PROVIDERS, type AiProvider } from "@/shared/enums";
+import { fillRatesSummary, fxAgeLines, fxProvenanceLabel, rateDayLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { ExtensionPairing } from "../components/extension-pairing";
 import { type PageSection, SectionHeading, SectionPage } from "../components/section-page";
 import { cn } from "../lib/utils";
-import { useRemoveAiKey, useSaveAiKey, useSettings, useUpdateSettings } from "../queries";
+import { useFillRates, useRemoveAiKey, useSaveAiKey, useSettings, useUpdateSettings } from "../queries";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -321,7 +322,7 @@ function rateFrom(text: string): number | null {
   return text.trim() !== "" && Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function ViewCurrencyForm({ money }: { money: Money }) {
+function ViewCurrencyForm({ money, onFill }: { money: Money; onFill: () => void }) {
   const id = useId();
   const update = useUpdateSettings();
   const [code, setCode] = useState(money.viewCurrency);
@@ -334,11 +335,13 @@ function ViewCurrencyForm({ money }: { money: Money }) {
     update.mutate(
       { viewCurrency: parsed.data },
       {
+        // Changing the view currency never fetches (decision 67); the toast offers it.
         onSuccess: () =>
           toast(
             money.fxRates.length
               ? `Pay now shows in ${parsed.data}. Your rates were cleared.`
               : `Pay now shows in ${parsed.data}.`,
+            { action: { label: "Fill rates", onClick: onFill } },
           ),
         onError,
       },
@@ -376,8 +379,30 @@ function ViewCurrencyForm({ money }: { money: Money }) {
   );
 }
 
+/** What a rate row says under its source: who set it and when, or why it has none. */
+function rateNote({ entry, unsupported }: { entry: RateEntry | undefined; unsupported: boolean }): string | null {
+  if (entry === undefined) return unsupported ? "No source publishes this rate. Type it in." : null;
+  if (entry.by === "user")
+    return `Set by you ${SET_ON.format(new Date(entry.setAt))}. Remove it to update it automatically.`;
+  const day = entry.rateDate === null ? "" : `, rate of ${rateDayLabel(entry.rateDate)}`;
+  return `${fxProvenanceLabel(entry.by)}${day}`;
+}
+
+type RateEntry = { rate: number; setAt: string; by: FxRateBy; rateDate: string | null };
+
 /** One currency's rate: set, changed or removed. A currency with no rate yet shows an empty field. */
-function RateRow({ money, currency, rate, setAt }: { money: Money; currency: string; rate?: number; setAt?: string }) {
+function RateRow({
+  money,
+  currency,
+  entry,
+  unsupported = false,
+}: {
+  money: Money;
+  currency: string;
+  entry?: RateEntry;
+  unsupported?: boolean;
+}) {
+  const rate = entry?.rate;
   const id = useId();
   const update = useUpdateSettings();
   const [text, setText] = useState(rate === undefined ? "" : String(rate));
@@ -406,7 +431,7 @@ function RateRow({ money, currency, rate, setAt }: { money: Money; currency: str
             id={`${id}-rate`}
             inputMode="decimal"
             className="h-8 w-36 pr-12 tabular-nums"
-            placeholder="No rate"
+            placeholder="Rate"
             value={text}
             aria-invalid={invalid}
             aria-describedby={`${id}-note`}
@@ -424,7 +449,7 @@ function RateRow({ money, currency, rate, setAt }: { money: Money; currency: str
             invalid ? "text-destructive" : "text-muted-foreground",
           )}
         >
-          {invalid ? "Enter a number above zero, like 57.80." : setAt ? `Set ${SET_ON.format(new Date(setAt))}` : null}
+          {invalid ? "Enter a number above zero." : rateNote({ entry, unsupported })}
         </span>
         <div className="ml-auto flex gap-1">
           {/* Enter saves too; the button shows once there is something to save. */}
@@ -465,7 +490,7 @@ function AddRateForm({ money }: { money: Money }) {
         : parsed.data === money.viewCurrency
           ? `${parsed.data} is your view currency, so it needs no rate.`
           : text.trim() !== "" && value === null
-            ? "Enter a number above zero, like 57.80."
+            ? "Enter a number above zero."
             : null;
 
   function submit(event: FormEvent) {
@@ -505,7 +530,7 @@ function AddRateForm({ money }: { money: Money }) {
             id={`${id}-rate`}
             inputMode="decimal"
             className="w-32 tabular-nums"
-            placeholder="57.80"
+            placeholder="Rate"
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
@@ -527,24 +552,70 @@ function AddRateForm({ money }: { money: Money }) {
   );
 }
 
-/** View currency and hand-typed FX rates (decision 20, Q12). */
+/** The Fill rates button (decision 67). Off when no currency needs a fetched rate. */
+function FillRatesButton({ money, pending, onFill }: { money: Money; pending: boolean; onFill: () => void }) {
+  const needed = money.missingRates.length > 0 || money.fxRates.some((r) => r.by !== "user");
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="secondary"
+      disabled={pending || !needed}
+      title={needed ? undefined : "No currency needs a rate yet, and rates you typed stay as they are."}
+      onClick={onFill}
+    >
+      {pending ? "Filling…" : "Fill rates"}
+    </Button>
+  );
+}
+
+/** "ECB rates of 16 Oct · fetched 2 hours ago", one line per source. */
+function RateAges({ money }: { money: Money }) {
+  const lines = fxAgeLines({ rates: money.fxRates, now: new Date() });
+  if (lines.length === 0) return null;
+  return (
+    <ul className="grid gap-0.5 text-muted-foreground text-sm">
+      {lines.map((l) => (
+        <li key={l.by}>
+          {l.source} rates of <time dateTime={l.rateDate}>{l.rateDay}</time> · fetched{" "}
+          <time dateTime={l.fetchedAt}>{l.fetchedAgo}</time>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** View currency and FX rates: fetched automatically, or typed by hand (decisions 20 and 67). */
 function MoneySection({ money }: { money: Money }) {
   const id = useId();
+  const fill = useFillRates();
+  const runFill = () => fill.mutate(undefined, { onSuccess: (res) => toast(fillRatesSummary(res.fill)), onError });
+  const unsupported = new Set(money.fetch?.unsupported ?? []);
   return (
     <section aria-labelledby={`${id}-h`} className="grid gap-6">
       <SectionHeading
         id={`${id}-h`}
         title="Money"
-        description="Rates are typed by hand and used as they are, so a change re-prices every job at once."
+        description="Rates fill from the ECB, or from currency-api for currencies the ECB does not publish. A rate you type is kept until you remove it."
       />
-      <ViewCurrencyForm key={money.viewCurrency} money={money} />
+      <ViewCurrencyForm key={money.viewCurrency} money={money} onFill={runFill} />
       <div className="grid gap-3">
-        <h3 className="font-medium text-sm">
-          Rates{" "}
-          {money.missingRates.length > 0 && (
-            <span className="font-normal text-primary">· {money.missingRates.length} to set</span>
-          )}
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-medium text-sm">
+            Rates{" "}
+            {money.missingRates.length > 0 && (
+              <span className="font-normal text-primary">· {money.missingRates.length} to set</span>
+            )}
+          </h3>
+          <FillRatesButton money={money} pending={fill.isPending} onFill={runFill} />
+        </div>
+        <RateAges money={money} />
+        {money.fetch?.error && (
+          <p role="status" className="text-destructive text-sm">
+            The last fetch, <time dateTime={money.fetch.at}>{SET_ON.format(new Date(money.fetch.at))}</time>, failed:{" "}
+            {money.fetch.error} Your rates were kept.
+          </p>
+        )}
         {money.missingRates.length > 0 && (
           <p className="-mt-1 text-muted-foreground text-sm">
             Until a currency has a rate, its pay shows as posted and the pay filter never hides it.
@@ -557,15 +628,19 @@ function MoneySection({ money }: { money: Money }) {
         ) : (
           <ul className="divide-y border-y text-sm" aria-label="Rates">
             {money.missingRates.map((currency) => (
-              <RateRow key={`missing:${currency}`} money={money} currency={currency} />
-            ))}
-            {money.fxRates.map((r) => (
               <RateRow
-                key={`${r.currency}:${r.rate}:${r.setAt}`}
+                key={`missing:${currency}`}
                 money={money}
-                currency={r.currency}
-                rate={r.rate}
-                setAt={r.setAt}
+                currency={currency}
+                unsupported={unsupported.has(currency)}
+              />
+            ))}
+            {money.fxRates.map(({ currency, ...entry }) => (
+              <RateRow
+                key={`${currency}:${entry.rate}:${entry.setAt}`}
+                money={money}
+                currency={currency}
+                entry={entry}
               />
             ))}
           </ul>

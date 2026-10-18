@@ -165,6 +165,9 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
       "UPDATE outputs SET body = 'x'",
       "DELETE FROM facts",
       "UPDATE users SET full_name = 'x'",
+      // Exchange rates (decision 67): Refresh fills them as the app role after sync, never as hb_sync.
+      "UPDATE users SET fx_rates = '{}'::jsonb",
+      "UPDATE users SET fx_fetch = NULL",
       "UPDATE tasks SET step = 'x'",
       "INSERT INTO eligibility_overrides DEFAULT VALUES",
       "DELETE FROM eligibility_overrides",
@@ -361,8 +364,11 @@ describe("(c) refresh never changes user tables", () => {
     const out: Record<string, string> = {};
     for (const table of await publicTables()) {
       if (SYNC_TABLES.includes(table)) continue;
+      // Refresh's last step fills exchange rates as the app role, after sync is done (decision 67),
+      // so those two columns may change. hb_sync cannot write `users` at all (part b).
+      const shape = table === "users" ? "(to_jsonb(t) - 'fx_rates' - 'fx_fetch')" : "t";
       const [row] = await testSql().unsafe<{ h: string; n: number }[]>(
-        `SELECT md5(coalesce(string_agg(md5(t::text), ',' ORDER BY md5(t::text)), '')) AS h, count(*)::int AS n
+        `SELECT md5(coalesce(string_agg(md5(${shape}::text), ',' ORDER BY md5(${shape}::text)), '')) AS h, count(*)::int AS n
          FROM "${table}" t`,
       );
       out[table] = `${row?.n} rows ${row?.h}`;

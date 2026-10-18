@@ -98,6 +98,8 @@ export const ERROR_CODES = [
   "not_in_facts",
   /** Adding a skill past the 100 a user can add (decision 66). */
   "too_many_skills",
+  /** Fill rates could not reach any rate source (decision 67). */
+  "rates_unavailable",
   "internal",
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -687,9 +689,33 @@ export type DraftInput = z.infer<typeof DraftInput>;
 
 // ---------- Settings ----------
 
-/** One stored rate (Q12): view-currency units per 1 unit, and when the user set it. */
-export const FxRateEntry = z.object({ rate: z.number().positive(), setAt: z.iso.datetime() });
+/** Who wrote a stored rate: the user, or one of the public sources (decision 67). */
+export const FX_RATE_BY = ["user", "ecb", "currency-api"] as const;
+export const FxRateBy = z.enum(FX_RATE_BY);
+export type FxRateBy = z.infer<typeof FxRateBy>;
+
+/**
+ * One stored rate (Q12, decision 67): view-currency units per 1 unit, when it was written (typed
+ * or fetched), by whom, and the source's rate date (null for a rate the user typed).
+ */
+export const FxRateEntry = z.object({
+  rate: z.number().positive(),
+  /** For a fetched rate, the fetch time. */
+  setAt: z.iso.datetime(),
+  by: FxRateBy,
+  rateDate: z.iso.date().nullable(),
+});
 export type FxRateEntry = z.infer<typeof FxRateEntry>;
+
+/** The last automatic fetch attempt, from the Fill rates button or a Refresh (decision 67). */
+export const FxFetchStatus = z.object({
+  at: z.iso.datetime(),
+  /** Null when every currency a source publishes was filled. */
+  error: z.string().nullable(),
+  /** Currencies neither source publishes. */
+  unsupported: z.array(z.string()),
+});
+export type FxFetchStatus = z.infer<typeof FxFetchStatus>;
 
 const FxRateValue = z.number().positive("A rate must be more than zero.").max(1_000_000, "That rate is too large.");
 
@@ -700,6 +726,8 @@ export const SettingsDto = z.object({
     fxRates: z.array(FxRateEntry.extend({ currency: z.string() })),
     /** Currencies of open jobs' pay that have no rate yet, so their pay shows as posted. */
     missingRates: z.array(z.string()),
+    /** The last automatic fetch, or null when none ran since the view currency was set. */
+    fetch: FxFetchStatus.nullable(),
   }),
   ai: z.object({
     /** `pi`: AI runs through the local pi CLI and its own sign-in (decision 48); no key is used. */
@@ -761,6 +789,23 @@ export const UpdateSettingsInput = z.object({
   fxRates: z.record(CurrencyCode, FxRateValue.nullable()).optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof UpdateSettingsInput>;
+
+/** What one Fill rates run did (decision 67). */
+export const FillRatesResult = z.object({
+  filled: z.array(z.object({ currency: z.string(), rate: z.number(), by: z.enum(["ecb", "currency-api"]) })),
+  /** Rates the user typed, which a fill never overwrites. */
+  kept: z.array(z.string()),
+  /** Currencies no source publishes. */
+  unsupported: z.array(z.string()),
+  /** Currencies whose source failed this time. */
+  unavailable: z.array(z.string()),
+  /** The view currency changed while the rates were fetched, so nothing was written. */
+  viewChanged: z.boolean(),
+});
+export type FillRatesResult = z.infer<typeof FillRatesResult>;
+
+export const FillRatesResponse = z.object({ settings: SettingsDto, fill: FillRatesResult });
+export type FillRatesResponse = z.infer<typeof FillRatesResponse>;
 
 export const WorkspaceDto = z.object({
   opportunity: z.object({

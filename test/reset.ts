@@ -17,5 +17,5 @@ export async function resetTables(sql: postgres.Sql): Promise<void> {
       exclude_title_words = DEFAULT, seniority = DEFAULT, years_experience = DEFAULT, min_pay = DEFAULT,
       ai_provider = DEFAULT, ai_key_hint = DEFAULT,
       model_light = DEFAULT, model_writing = DEFAULT, monthly_cap_usd = DEFAULT,
-      ai_eligibility_on_refresh = DEFAULT, view_currency = DEFAULT, fx_rates = DEFAULT`;
+      ai_eligibility_on_refresh = DEFAULT, view_currency = DEFAULT, fx_rates = DEFAULT, fx_fetch = DEFAULT`;
 }

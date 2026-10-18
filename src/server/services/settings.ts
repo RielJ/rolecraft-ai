@@ -1,38 +1,27 @@
-import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { SaveAiKeyInput, SettingsDto, UpdateSettingsInput } from "@/shared/api";
 import { DEFAULT_MODELS } from "../adapters/ai/pricing";
 import { AiError } from "../adapters/ai/types";
-import { jobs, users } from "../db/schema";
+import { users } from "../db/schema";
 import { aiFailure, monthSpend, PROVIDER_NAMES } from "./ai";
 import { AppError, type Deps } from "./context";
+import { neededCurrencies, normalizeRates } from "./rates";
 
 /** Settings for AI: provider, key hint, models, cap, spend. The key itself never leaves the server. */
 export async function getSettings(deps: Deps): Promise<SettingsDto> {
   const [user] = await deps.db.select().from(users).where(eq(users.id, deps.userId));
   if (!user) throw new Error("user row missing");
-  const [spend, currencies] = await Promise.all([
+  const fxRates = normalizeRates(user.fxRates);
+  const [spend, needed] = await Promise.all([
     monthSpend(deps),
-    deps.db
-      .selectDistinct({ currency: jobs.payCurrency })
-      .from(jobs)
-      .where(
-        and(
-          eq(jobs.userId, deps.userId),
-          isNull(jobs.closedAt),
-          isNotNull(jobs.payCurrency),
-          ne(jobs.payCurrency, user.viewCurrency),
-        ),
-      ),
+    neededCurrencies(deps.db, { id: deps.userId, viewCurrency: user.viewCurrency, minPay: user.minPay, fxRates }),
   ]);
-  const missingRates = currencies
-    .map((c) => c.currency)
-    .filter((c): c is string => c !== null && user.fxRates[c] === undefined)
-    .sort();
-  const fxRates = Object.entries(user.fxRates)
+  const missingRates = needed.filter((c) => fxRates[c] === undefined);
+  const rateList = Object.entries(fxRates)
     .map(([currency, entry]) => ({ currency, ...entry }))
     .sort((a, b) => a.currency.localeCompare(b.currency));
   return {
-    money: { viewCurrency: user.viewCurrency, fxRates, missingRates },
+    money: { viewCurrency: user.viewCurrency, fxRates: rateList, missingRates, fetch: user.fxFetch ?? null },
     ai: {
       via: deps.aiSource.kind,
       piModels: deps.aiSource.kind === "pi" ? deps.aiSource.models : null,
@@ -100,30 +89,37 @@ export async function updateSettings(deps: Deps, input: UpdateSettingsInput): Pr
     patch.monthlyCapUsd = input.monthlyCapUsd === null ? null : input.monthlyCapUsd.toFixed(2);
   }
   if (input.eligibilityOnRefresh !== undefined) patch.aiEligibilityOnRefresh = input.eligibilityOnRefresh;
-  if (input.viewCurrency !== undefined || input.fxRates !== undefined) {
-    const [user] = await deps.db
-      .select({ viewCurrency: users.viewCurrency, fxRates: users.fxRates })
-      .from(users)
-      .where(eq(users.id, deps.userId));
-    if (!user) throw new Error("user row missing");
-    const viewCurrency = input.viewCurrency ?? user.viewCurrency;
-    if (input.fxRates?.[viewCurrency] != null) {
-      throw new AppError({
-        code: "invalid_input",
-        message: `${viewCurrency} is your view currency, so it needs no rate.`,
-      });
+  await deps.db.transaction(async (tx) => {
+    if (input.viewCurrency !== undefined || input.fxRates !== undefined) {
+      // The row lock orders this against a rate fill writing at the same time (decision 67).
+      const [user] = await tx
+        .select({ viewCurrency: users.viewCurrency, fxRates: users.fxRates })
+        .from(users)
+        .where(eq(users.id, deps.userId))
+        .for("update");
+      if (!user) throw new Error("user row missing");
+      const viewCurrency = input.viewCurrency ?? user.viewCurrency;
+      if (input.fxRates?.[viewCurrency] != null) {
+        throw new AppError({
+          code: "invalid_input",
+          message: `${viewCurrency} is your view currency, so it needs no rate.`,
+        });
+      }
+      // Rates are view-currency units per 1 unit, so a new view currency makes every old rate
+      // wrong (open question 2): they are cleared before any rates in this request are applied.
+      // The last fetch is cleared too, so the next Refresh fills them again (decision 67).
+      const viewChanged = viewCurrency !== user.viewCurrency;
+      const rates = viewChanged ? {} : normalizeRates(user.fxRates);
+      const setAt = deps.clock.now().toISOString();
+      for (const [currency, rate] of Object.entries(input.fxRates ?? {})) {
+        if (rate === null) delete rates[currency];
+        else rates[currency] = { rate, setAt, by: "user", rateDate: null };
+      }
+      patch.viewCurrency = viewCurrency;
+      patch.fxRates = rates;
+      if (viewChanged) patch.fxFetch = null;
     }
-    // Rates are view-currency units per 1 unit, so a new view currency makes every old rate
-    // wrong (open question 2): they are cleared before any rates in this request are applied.
-    const rates = viewCurrency === user.viewCurrency ? { ...user.fxRates } : {};
-    const setAt = deps.clock.now().toISOString();
-    for (const [currency, rate] of Object.entries(input.fxRates ?? {})) {
-      if (rate === null) delete rates[currency];
-      else rates[currency] = { rate, setAt };
-    }
-    patch.viewCurrency = viewCurrency;
-    patch.fxRates = rates;
-  }
-  if (Object.keys(patch).length) await deps.db.update(users).set(patch).where(eq(users.id, deps.userId));
+    if (Object.keys(patch).length) await tx.update(users).set(patch).where(eq(users.id, deps.userId));
+  });
   return getSettings(deps);
 }

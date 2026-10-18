@@ -38,7 +38,7 @@ All twelve questions are answered. The Status column holds the user's answer. Wh
 | Q9 | Company boards | Keep every posting; filter only built-in boards by keywords | **decided: every source goes through a three-level role filter (keep / unsure, kept and tagged / sure drop), plus exclude words. See 3.7a** |
 | Q10 | Built-in sources on first run | All five on | **decided: all five on, and the setup's first-refresh step lets you turn each off before syncing** |
 | Q11 | Duplicate and staleness windows | Auto-merge by company + title within 28 days; feeds close a job after 30 days without a sighting | **decided: auto-merge only exact postings (apply URL + title, or company + title + same description within 28 days); same title alone is only a suggestion. Feeds close after 30 days. Narrows decision 10** |
-| Q12 | FX rate shape | A flat map entered by hand, relative to the view currency | **decided: typed in Settings, per currency, with the date set** |
+| Q12 | FX rate shape | A flat map entered by hand, relative to the view currency | **decided: a flat map relative to the view currency, filled automatically from public sources; a typed rate overrides them (decision 67)** |
 
 Section 6 has the trade-offs for each question.
 
@@ -249,7 +249,8 @@ CREATE TABLE users (
   standard_answers   jsonb NOT NULL DEFAULT '{}',            -- {salary?, work_auth?, notice?, start_date?, references?}
   -- money display (decision 20)
   view_currency      char(3) NOT NULL DEFAULT 'PHP',
-  fx_rates           jsonb NOT NULL DEFAULT '{}',            -- {"USD": 57.80} = view units per 1 unit
+  fx_rates           jsonb NOT NULL DEFAULT '{}',            -- {"USD": {rate, setAt, by, rateDate}}: view units per 1 unit (decision 67)
+  fx_fetch           jsonb,                                  -- last automatic fetch: {at, error, unsupported}
   -- AI (decisions 29 to 31)
   ai_provider        text CHECK (ai_provider IN ('anthropic','openai')),
   ai_key_hint        text,                                   -- last 4 characters; the key is not in Postgres
@@ -1062,7 +1063,7 @@ Deferred by this plan: near-match detection on re-import ("this replaces FACT-12
 All of these are now decided; the table at the top has the answers. The text below is kept for the trade-offs. Items 1 to 11 here are Q2 to Q12 in the table at the top. Q1 (no repository layer) is explained in "What this plan cuts".
 
 1. **PDF renderer.** Default: render the same HTML and CSS template the workspace preview uses, with headless Chromium (`playwright-core` plus Debian's `chromium` in the image). The preview then matches the PDF exactly, and there is one template. Trade-off: about 300 MB more image and roughly 150 MB of memory per export. Alternative: `@react-pdf/renderer`, small and pure JS, but its layout is not HTML, so preview and PDF can drift. Plan C's alternative: a print route and the browser's own Save as PDF (`window.print()`). It needs no server renderer and no extra image size, but export becomes a print dialog rather than a download, the server can't check the gate at the moment of export, and output varies a little between browsers.
-2. **FX-rate shape.** Default: one view currency (PHP) and a flat map `{ "USD": 57.80, "EUR": 62.10 }` of view-currency units per 1 unit, entered by hand. Settings lists currencies seen in jobs that have no rate. Changing the view currency clears the map, since the rates are relative to it. Pay periods convert to monthly at 173.33 hours, 21.67 days and 4.33 weeks. Trade-off: no triangulation and no history, so a rate change re-prices every job at once. That is what a manual rate means.
+2. **FX-rate shape.** Default: one view currency (PHP) and a flat map `{ "USD": 62.9681, "EUR": 70.858 }` of view-currency units per 1 unit. Rates now fill automatically from the ECB and currency-api, and a rate the user types overrides them (decision 67). Settings lists currencies seen in jobs that have no rate. Changing the view currency clears the map, since the rates are relative to it. Pay periods convert to monthly at 173.33 hours, 21.67 days and 4.33 weeks. Trade-off: no history, so a rate change re-prices every job at once.
 3. **Where the AI key lives.** Default: not in Postgres at all. The key is written to `/data/ai-key-<user_id>` (mode 0600) in the `appdata` volume; the database stores only `ai_key_hint`. There is no encryption secret to lose or to manage. Trade-off: losing the volume means pasting the key again (nothing else is lost), and a hosted multi-user version would need to move keys into Postgres with AES-GCM and an env secret. The alternative is that design now, with `APP_SECRET` required by Compose.
 4. **CV re-import semantics.** Default (section 3.3): exact matches keep their fact and citations; new lines arrive pending; vanished pending facts are deleted; vanished confirmed facts stay confirmed and are listed under "Not in your latest CV" for Keep or Delete. Trade-off: a reworded line shows up as one new pending fact plus one "not in latest" fact instead of a single "replaces FACT-12" suggestion. That costs the user two clicks and keeps the diff exact.
 5. **Add by link for sites that forbid automation.** Decision 6 says the app reads the page once; the research says LinkedIn, JobStreet, Indeed, Upwork and others ban automated access. Default: for those hosts, skip the fetch and open the paste form with the link kept as the apply URL. Trade-off: one paste for LinkedIn jobs, in return for never touching those sites. The alternative is a single fetch per user click for every host.

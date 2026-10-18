@@ -1,3 +1,4 @@
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
@@ -13,6 +14,17 @@ export const E2E_SOURCES_LOG = join(tmpdir(), "hanapbuhay-e2e-sources.log");
 
 /** Recorded GitHub repos the server reads (HB_GITHUB=fixture). Tests copy snapshots here. */
 export const E2E_GITHUB_DIR = join(tmpdir(), "hanapbuhay-e2e-github");
+
+/**
+ * Recorded exchange-rate bodies the server reads (HB_FX=fixture). Empty, so every rate fetch fails
+ * as if the sites were unreachable; only e2e/rates.spec.ts copies fixtures in. Emptied once, in the
+ * main process: workers load this file too, and must not wipe it mid-run.
+ */
+export const E2E_FX_DIR = join(tmpdir(), "hanapbuhay-e2e-fx");
+if (process.env.TEST_WORKER_INDEX === undefined) {
+  rmSync(E2E_FX_DIR, { recursive: true, force: true });
+  mkdirSync(E2E_FX_DIR, { recursive: true });
+}
 
 export default defineConfig({
   testDir: "./e2e",
@@ -40,6 +52,8 @@ export default defineConfig({
       HB_SOURCES_LOG: E2E_SOURCES_LOG,
       HB_GITHUB: "fixture",
       HB_GITHUB_DIR: E2E_GITHUB_DIR,
+      HB_FX: "fixture",
+      HB_FX_DIR: E2E_FX_DIR,
       HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
     },
     stdout: "pipe",

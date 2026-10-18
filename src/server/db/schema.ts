@@ -23,6 +23,7 @@ import type {
   FactEvidence,
   FactId,
   FactKey,
+  FxFetchStatus,
   FxRateEntry,
   ItemId,
   JobId,
@@ -136,6 +137,9 @@ export const users = pgTable(
     viewCurrency: char({ length: 3 }).notNull().default("PHP"),
     // Q12: per currency, the rate (view-currency units per 1 unit) and when it was set.
     fxRates: jsonb().$type<Record<string, FxRateEntry>>().notNull().default({}),
+    // Decision 67: the last automatic rate fetch. Null until one runs, and again after the view
+    // currency changes. The sync role's column grants leave it out.
+    fxFetch: jsonb().$type<FxFetchStatus>(),
     aiProvider: text().$type<AiProvider>(),
     aiKeyHint: text(),
     modelLight: text(),

@@ -5,6 +5,7 @@ import { createFakeAi } from "./adapters/ai/fake";
 import { createOpenAiClient } from "./adapters/ai/openai";
 import { createPiClient } from "./adapters/ai/pi";
 import type { AiClients, AiSource } from "./adapters/ai/types";
+import { createFixtureFx, createFxSource } from "./adapters/fx";
 import { createGhReader, createPublicReader, type GithubReader } from "./adapters/github";
 import { createFixtureReader } from "./adapters/github-fixture";
 import { createHttpClient } from "./adapters/http";
@@ -86,6 +87,7 @@ function buildGithub(): GithubReader {
   }
 }
 const github = buildGithub();
+const fx = env.HB_FX === "fixture" ? createFixtureFx({ dir: env.HB_FX_DIR }) : createFxSource(http);
 
 const deps: Deps = {
   db,
@@ -97,6 +99,7 @@ const deps: Deps = {
   http,
   sources,
   github,
+  fx,
   clock: { now: () => new Date() },
 };
 

@@ -1,4 +1,4 @@
-import type { BoardMetricsDto, GateBlocker, OutdatedChange, StyleHit } from "./api";
+import type { BoardMetricsDto, FillRatesResult, FxRateBy, GateBlocker, OutdatedChange, StyleHit } from "./api";
 import type {
   BuiltinSourceKind,
   DismissReason,
@@ -388,14 +388,103 @@ const DAY_MS = 24 * HOUR_MS;
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** "just now", "1 minute ago", "2 hours ago", "3 days ago". A time a little ahead of the clock is "just now". */
+export function agoLabel({ at, now }: { at: Date; now: Date }): string {
+  const ms = now.getTime() - at.getTime();
+  if (ms < MINUTE_MS) return "just now";
+  if (ms < HOUR_MS) return `${count(Math.floor(ms / MINUTE_MS), "minute")} ago`;
+  if (ms < DAY_MS) return `${count(Math.floor(ms / HOUR_MS), "hour")} ago`;
+  return `${count(Math.floor(ms / DAY_MS), "day")} ago`;
+}
+
 /** "Refreshed 3 days ago" for the top bar (decision 11), or "Not refreshed yet". */
 export function refreshedLabel({ at, now }: { at: Date | null; now: Date }): string {
-  if (at === null) return "Not refreshed yet";
-  const ms = now.getTime() - at.getTime();
-  if (ms < MINUTE_MS) return "Refreshed just now";
-  if (ms < HOUR_MS) return `Refreshed ${count(Math.floor(ms / MINUTE_MS), "minute")} ago`;
-  if (ms < DAY_MS) return `Refreshed ${count(Math.floor(ms / HOUR_MS), "hour")} ago`;
-  return `Refreshed ${count(Math.floor(ms / DAY_MS), "day")} ago`;
+  return at === null ? "Not refreshed yet" : `Refreshed ${agoLabel({ at, now })}`;
+}
+
+// ---------- exchange rates (decision 67) ----------
+
+const FX_SOURCE_NAMES: Readonly<Record<FxRateBy, string>> = {
+  ecb: "ECB",
+  "currency-api": "currency-api",
+  user: "Set by you",
+};
+
+/** Who a stored rate came from: "ECB", "currency-api" or "Set by you". */
+export function fxProvenanceLabel(by: FxRateBy): string {
+  return FX_SOURCE_NAMES[by];
+}
+
+// A rate date is a calendar day, so it is read and shown in UTC: "2026-10-16" is always 16 Oct.
+const RATE_DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+/** "16 Oct" from "2026-10-16", in any time zone. */
+export function rateDayLabel(rateDate: string): string {
+  return RATE_DAY.format(new Date(`${rateDate}T00:00:00Z`));
+}
+
+export type FxAgeLine = {
+  by: Exclude<FxRateBy, "user">;
+  /** "ECB" or "currency-api". */
+  source: string;
+  /** ISO date, and "16 Oct". */
+  rateDate: string;
+  rateDay: string;
+  /** ISO time, and "2 hours ago". */
+  fetchedAt: string;
+  fetchedAgo: string;
+  /** The whole line: "ECB rates of 16 Oct · fetched 2 hours ago". */
+  text: string;
+};
+
+/** "ECB rates of 16 Oct · fetched 2 hours ago". */
+export function fxAgeLabel({
+  by,
+  rateDate,
+  fetchedAt,
+  now,
+}: {
+  by: Exclude<FxRateBy, "user">;
+  rateDate: string;
+  fetchedAt: Date;
+  now: Date;
+}): string {
+  return `${FX_SOURCE_NAMES[by]} rates of ${rateDayLabel(rateDate)} · fetched ${agoLabel({ at: fetchedAt, now })}`;
+}
+
+/**
+ * One age line per source that filled a stored rate, ECB first, from that source's newest fetch.
+ * No lines when every rate was typed by the user.
+ */
+export function fxAgeLines({
+  rates,
+  now,
+}: {
+  rates: readonly { by: FxRateBy; setAt: string; rateDate: string | null }[];
+  now: Date;
+}): FxAgeLine[] {
+  const lines: FxAgeLine[] = [];
+  for (const by of ["ecb", "currency-api"] as const) {
+    let newest: { setAt: string; rateDate: string } | null = null;
+    for (const r of rates) {
+      if (r.by !== by || r.rateDate === null) continue;
+      if (newest === null || Date.parse(r.setAt) > Date.parse(newest.setAt)) {
+        newest = { setAt: r.setAt, rateDate: r.rateDate };
+      }
+    }
+    if (newest === null) continue;
+    const fetchedAt = new Date(newest.setAt);
+    lines.push({
+      by,
+      source: FX_SOURCE_NAMES[by],
+      rateDate: newest.rateDate,
+      rateDay: rateDayLabel(newest.rateDate),
+      fetchedAt: newest.setAt,
+      fetchedAgo: agoLabel({ at: fetchedAt, now }),
+      text: fxAgeLabel({ by, rateDate: newest.rateDate, fetchedAt, now }),
+    });
+  }
+  return lines;
 }
 
 /**
@@ -498,4 +587,16 @@ export function metricsLine(m: BoardMetricsDto): string {
       ? "no jobs marked ready"
       : `median ${durationLabel(m.medianSavedToReadyMs)} from saved to ready`;
   return `Last ${m.windowDays} days: ${applied} · ${ready}`;
+}
+
+const listOf = (codes: readonly string[]) => codes.join(", ");
+
+/** The toast after Fill rates: what was filled, and what could not be. */
+export function fillRatesSummary(fill: FillRatesResult): string {
+  if (fill.viewChanged) return "Your view currency changed while filling, so nothing was saved. Fill again.";
+  const parts: string[] = [];
+  if (fill.filled.length > 0) parts.push(`Filled ${count(fill.filled.length, "rate")}.`);
+  if (fill.unsupported.length > 0) parts.push(`No source publishes ${listOf(fill.unsupported)}.`);
+  if (fill.unavailable.length > 0) parts.push(`Could not get ${listOf(fill.unavailable)}; try again later.`);
+  return parts.length > 0 ? parts.join(" ") : "Every rate is already set.";
 }

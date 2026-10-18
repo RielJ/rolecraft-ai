@@ -97,6 +97,8 @@ The extension adds a side panel that fills empty fields on a job's application f
 | `HB_SOURCES` | `live` | `fixture` reads job sources from files in `HB_SOURCES_DIR` instead of the network. Tests use it. |
 | `HB_SOURCES_DIR` | `./test/fixtures/sources` | The fixture files for `HB_SOURCES=fixture`. |
 | `HB_SOURCES_LOG` | unset | With `HB_SOURCES=fixture`, a file that gets one line for each fixture request. The end-to-end tests read it. |
+| `HB_FX` | `live` | Where exchange rates come from (decision 67). `fixture` reads recorded ECB and currency-api bodies from `HB_FX_DIR` instead of the network. |
+| `HB_FX_DIR` | `./test/fixtures/fx` | The fixture files for `HB_FX=fixture`. A missing file fails like an unreachable site. |
 | `HB_PI_BIN` | `pi` | The pi binary for `HB_AI=pi`. |
 | `HB_PI_MODEL_LIGHT` | `claude-haiku-5-5` | The light-tier model for `HB_AI=pi`. |
 | `HB_PI_MODEL_WRITING` | `claude-opus-5-5` | The writing-tier model for `HB_AI=pi`. |
@@ -171,7 +173,7 @@ Domain code may not read the clock or use randomness. Callers pass `now`.
 | Command | What it runs |
 |---|---|
 | `bun run check` | Biome, `tsc --noEmit`, and `bun test`. The unit tests and the service tests run against a real Postgres database, `hanapbuhay_test`. |
-| `bun run e2e` | Playwright specs in `e2e/`. Run `bun run build` first. The suite starts the server on port 3100 with `HB_AI=fake` and `HB_SOURCES=fixture`, against `hanapbuhay_e2e`. |
+| `bun run e2e` | Playwright specs in `e2e/`. Run `bun run build` first. The suite starts the server on port 3100 with `HB_AI=fake`, `HB_SOURCES=fixture` and `HB_FX=fixture`, against `hanapbuhay_e2e`. |
 | `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. Run `bun run build` first. See [docs/EXTENSION.md](docs/EXTENSION.md). |
 | `bun run eval ...` | The evaluation set. It makes real AI calls, so it costs money. |
 

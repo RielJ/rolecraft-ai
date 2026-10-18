@@ -85,6 +85,13 @@
       "when": 1792323167420,
       "tag": "0011_user_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792324653396,
+      "tag": "0012_fx_auto",
+      "breakpoints": true
     }
   ]
 }

@@ -38,7 +38,7 @@ describe("AI key", () => {
   test("a fresh install has no key, default models and no spend", async () => {
     const settings = await json(await call("GET", "/settings"), SettingsDto);
     expect(settings).toEqual({
-      money: { viewCurrency: "PHP", fxRates: [], missingRates: [] },
+      money: { viewCurrency: "PHP", fxRates: [], missingRates: [], fetch: null },
       ai: {
         via: "key",
         piModels: null,
@@ -299,13 +299,14 @@ describe("view currency and FX rates (decision 20, Q12)", () => {
     expect(saved.money).toEqual({
       viewCurrency: "PHP",
       fxRates: [
-        { currency: "EUR", rate: 62.1, setAt: SET_AT },
-        { currency: "USD", rate: 57.8, setAt: SET_AT },
+        { currency: "EUR", rate: 62.1, setAt: SET_AT, by: "user", rateDate: null },
+        { currency: "USD", rate: 57.8, setAt: SET_AT, by: "user", rateDate: null },
       ],
       missingRates: [],
+      fetch: null,
     });
     const after = await json(await call("PATCH", "/settings", { fxRates: { EUR: null } }), SettingsDto);
-    expect(after.money.fxRates).toEqual([{ currency: "USD", rate: 57.8, setAt: SET_AT }]);
+    expect(after.money.fxRates).toEqual([{ currency: "USD", rate: 57.8, setAt: SET_AT, by: "user", rateDate: null }]);
   });
 
   test("the view currency cannot have a rate", async () => {
@@ -319,7 +320,55 @@ describe("view currency and FX rates (decision 20, Q12)", () => {
   test("changing the view currency clears the rates", async () => {
     await call("PATCH", "/settings", { fxRates: { USD: 57.8 } });
     const saved = await json(await call("PATCH", "/settings", { viewCurrency: "usd" }), SettingsDto);
-    expect(saved.money).toEqual({ viewCurrency: "USD", fxRates: [], missingRates: [] });
+    expect(saved.money).toEqual({ viewCurrency: "USD", fxRates: [], missingRates: [], fetch: null });
+  });
+
+  test("changing the view currency resets the last fetch; keeping it does not", async () => {
+    const sql = testSql();
+    const fetch = { at: SET_AT, error: null, unsupported: ["XAF"] };
+    await sql`UPDATE users SET fx_fetch = ${sql.json(fetch)}`;
+    const same = await json(
+      await call("PATCH", "/settings", { viewCurrency: "PHP", fxRates: { USD: 60 } }),
+      SettingsDto,
+    );
+    expect(same.money.fetch).toEqual(fetch);
+    const changed = await json(await call("PATCH", "/settings", { viewCurrency: "USD" }), SettingsDto);
+    expect(changed.money.fetch).toBeNull();
+  });
+
+  test("a rate stored before decision 67 reads back as typed by the user", async () => {
+    const sql = testSql();
+    await sql`UPDATE users SET fx_rates = ${sql.json({ USD: { rate: 57.8, setAt: SET_AT } })}`;
+    const settings = await json(await call("GET", "/settings"), SettingsDto);
+    expect(settings.money.fxRates).toEqual([
+      { currency: "USD", rate: 57.8, setAt: SET_AT, by: "user", rateDate: null },
+    ]);
+    // Saving another rate writes the old one back in the new shape.
+    await call("PATCH", "/settings", { fxRates: { EUR: 62.1 } });
+    const [row] = await sql<{ rates: Record<string, unknown> }[]>`SELECT fx_rates AS rates FROM users`;
+    expect(row?.rates.USD).toEqual({ rate: 57.8, setAt: SET_AT, by: "user", rateDate: null });
+  });
+
+  test("migration 0012's backfill marks stored rates as the user's and leaves an empty map empty", async () => {
+    const sql = testSql();
+    const file = await Bun.file(new URL("../drizzle/0012_fx_auto.sql", import.meta.url)).text();
+    const backfill = file.split("--> statement-breakpoint").find((part) => part.includes("UPDATE"));
+    if (!backfill) throw new Error("no backfill statement in 0012");
+    await sql`UPDATE users SET fx_rates = ${sql.json({
+      USD: { rate: 57.8, setAt: SET_AT },
+      EUR: { rate: 70.9, setAt: SET_AT, by: "ecb", rateDate: "2026-10-16" },
+    })}`;
+    await sql.unsafe(backfill);
+    await sql.unsafe(backfill);
+    const [row] = await sql<{ rates: unknown }[]>`SELECT fx_rates AS rates FROM users`;
+    expect(row?.rates).toEqual({
+      USD: { rate: 57.8, setAt: SET_AT, by: "user", rateDate: null },
+      EUR: { rate: 70.9, setAt: SET_AT, by: "ecb", rateDate: "2026-10-16" },
+    });
+    await sql`UPDATE users SET fx_rates = '{}'::jsonb`;
+    await sql.unsafe(backfill);
+    const [empty] = await sql<{ rates: unknown }[]>`SELECT fx_rates AS rates FROM users`;
+    expect(empty?.rates).toEqual({});
   });
 
   test("a zero or negative rate and a bad code are refused", async () => {

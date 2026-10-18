@@ -14,6 +14,7 @@ import { SOURCE_SITES } from "@/shared/labels";
 import { boardFromUrl, SourceError } from "../adapters/sources";
 import { eligibilityOverrides, jobs, opportunities, sources, tasks } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
+import { fillRatesIfDue } from "./rates";
 import { runRefresh } from "./sync";
 import { getTask, startTask } from "./tasks";
 import { loadSkillDictionary } from "./user-skills";
@@ -157,7 +158,13 @@ export async function startRefresh(deps: Deps): Promise<TaskDto> {
     kind: "refresh",
     input: {},
     // The user's skills are read here, as the app role: the sync role cannot read them (decision 66).
-    run: async (ctx) => runRefresh(deps, ctx, { skills: await loadSkillDictionary(deps) }),
+    run: async (ctx) => {
+      const result = await runRefresh(deps, ctx, { skills: await loadSkillDictionary(deps) });
+      // After the sources, so currencies from new jobs get rates in this Refresh. As the app role,
+      // never under hb_sync; it never fails the Refresh (decision 67).
+      await fillRatesIfDue(deps, ctx);
+      return result;
+    },
   });
 }
 

@@ -66,6 +66,12 @@ const EnvSchema = z
       .optional(),
     HB_GH_BIN: z.string().min(1).default("gh"),
     HB_GITHUB_DIR: z.string().min(1).default("./test/fixtures/github"),
+    /**
+     * Where exchange rates come from (decision 67). `live` asks Frankfurter (ECB) and currency-api.
+     * `fixture` reads recorded bodies from HB_FX_DIR; a missing file fails like an unreachable site.
+     */
+    HB_FX: z.enum(["live", "fixture"]).default("live"),
+    HB_FX_DIR: z.string().min(1).default("./test/fixtures/fx"),
   })
   .refine((env) => env.HB_GITHUB !== "gh" || env.HB_GITHUB_USER !== undefined, {
     path: ["HB_GITHUB_USER"],

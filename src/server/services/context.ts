@@ -1,5 +1,6 @@
 import type { ErrorCode, UserId } from "@/shared/api";
 import type { AiClients, AiSource } from "../adapters/ai/types";
+import type { FxSource } from "../adapters/fx";
 import type { GithubReader } from "../adapters/github";
 import type { HttpClient } from "../adapters/http";
 import type { KeyStore } from "../adapters/key-store";
@@ -25,6 +26,8 @@ export type Deps = {
   sources: SourceAdapters;
   /** Reads GitHub links on add-ons: public REST, `gh api` (HB_GITHUB=gh) or fixture snapshots. */
   github: GithubReader;
+  /** Exchange-rate sources (decision 67): live, fixture files (HB_FX=fixture), or offline in tests. */
+  fx: FxSource;
   clock: Clock;
 };
 
@@ -57,6 +60,7 @@ const STATUS: Record<ErrorCode, Status> = {
   output_changed: 409,
   not_in_facts: 409,
   too_many_skills: 409,
+  rates_unavailable: 503,
   internal: 500,
 };
 
