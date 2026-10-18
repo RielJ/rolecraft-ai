@@ -39,6 +39,7 @@ import { ApiError, errorMessage } from "../api";
 import { FileDropZone } from "../components/file-drop-zone";
 import { type PageSection, SaveRow, SectionHeading, SectionPage } from "../components/section-page";
 import { SetupChecklist } from "../components/setup-checklist";
+import { SkillsForMatching } from "../components/skills-for-matching";
 import { cn } from "../lib/utils";
 import {
   useConfirmAllFacts,
@@ -1038,7 +1039,7 @@ function Facts({ profile }: { profile: ProfileDto }) {
   const id = useId();
   const confirmAll = useConfirmAllFacts();
   const [query, setQuery] = useState("");
-  const { facts, skillsFound } = profile;
+  const { facts } = profile;
   const items = [...(profile.cv ? [profile.cv] : []), ...profile.addons];
   // While an item is being split or read, its facts' `inLatest` is about to change; wait for the result.
   const settled = new Set(
@@ -1075,24 +1076,7 @@ function Facts({ profile }: { profile: ProfileDto }) {
       {facts.length === 0 && (
         <p className="text-muted-foreground text-sm">No facts yet. Upload or paste your CV above.</p>
       )}
-      {facts.length > 0 && (
-        <div className="grid gap-2">
-          <h3 className="font-medium text-sm">Skills found in your confirmed facts</h3>
-          {skillsFound.length > 0 ? (
-            <ul className="flex flex-wrap gap-1.5" aria-label="Skills found">
-              {skillsFound.map((skill) => (
-                <li key={skill}>
-                  <Badge variant="secondary">{skill}</Badge>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              None yet. A skill counts for matching once a confirmed fact names it.
-            </p>
-          )}
-        </div>
-      )}
+      {(facts.length > 0 || profile.skillChips.length > 0) && <SkillsForMatching profile={profile} />}
       {pending.length > 0 && (
         <div>
           <div className="flex items-center gap-3">

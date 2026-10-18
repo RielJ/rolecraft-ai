@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { compileSkills, type SkillDictionary } from "@/domain/features";
 import { derive, type JobFields } from "@/domain/posting";
 import { jobListings, jobs, sources } from "@/server/db/schema";
 import { createApp } from "@/server/http/app";
@@ -54,18 +55,24 @@ const WORLDWIDE = "This role is fully remote and open worldwide.";
 
 let seen = 0;
 /** A job as sync stores it: normalized by the same `derive`, origin `source`. */
-async function addJob(fields: Partial<JobFields> & { title: string; description: string }): Promise<JobId> {
+async function addJob(
+  fields: Partial<JobFields> & { title: string; description: string },
+  dict?: SkillDictionary,
+): Promise<JobId> {
   seen++;
-  const derived = derive({
-    company: "Acme",
-    locationText: "Remote",
-    applyUrl: null,
-    postedAt: null,
-    expiresAt: null,
-    pay: null,
-    restrictions: null,
-    ...fields,
-  });
+  const derived = derive(
+    {
+      company: "Acme",
+      locationText: "Remote",
+      applyUrl: null,
+      postedAt: null,
+      expiresAt: null,
+      pay: null,
+      restrictions: null,
+      ...fields,
+    },
+    dict,
+  );
   const firstSeenAt = new Date(Date.parse("2026-10-01T00:00:00Z") + seen * 60_000);
   const [row] = await deps.db
     .insert(jobs)
@@ -149,8 +156,39 @@ describe("levels are computed on read", () => {
     expect(confirmed.skillsFound).toEqual(["Flutter"]);
     const pane = await detail(id);
     expect(pane.reasons.map((r) => r.text)).toContain("In your facts: Flutter");
-    // The Dart fact is still pending, so Dart is missing.
-    expect(pane.reasons.map((r) => r.text)).toContain("Not in your facts: Dart");
+    // The Dart fact is still pending, so Dart is missing (Firebase is in no fact).
+    expect(pane.reasons.map((r) => r.text)).toContain("Not in your facts: Dart, Firebase");
+  });
+
+  test("added skills count, hidden ones do not, and a removed skill of your own leaves the job at once", async () => {
+    await targeting({ targetTitles: ["Backend Engineer"] });
+    const id = await addJob(
+      { title: "Backend Engineer", description: `Go, PostgreSQL and Hasura. ${WORLDWIDE}` },
+      compileSkills(["Hasura"]),
+    );
+    const profile = await pasteCv("- Ran Go services in production");
+    await confirm(profile, "Go services");
+    const setSkill = (name: string, state: string) => call("PUT", "/profile/skills", { name, state });
+    const reasons = async () => (await detail(id)).reasons.map((r) => r.text);
+
+    // The job was read for Hasura, but Hasura is not on your list yet, so Matches does not know it.
+    expect(await reasons()).toContain("Not in your facts: PostgreSQL");
+    await ok(await setSkill("Hasura", "added"), ProfileDto);
+    await ok(await setSkill("postgres", "added"), ProfileDto);
+    expect(await reasons()).toContain("In your facts: Go, PostgreSQL, Hasura");
+    expect(await levelOf("Backend Engineer")).toBe("strong");
+
+    // Hidden: found in facts, but left out of matching.
+    await ok(await setSkill("Go", "hidden"), ProfileDto);
+    expect(await reasons()).toContain("Not in your facts: Go");
+
+    // Removing Hasura from your list drops it from the job's skills before any refresh.
+    await ok(await setSkill("Hasura", "none"), ProfileDto);
+    const after = await reasons();
+    expect(after).toContain("In your facts: PostgreSQL");
+    expect(after.join("\n")).not.toContain("Hasura");
+    const [stored] = await testSql()<{ skills: string[] }[]>`SELECT skills FROM jobs WHERE id = ${id}`;
+    expect(stored?.skills).toEqual(["Go", "PostgreSQL", "Hasura"]);
   });
 
   test("the reading pane carries the level, every reason and the job's facts", async () => {

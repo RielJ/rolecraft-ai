@@ -169,6 +169,10 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
       "INSERT INTO eligibility_overrides DEFAULT VALUES",
       "DELETE FROM eligibility_overrides",
       "UPDATE role_drops SET title = 'x'",
+      // The user's skill list (decision 66): Refresh reads it as the app role, never as hb_sync.
+      "INSERT INTO user_skills (user_id, key, name, kind) SELECT id, 'x', 'x', 'added' FROM users",
+      "UPDATE user_skills SET kind = 'hidden'",
+      "DELETE FROM user_skills",
     ];
     const codes = await Promise.all(statements.map((s) => failure(run(s))));
     expect(Object.fromEntries(statements.map((s, i) => [s, codes[i]]))).toEqual(
@@ -206,6 +210,7 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
     expect(await failure(run("SELECT text FROM facts"))).toBe("42501");
     expect(await failure(run("SELECT job_id FROM eligibility_overrides"))).toBe("42501");
     expect(await failure(run("SELECT title FROM role_drops"))).toBe("42501");
+    expect(await failure(run("SELECT name FROM user_skills"))).toBe("42501");
   });
 
   test("the granted writes succeed", async () => {

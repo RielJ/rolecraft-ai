@@ -20,6 +20,7 @@ import {
   ProfileItemKind,
   RateType,
   RoleFamily,
+  SkillChipSource,
   SourceKind,
   SourceStatus,
   StyleRule,
@@ -93,6 +94,10 @@ export const ERROR_CODES = [
   "session_expired",
   /** "Mark reviewed" sent a body other than the stored one: an edit or redraft landed since it was shown. */
   "output_changed",
+  /** Hiding a skill from matching that no confirmed fact names (decision 66): remove it instead. */
+  "not_in_facts",
+  /** Adding a skill past the 100 a user can add (decision 66). */
+  "too_many_skills",
   "internal",
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -303,8 +308,15 @@ export const ProfileDto = z.object({
   cv: ProfileItemDto.nullable(),
   addons: z.array(ProfileItemDto),
   facts: z.array(FactDto),
-  /** Skills named in confirmed fact text: what matching counts. */
+  /** Built-in skills named in confirmed fact text. */
   skillsFound: z.array(z.string()),
+  /**
+   * Profile's "Skills used for matching" (decision 66): found in facts, added by the user, and
+   * hidden from matching. Matching counts the first two.
+   */
+  skillChips: z.array(z.object({ name: z.string(), source: SkillChipSource, builtin: z.boolean() })),
+  /** Every built-in skill name, for the Add skill picker. */
+  skillCatalog: z.array(z.string()),
   /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
   aiReady: z.boolean(),
 });
@@ -359,6 +371,16 @@ export type SplitTaskInput = z.infer<typeof SplitTaskInput>;
 /** What a GitHub read needs to run again (stored in `tasks.input`). */
 export const GithubReadTaskInput = z.object({ itemId: ItemId });
 export type GithubReadTaskInput = z.infer<typeof GithubReadTaskInput>;
+
+/**
+ * `PUT /api/profile/skills`: add a skill to matching, hide one found in facts, or clear either
+ * (`none`). The name is cleaned and checked on the server (`normalizeSkillName`).
+ */
+export const SetSkillInput = z.object({
+  name: z.string().max(500),
+  state: z.enum(["added", "hidden", "none"]),
+});
+export type SetSkillInput = z.infer<typeof SetSkillInput>;
 
 export const UpdateFactInput = z.object({ text: z.string().trim().min(1).max(2000) });
 export type UpdateFactInput = z.infer<typeof UpdateFactInput>;
@@ -897,6 +919,8 @@ export const RefreshResult = z.object({
   /** Closed jobs older than 60 days with no board entry, deleted. */
   pruned: z.number().int(),
   aiPass: AiPassResult,
+  /** Stored open jobs whose skills changed when read again with the current dictionary (decision 66). */
+  skillsReread: z.number().int().default(0),
 });
 export type RefreshResult = z.infer<typeof RefreshResult>;
 

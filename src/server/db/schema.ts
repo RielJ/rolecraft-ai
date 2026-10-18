@@ -64,6 +64,8 @@ import {
   TASK_KINDS,
   TASK_STATUSES,
   USER_SENIORITIES,
+  USER_SKILL_KINDS,
+  type UserSkillKind,
 } from "@/shared/enums";
 import {
   APPLICATION_SESSION_STATUSES,
@@ -386,6 +388,28 @@ export const hiddenCompanies = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.companyKey] })],
+);
+
+/**
+ * The user's own skill list (decision 66): `added` skills count for matching even when no fact
+ * names them; `hidden` ones are found in facts but left out of matching. One row per skill, so a
+ * skill is never both. Keyed by the lowercased name. The sync role has no grant on it: Refresh
+ * reads it as the app role before it starts.
+ */
+export const userSkills = pgTable(
+  "user_skills",
+  {
+    userId: userRef(),
+    key: text().notNull(),
+    name: text().notNull(),
+    kind: text().notNull().$type<UserSkillKind>(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.key] }),
+    check("user_skills_kind", oneOf("kind", USER_SKILL_KINDS)),
+    check("user_skills_name", sql`length(btrim(name)) BETWEEN 1 AND 60`),
+  ],
 );
 
 export const opportunities = pgTable(

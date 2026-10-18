@@ -30,6 +30,16 @@ export const FACT_ORIGINS = ["text", "github"] as const;
 export const FactOrigin = z.enum(FACT_ORIGINS);
 export type FactOrigin = z.infer<typeof FactOrigin>;
 
+/** A skill the user added to matching, or one found in their facts that they hid from it (decision 66). */
+export const USER_SKILL_KINDS = ["added", "hidden"] as const;
+export const UserSkillKind = z.enum(USER_SKILL_KINDS);
+export type UserSkillKind = z.infer<typeof UserSkillKind>;
+
+/** Where a Profile skill chip comes from: confirmed facts, the user's own list, or hidden from matching. */
+export const SKILL_CHIP_SOURCES = ["facts", "added", "hidden"] as const;
+export const SkillChipSource = z.enum(SKILL_CHIP_SOURCES);
+export type SkillChipSource = z.infer<typeof SkillChipSource>;
+
 export const USER_SENIORITIES = ["junior", "mid", "senior", "lead", "staff", "principal"] as const;
 export const UserSeniority = z.enum(USER_SENIORITIES);
 export type UserSeniority = z.infer<typeof UserSeniority>;

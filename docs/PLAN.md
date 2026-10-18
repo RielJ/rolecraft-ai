@@ -695,10 +695,10 @@ Exclusion beats inclusion of a region, and every pattern is case-insensitive wit
 
 ### 3.7 Match rules
 
-`matchJob({ job, profile })` in `domain/match.ts`, where `profile` holds the target titles, the skill set extracted from confirmed facts plus confirmed items' skills fields, seniority and years. It returns `{ level: 'strong' | 'possible' | 'weak'; reasons: Reason[] }`, where each reason has a sign and a short sentence.
+`matchJob({ job, profile })` in `domain/match.ts`, where `profile` holds the target titles, the skills used for matching (`profileSkills`: skills in confirmed facts, plus the user's added skills, minus hidden ones; decision 66), seniority and years. It returns `{ level: 'strong' | 'possible' | 'weak'; reasons: Reason[] }`, where each reason has a sign and a short sentence.
 
-- **Title fit**: best token Jaccard between the job's `title_key` and each target title's key, with seniority words removed from both. ≥ 0.6 is a fit, ≥ 0.3 partial, below that none.
-- **Skills**: `matched = job.skills ∩ profile.skills`, `missing = job.skills − profile.skills`, `coverage = matched / max(1, job.skills.length)`. Reasons name up to five of each.
+- **Title fit**: best token Jaccard between the job's title words and each target title's, with seniority words removed from both. Title words are `title_key`'s, with fullstack/frontend/backend split, developer and programmer read as engineer, and the tail after " - ", " | ", " — ", " – " or "(" cut when two words come before it (decision 66; `title_key` itself, which dedup uses, is unchanged). ≥ 0.6 is a fit, ≥ 0.3 partial, below that none.
+- **Skills**: `matched = job.skills ∩ profile.skills`, `missing = job.skills − profile.skills`, `coverage = matched / max(1, job.skills.length)`. Reasons name up to five of each. `job.skills` is read with the user's dictionary (built-ins, then their own skills) and filtered on read to skills still in it; Refresh reads every open job's skills again.
 - **Seniority**: on the ladder intern < junior < mid < senior < lead < staff < principal, a gap of two or more steps is a negative. Manager roles are a negative unless the user's targets include a manager title.
 - **Years**: `job.min_years > profile.years + 1` is a negative.
 - **Eligibility**: `ph`, `worldwide`, `apac` are positives. `americas` and `unclear` cap the level at Possible. `excluded` forces Weak.

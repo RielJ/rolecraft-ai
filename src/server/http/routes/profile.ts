@@ -9,6 +9,7 @@ import {
   ItemId,
   MAX_CV_BYTES,
   PasteCvInput,
+  SetSkillInput,
   UpdateFactInput,
   UpdateProfileInput,
   UploadCvForm,
@@ -24,6 +25,7 @@ import {
   getProfile,
   keepFact,
   saveCv,
+  setSkill,
   updateAddon,
   updateFact,
   updateProfile,
@@ -50,6 +52,9 @@ export function profileRoutes(deps: Deps) {
     .get("/profile", async (c) => c.json(await getProfile(deps)))
     .put("/profile", validate("json", UpdateProfileInput), async (c) =>
       c.json(await updateProfile(deps, c.req.valid("json"))),
+    )
+    .put("/profile/skills", validate("json", SetSkillInput), async (c) =>
+      c.json(await setSkill(deps, c.req.valid("json"))),
     )
     .put("/profile/cv", validate("json", PasteCvInput), async (c) => c.json(await saveCv(deps, c.req.valid("json"))))
     .post("/profile/cv/file", uploadLimit, validate("form", UploadCvForm), async (c) => {

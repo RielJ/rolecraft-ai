@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { z } from "zod";
+import { compileSkills } from "@/domain/features";
 import { createHttpClient, type FetchFn } from "@/server/adapters/http";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { ensureBuiltinSources } from "@/server/services/sources";
+import { rereadSkills } from "@/server/services/sync";
 import { waitForTask } from "@/server/services/tasks";
 import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto } from "@/shared/api";
+import { CUSTOM_SKILLS, skillTexts } from "./fixtures/skill-texts";
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
@@ -366,4 +369,65 @@ describe("prune and attach", () => {
       "Pasted from LinkedIn. Kubernetes platform team, remote.",
     );
   });
+});
+
+describe("skills in stored jobs (decision 66)", () => {
+  const skillsOf = async (title: string) => {
+    const [row] = await testSql()<{ skills: string[] }[]>`SELECT skills FROM jobs WHERE title = ${title}`;
+    return row?.skills ?? null;
+  };
+  const setSkill = async (name: string, state: "added" | "none") => {
+    expect((await call("PUT", "/profile/skills", { name, state })).status).toBe(200);
+  };
+
+  test("Refresh reads stored open jobs for a skill you added, and again when you remove it", async () => {
+    await only("greenhouse");
+    await addBoard("acme");
+    expect((await refresh(hours(0))).result?.skillsReread).toBe(0);
+    expect(await skillsOf("Site Reliability Engineer")).toEqual(["Linux", "Grafana", "Prometheus"]);
+    // An older dictionary's answer, and a closed job that is left as it is.
+    await testSql()`UPDATE jobs SET skills = '{Linux}' WHERE title = 'Site Reliability Engineer'`;
+    await testSql()`UPDATE jobs SET closed_at = ${hours(0)} WHERE title = 'Senior Frontend Engineer'`;
+    await setSkill("payroll", "added");
+
+    // The board is inside its minimum interval and skipped; the re-read still runs.
+    const second = await refresh(hours(0.1));
+    expect(second.result?.sources).toMatchObject([{ status: "skipped" }]);
+    expect(await skillsOf("Site Reliability Engineer")).toEqual(["Linux", "Grafana", "Prometheus", "payroll"]);
+    expect(await skillsOf("Product Designer")).toEqual(["payroll"]);
+    expect(await skillsOf("Senior Frontend Engineer")).toEqual(["TypeScript", "React"]);
+    expect(second.result?.skillsReread).toBe(2);
+
+    await setSkill("payroll", "none");
+    expect((await refresh(hours(0.2))).result?.skillsReread).toBe(2);
+    expect(await skillsOf("Product Designer")).toEqual([]);
+    expect((await refresh(hours(0.3))).result?.skillsReread).toBe(0);
+  });
+
+  test("timing: the re-read step over 1,930 open jobs of 8 KB with 20 skills of your own", async () => {
+    const rows = skillTexts({ count: 1930, bytes: 8192 }).map((description, i) => ({
+      user_id: deps.userId,
+      origin: "paste",
+      title: `Engineer ${i}`,
+      company: "Acme",
+      title_key: `engineer ${i}`,
+      company_key: "acme",
+      description,
+      content_hash: String(i),
+      description_key: String(i),
+    }));
+    for (let i = 0; i < rows.length; i += 500) await testSql()`INSERT INTO jobs ${testSql()(rows.slice(i, i + 500))}`;
+    const skills = compileSkills(CUSTOM_SKILLS);
+
+    const timed = async () => {
+      const started = performance.now();
+      const changed = await rereadSkills({ deps, skills });
+      return { changed, ms: Math.round(performance.now() - started) };
+    };
+    const first = await timed();
+    const second = await timed();
+    console.log(JSON.stringify({ msg: "skills re-read timing", jobs: rows.length, first, second }));
+    expect(first.changed).toBe(rows.length);
+    expect(second.changed).toBe(0);
+  }, 30_000);
 });

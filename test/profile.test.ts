@@ -586,6 +586,63 @@ describe("review and skills found", () => {
   });
 });
 
+describe("skills used for matching (decision 66)", () => {
+  const setSkill = (name: string, state: "added" | "hidden" | "none") =>
+    call("PUT", "/profile/skills", { name, state });
+
+  test("add, hide, restore and remove; chips name where each skill comes from", async () => {
+    const profile = await pasteCv("- Built a payments API in Go and Postgres");
+    await call("POST", `/facts/${fact(profile, "payments API").id}/confirm`);
+    expect((await json(await setSkill("  hasura ", "added"), ProfileDto)).skillChips).toEqual([
+      { name: "Go", source: "facts", builtin: true },
+      { name: "PostgreSQL", source: "facts", builtin: true },
+      { name: "hasura", source: "added", builtin: false },
+    ]);
+    // A built-in spelling becomes its name; a skill found in facts and added shows as found.
+    await json(await setSkill("golang", "added"), ProfileDto);
+    const added = await json(await setSkill("python", "added"), ProfileDto);
+    expect(added.skillChips.map((c) => [c.name, c.source])).toEqual([
+      ["Python", "added"],
+      ["Go", "facts"],
+      ["PostgreSQL", "facts"],
+      ["hasura", "added"],
+    ]);
+    const hidden = await json(await setSkill("Postgres", "hidden"), ProfileDto);
+    expect(hidden.skillChips.map((c) => [c.name, c.source])).toEqual([
+      ["Python", "added"],
+      ["Go", "facts"],
+      ["hasura", "added"],
+      ["PostgreSQL", "hidden"],
+    ]);
+    // skillsFound keeps its meaning: skills named in confirmed facts.
+    expect(hidden.skillsFound).toEqual(["Go", "PostgreSQL"]);
+    const restored = await json(await setSkill("PostgreSQL", "none"), ProfileDto);
+    expect(restored.skillChips.map((c) => c.source)).toEqual(["added", "facts", "facts", "added"]);
+    const removed = await json(await setSkill("HASURA", "none"), ProfileDto);
+    expect(removed.skillChips.map((c) => c.name)).toEqual(["Python", "Go", "PostgreSQL"]);
+    expect(removed.skillCatalog).toContain("TypeScript");
+  });
+
+  test("hiding a skill no confirmed fact names is a 409", async () => {
+    await pasteCv("- Built a payments API in Go");
+    const res = await setSkill("Go", "hidden");
+    expect((await json(res, ApiErrorBody, 409)).error.code).toBe("not_in_facts");
+  });
+
+  test("a bad name is a 400; the 101st added skill is a 409", async () => {
+    for (const name of ["", "--", "x".repeat(61)]) {
+      expect((await json(await setSkill(name, "added"), ApiErrorBody, 400)).error.code).toBe("invalid_input");
+    }
+    await testSql()`
+      INSERT INTO user_skills (user_id, key, name, kind, created_at)
+      SELECT ${deps.userId}, 'skill ' || n, 'Skill ' || n, 'added', now() + n * interval '1 second'
+      FROM generate_series(1, 100) n`;
+    expect((await json(await setSkill("Hasura", "added"), ApiErrorBody, 409)).error.code).toBe("too_many_skills");
+    // Adding one already added is not a new skill.
+    await json(await setSkill("Skill 7", "added"), ProfileDto);
+  });
+});
+
 describe("seniority, years and minimum pay (section 4, Profile)", () => {
   test("save through targeting, read back, keep when not sent, clear with null", async () => {
     const saved = await json(

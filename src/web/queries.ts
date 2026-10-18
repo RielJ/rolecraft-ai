@@ -27,6 +27,7 @@ import {
   RefreshDto,
   type SaveAiKeyInput,
   SavedJob,
+  type SetSkillInput,
   SettingsDto,
   SetupDto,
   SourceDto,
@@ -163,6 +164,10 @@ export function useRetrySplit() {
 
 export const useConfirmFact = () =>
   useProfileMutation((id: FactId) => unwrap(client.api.facts[":id"].confirm.$post({ param: { id } }), ProfileDto));
+
+/** Add a skill to matching, hide one found in facts, or clear either (decision 66). */
+export const useSetSkill = () =>
+  useProfileMutation((json: SetSkillInput) => unwrap(client.api.profile.skills.$put({ json }), ProfileDto));
 
 export const useConfirmAllFacts = () =>
   useProfileMutation(() => unwrap(client.api.facts["confirm-all"].$post(), ProfileDto));

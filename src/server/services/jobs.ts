@@ -24,6 +24,7 @@ import type { Db } from "../db/client";
 import { MERGE_SYNC_LOCK } from "../db/locks";
 import { jobListings, jobs, opportunities, outputs, sources, tasks, users } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
+import { loadSkillDictionary } from "./user-skills";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type JobRow = typeof jobs.$inferSelect;
@@ -109,7 +110,8 @@ async function findSamePosting(tx: Tx, deps: Deps, derived: Derived, seenAt: Dat
 /** Create the job (or find the same posting), then its opportunity. */
 async function addJob(deps: Deps, origin: "link" | "paste", fields: JobFields): Promise<AddJobResult> {
   const now = deps.clock.now();
-  const derived = derive(fields);
+  // Read with the user's own skills too, so a pasted job names them at once (decision 66).
+  const derived = derive(fields, await loadSkillDictionary(deps));
   return deps.db.transaction(async (tx) => {
     const same = await findSamePosting(tx, deps, derived, fields.postedAt ?? now);
     if (same) return { kind: "existing", opportunityId: await ensureOpportunity(tx, deps, same.id) };

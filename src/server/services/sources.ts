@@ -16,6 +16,7 @@ import { eligibilityOverrides, jobs, opportunities, sources, tasks } from "../db
 import { AppError, type Deps, notFound } from "./context";
 import { runRefresh } from "./sync";
 import { getTask, startTask } from "./tasks";
+import { loadSkillDictionary } from "./user-skills";
 
 /**
  * The user's side of sources: list, add a company board, toggle, keywords, delete, and start a
@@ -152,7 +153,12 @@ export async function deleteSource(
 /** `POST /api/refresh`: start a refresh task; a second one while it runs is `409 refresh_running`. */
 export async function startRefresh(deps: Deps): Promise<TaskDto> {
   await ensureBuiltinSources(deps);
-  return startTask(deps, { kind: "refresh", input: {}, run: (ctx) => runRefresh(deps, ctx) });
+  return startTask(deps, {
+    kind: "refresh",
+    input: {},
+    // The user's skills are read here, as the app role: the sync role cannot read them (decision 66).
+    run: async (ctx) => runRefresh(deps, ctx, { skills: await loadSkillDictionary(deps) }),
+  });
 }
 
 /** `GET /api/refresh`: the newest refresh and, once it is done, its summary. */

@@ -35,17 +35,17 @@ describe("matchJob: level boundaries (section 3.7)", () => {
 
   test("title: Jaccard 0.6 is a fit, 0.3 partial (both can be Strong), below 0.3 is Weak", () => {
     // Rank words are dropped from both sides: "Senior" does not count against the fit.
-    // {frontend, engineer} vs {frontend, engineer, react}: 2/3 ≥ 0.6, a fit.
+    // "Frontend" is "front end": {front, end, engineer} vs {front, end, engineer, react}: 3/4 ≥ 0.6, a fit.
     expect(texts({ title: "Senior React Frontend Engineer" })[0]).toBe(
       "positive: Title fits your target “Frontend Engineer”",
     );
-    // {frontend, engineer} vs {frontend, engineer, react, platform}: 2/4 = 0.5, partial, still Strong.
-    expect(texts({ title: "Frontend Engineer, React Platform" })[0]).toBe(
+    // vs {front, end, engineer, react, web, platform}: 3/6 = 0.5, partial, still Strong.
+    expect(texts({ title: "Frontend Engineer, React Web Platform" })[0]).toBe(
       "positive: Title is close to your target “Frontend Engineer”",
     );
-    expect(level({ title: "Frontend Engineer, React Platform" })).toBe("strong");
-    // {frontend, engineer} vs {frontend, web, platform, tooling, engineer, react, ui}: 2/7 < 0.3.
-    expect(level({ title: "Frontend Web Platform Tooling Engineer React UI" })).toBe("weak");
+    expect(level({ title: "Frontend Engineer, React Web Platform" })).toBe("strong");
+    // vs {front, end, web, platform, tooling, engineer, react, ui, design, systems, infra}: 3/11 < 0.3.
+    expect(level({ title: "Frontend Web Platform Tooling Engineer React UI Design Systems Infra" })).toBe("weak");
     // Exactly 0.3 is partial: {a b c} vs {a b c d e f g h i j} = 3/10.
     expect(
       level(
@@ -59,6 +59,32 @@ describe("matchJob: level boundaries (section 3.7)", () => {
         { targetTitles: ["alpha beta gamma"] },
       ),
     ).toBe("weak");
+  });
+
+  test("title words: compounds split, developer is engineer, and a tail after a dash, bar or bracket is cut", () => {
+    const fit = (title: string, targetTitles: string[]) =>
+      texts({ title }, { targetTitles })[0]?.replace(/ your target .*/, "");
+    expect(fit("Fullstack Developer", ["Full Stack Engineer"])).toBe("positive: Title fits");
+    expect(fit("Front-end Programmer", ["Frontend Engineer"])).toBe("positive: Title fits");
+    expect(fit("Backend Developer", ["Back End Engineer"])).toBe("positive: Title fits");
+    expect(fit("Senior Full-Stack Engineer - Payments | Remote (PH)", ["Full Stack Engineer"])).toBe(
+      "positive: Title fits",
+    );
+    expect(fit("Full Stack Engineer — Billing, Invoicing and Ledger Platform", ["Full Stack Engineer"])).toBe(
+      "positive: Title fits",
+    );
+    expect(fit("Full Stack Engineer (TypeScript, React, Node, Postgres)", ["Full Stack Engineer"])).toBe(
+      "positive: Title fits",
+    );
+    // A head of one word is not cut: the tail still counts.
+    expect(fit("Engineer – Full Stack", ["Full Stack Engineer"])).toBe("positive: Title fits");
+    // {web, engineer} vs {software, engineer}: 1/3, partial.
+    expect(fit("Web Developer", ["Full Stack Engineer", "Frontend Engineer", "Software Engineer"])).toBe(
+      "positive: Title is close to",
+    );
+    expect(fit("Data Analyst", ["Full Stack Engineer", "Frontend Engineer", "Software Engineer"])).toBe(
+      "negative: Title is not close to any of",
+    );
   });
 
   test("the best of several target titles counts", () => {

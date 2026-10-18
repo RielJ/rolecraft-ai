@@ -8,7 +8,19 @@ export type JobSeniority = (typeof JOB_SENIORITIES)[number];
  * case. Spellings with capitals are also ordinary English words ("Go", "Rust", "Swift"), so they
  * count only when written exactly that way.
  */
-type Skill = { name: string; spellings: readonly string[] };
+type Skill = {
+  name: string;
+  spellings: readonly string[];
+  /**
+   * A capitalized spelling counts only inside a sentence: not first on a line or bullet, and not
+   * right after a sentence ends. "Spark joy" and "Foundry is our lab" start sentences.
+   */
+  strict?: true;
+  /** A spelling followed by one of these words is a different name ("Spark Capital", "Grafana Labs"). */
+  notAfter?: readonly string[];
+  /** A spelling after one of these words is a different name ("Palantir Foundry"). */
+  notBefore?: readonly string[];
+};
 
 export const SKILLS: readonly Skill[] = [
   { name: "TypeScript", spellings: ["typescript"] },
@@ -27,17 +39,24 @@ export const SKILLS: readonly Skill[] = [
   { name: "C++", spellings: ["c++"] },
   { name: "Swift", spellings: ["Swift", "swiftui"] },
   { name: "Dart", spellings: ["Dart"] },
+  { name: "Solidity", spellings: ["Solidity"], strict: true },
+  { name: "Bash", spellings: ["Bash", "bash scripting", "bash script"] },
   { name: "Node.js", spellings: ["node.js", "nodejs", "Node"] },
   { name: "Deno", spellings: ["deno"] },
   { name: "Bun", spellings: ["Bun"] },
   { name: ".NET", spellings: [".net", "asp.net", "dotnet"] },
   { name: "React", spellings: ["React", "react.js", "reactjs"] },
   { name: "React Native", spellings: ["react native"] },
+  { name: "React Router", spellings: ["react router", "react-router"] },
+  { name: "Redux", spellings: ["redux"] },
   { name: "Next.js", spellings: ["next.js", "nextjs"] },
   { name: "Vue", spellings: ["vue", "vue.js", "vuejs"] },
   { name: "Nuxt", spellings: ["nuxt"] },
   { name: "Angular", spellings: ["angular"] },
   { name: "Svelte", spellings: ["svelte", "sveltekit"] },
+  { name: "Vite", spellings: ["vite", "vitejs"] },
+  { name: "shadcn", spellings: ["shadcn", "shadcn/ui"] },
+  { name: "Storybook", spellings: ["storybook"] },
   { name: "Flutter", spellings: ["flutter"] },
   { name: "Express", spellings: ["Express", "express.js", "expressjs"] },
   { name: "NestJS", spellings: ["nestjs"] },
@@ -60,16 +79,28 @@ export const SKILLS: readonly Skill[] = [
   { name: "Elasticsearch", spellings: ["elasticsearch", "opensearch"] },
   { name: "Kafka", spellings: ["kafka"] },
   { name: "RabbitMQ", spellings: ["rabbitmq"] },
+  { name: "Prisma", spellings: ["prisma"], notAfter: ["Cloud", "Access"] },
+  { name: "Supabase", spellings: ["supabase"] },
+  { name: "Firebase", spellings: ["firebase"] },
   { name: "Docker", spellings: ["docker"] },
   { name: "Kubernetes", spellings: ["kubernetes", "k8s"] },
   { name: "Terraform", spellings: ["terraform"] },
   { name: "Ansible", spellings: ["ansible"] },
+  { name: "Nginx", spellings: ["nginx"] },
   { name: "AWS", spellings: ["aws", "amazon web services"] },
   { name: "GCP", spellings: ["gcp", "google cloud"] },
   { name: "Azure", spellings: ["azure"] },
+  { name: "Cloudflare", spellings: ["cloudflare"] },
+  { name: "Vercel", spellings: ["vercel"] },
   { name: "Linux", spellings: ["linux"] },
   { name: "Git", spellings: ["Git", "github", "gitlab"] },
   { name: "CI/CD", spellings: ["ci/cd"] },
+  { name: "GitHub Actions", spellings: ["github actions"] },
+  { name: "Jenkins", spellings: ["jenkins"] },
+  { name: "Datadog", spellings: ["datadog"] },
+  { name: "Grafana", spellings: ["grafana"], notAfter: ["Labs"] },
+  { name: "Prometheus", spellings: ["prometheus"] },
+  { name: "Sentry", spellings: ["sentry"] },
   { name: "HTML", spellings: ["html"] },
   { name: "CSS", spellings: ["css"] },
   { name: "Tailwind", spellings: ["tailwind", "tailwindcss"] },
@@ -77,46 +108,143 @@ export const SKILLS: readonly Skill[] = [
   { name: "Android", spellings: ["android"] },
   { name: "iOS", spellings: ["ios"] },
   { name: "Machine learning", spellings: ["machine learning"] },
+  { name: "LLM", spellings: ["llm", "llms", "large language model", "large language models"] },
+  { name: "OpenAI", spellings: ["openai"] },
+  { name: "RAG", spellings: ["RAG", "retrieval-augmented generation", "retrieval augmented generation"] },
+  { name: "LangChain", spellings: ["langchain"] },
+  { name: "Hugging Face", spellings: ["hugging face", "huggingface"] },
   { name: "PyTorch", spellings: ["pytorch"] },
   { name: "TensorFlow", spellings: ["tensorflow"] },
   { name: "Pandas", spellings: ["pandas"] },
-  { name: "Spark", spellings: ["Spark", "pyspark", "apache spark"] },
+  {
+    name: "Spark",
+    // Known miss: "Spark, Hadoop" first on a bullet. Strict reads it as a sentence's first word.
+    spellings: ["Spark", "pyspark", "apache spark", "spark sql", "spark streaming"],
+    strict: true,
+    notAfter: ["Networks", "Capital", "Labs", "Group"],
+  },
   { name: "Airflow", spellings: ["airflow"] },
   { name: "dbt", spellings: ["dbt"] },
   { name: "Snowflake", spellings: ["Snowflake"] },
+  { name: "BigQuery", spellings: ["bigquery"] },
+  { name: "Databricks", spellings: ["databricks"] },
+  { name: "Tableau", spellings: ["tableau"] },
+  { name: "Looker", spellings: ["looker"] },
+  { name: "Web3", spellings: ["web3"] },
+  { name: "Hardhat", spellings: ["hardhat"] },
+  { name: "Foundry", spellings: ["Foundry", "foundry-rs"], strict: true, notBefore: ["Palantir"] },
   { name: "Playwright", spellings: ["playwright"] },
   { name: "Cypress", spellings: ["cypress"] },
   { name: "Selenium", spellings: ["selenium"] },
+  { name: "Jest", spellings: ["Jest"] },
 ];
+// Measured extras (open jobs naming each in the dev database, 2026-10-18; kept at 5 or more):
+// GitHub Actions 36, LangChain 34, BigQuery 28, Databricks 26, Vercel 25, Tableau 22, Jenkins 21,
+// Hugging Face 15, Redux 11, Sentry 10, Looker 9, Storybook 5. Left out: Webpack 4, Ethereum 4,
+// Hono 4, Vitest 3, Zod 0, Drizzle 0.
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
-/** A spelling counts only as a whole word: no letter, digit, `+` or `#` touching either end. */
-const SKILL_PATTERNS: readonly { name: string; re: RegExp }[] = SKILLS.flatMap((skill) =>
-  skill.spellings.map((spelling) => ({
-    name: skill.name,
-    re: new RegExp(
-      `(?<![\\p{L}\\p{N}.])${escapeRegExp(spelling).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}+#]|\\.[\\p{L}\\p{N}])`,
-      spelling === spelling.toLowerCase() ? "iu" : "u",
-    ),
-  })),
-);
+const words = (list: readonly string[]) => list.map((w) => escapeRegExp(w).replace(/ /g, "\\s+")).join("|");
 
-/** Skills from the dictionary that `text` names, in dictionary order, each once. */
-export function extractSkills(text: string): string[] {
-  const found = new Set<string>();
-  for (const { name, re } of SKILL_PATTERNS) {
-    if (!found.has(name) && re.test(text)) found.add(name);
-  }
-  return SKILLS.map((s) => s.name).filter((name) => found.has(name));
+// A sentence ends at . ! or ? and a space, except after a short form like "e.g." or "etc.".
+const SENTENCE_START = "(?:^|\\n|(?<!\\b(?:e\\.g|i\\.e|etc|incl|vs|ex))[.!?]\\s)[\\s\\p{P}\\p{S}]*";
+
+/**
+ * A spelling counts only as a whole word: no letter, digit, `+` or `#` touching either end. A
+ * spelling in lowercase matches in any case; one with capitals only as written.
+ */
+function spellingPattern(
+  spelling: string,
+  {
+    exactCase,
+    strict = false,
+    notAfter = [],
+    notBefore = [],
+  }: {
+    exactCase: boolean;
+    strict?: boolean;
+    notAfter?: readonly string[];
+    notBefore?: readonly string[];
+  },
+): RegExp {
+  const before = [
+    "(?<![\\p{L}\\p{N}.])",
+    strict && exactCase ? `(?<!${SENTENCE_START})` : "",
+    notBefore.length > 0 ? `(?<!(?:${words(notBefore)})\\s+)` : "",
+  ].join("");
+  const after = [
+    "(?![\\p{L}\\p{N}+#]|\\.[\\p{L}\\p{N}])",
+    notAfter.length > 0 ? `(?!\\s+(?:${words(notAfter)})(?![\\p{L}\\p{N}]))` : "",
+  ].join("");
+  return new RegExp(`${before}${escapeRegExp(spelling).replace(/ /g, "\\s+")}${after}`, exactCase ? "u" : "iu");
 }
 
 /**
- * Skills named in the user's confirmed fact texts, in dictionary order, each once. This is both
- * Profile's "Skills found in your confirmed facts" and the skill set Matches scores against, so the
- * two cannot drift apart. A typed skills field on an item does not count (decision 9).
+ * The skills one user's jobs are read for: the built-in dictionary, then the user's own skills in
+ * the order they were added. Compiled once per refresh or request, never per job.
+ */
+export type SkillDictionary = {
+  readonly names: readonly string[];
+  readonly patterns: readonly { name: string; re: RegExp }[];
+};
+
+const BUILTIN_PATTERNS = SKILLS.flatMap((skill) =>
+  skill.spellings.map((spelling) => ({
+    name: skill.name,
+    re: spellingPattern(spelling, {
+      exactCase: spelling !== spelling.toLowerCase(),
+      ...(skill.strict ? { strict: true } : {}),
+      ...(skill.notAfter ? { notAfter: skill.notAfter } : {}),
+      ...(skill.notBefore ? { notBefore: skill.notBefore } : {}),
+    }),
+  })),
+);
+
+/** Names of the built-in skills, lowercased. */
+const BUILTIN_KEYS: ReadonlySet<string> = new Set(SKILLS.map((s) => s.name.toLowerCase()));
+
+/** A custom name this short ("Zig", "Elm") is too often an ordinary word in other cases, so it matches as written. */
+export const CUSTOM_EXACT_CASE_MAX = 3;
+
+/**
+ * The built-in dictionary plus the user's own skill names, in the order they were added. A name
+ * that is a built-in skill, or repeats an earlier one, adds nothing.
+ */
+export function compileSkills(custom: readonly string[]): SkillDictionary {
+  const seen = new Set(BUILTIN_KEYS);
+  const extra: { name: string; re: RegExp }[] = [];
+  for (const name of custom) {
+    const key = name.toLowerCase();
+    if (name.trim() === "" || seen.has(key)) continue;
+    seen.add(key);
+    extra.push({ name, re: spellingPattern(name, { exactCase: name.length <= CUSTOM_EXACT_CASE_MAX }) });
+  }
+  return {
+    names: [...SKILLS.map((s) => s.name), ...extra.map((e) => e.name)],
+    patterns: [...BUILTIN_PATTERNS, ...extra],
+  };
+}
+
+/** The dictionary with no user skills: what every caller without a user list reads with. */
+export const BUILTIN_SKILLS: SkillDictionary = compileSkills([]);
+
+/** Skills from the dictionary that `text` names: built-ins in dictionary order, then the user's own, each once. */
+export function extractSkills(text: string, dict: SkillDictionary = BUILTIN_SKILLS): string[] {
+  const found = new Set<string>();
+  for (const { name, re } of dict.patterns) {
+    if (!found.has(name) && re.test(text)) found.add(name);
+  }
+  return dict.names.filter((name) => found.has(name));
+}
+
+/**
+ * Built-in skills named in the user's confirmed fact texts, in dictionary order, each once:
+ * Profile's "found in your confirmed facts". Matching adds the skills the user added and removes
+ * the ones they hid (decision 66, `profileSkills`). A typed skills field on an item does not count
+ * (decision 9).
  */
 export function skillsInFacts({ texts }: { texts: readonly string[] }): string[] {
   // Each fact on its own, so a two-word skill never spans the end of one fact and the start of the next.

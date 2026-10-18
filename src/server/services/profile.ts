@@ -1,9 +1,9 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { factKey } from "@/domain/citations";
 import { contactFromCv, fillContact } from "@/domain/contact";
 import { diffFacts } from "@/domain/facts-diff";
-import { skillsInFacts } from "@/domain/features";
+import { SKILLS, skillsInFacts } from "@/domain/features";
 import { githubLabel, parseGithubLink } from "@/domain/github-link";
 import {
   buildSplitPrompt,
@@ -15,6 +15,7 @@ import {
 } from "@/domain/prompts";
 import { checkCandidates, type FactCandidate, sectionIn, splitSections } from "@/domain/split";
 import { normalize } from "@/domain/text";
+import { MAX_ADDED_SKILLS, normalizeSkillName, profileSkills } from "@/domain/user-skills";
 import {
   type AddonInput,
   type Contact,
@@ -24,6 +25,7 @@ import {
   type ItemId,
   type ProfileDto,
   type ProfileItemDto,
+  type SetSkillInput,
   SplitTaskInput,
   type StandardAnswers,
   type Targeting,
@@ -36,10 +38,11 @@ import type { FactOrigin } from "@/shared/enums";
 import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
 import type { Db } from "../db/client";
-import { facts, profileItems, users } from "../db/schema";
+import { facts, profileItems, userSkills, users } from "../db/schema";
 import { type AiConfig, checkCap, estimateUsd, loadAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { latestTask, startTask, type TaskContext } from "./tasks";
+import { loadUserSkillRows } from "./user-skills";
 
 type ItemRow = typeof profileItems.$inferSelect;
 
@@ -116,7 +119,7 @@ async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
 }
 
 export async function getProfile(deps: Deps): Promise<ProfileDto> {
-  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig] = await Promise.all([
+  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig, skillRows] = await Promise.all([
     loadContact(deps),
     deps.db
       .select()
@@ -145,8 +148,10 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
       .where(eq(facts.userId, deps.userId))
       .orderBy(asc(facts.no)),
     loadAiConfig(deps),
+    loadUserSkillRows(deps),
   ]);
   const dtos = await Promise.all(items.map((row) => toItemDto(deps, row)));
+  const skillsFound = skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) });
   return {
     contact,
     standardAnswers,
@@ -159,7 +164,9 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
       // Text facts follow the item's text versions, GitHub facts its reads.
       inLatest: seenRev >= (row.origin === "github" ? itemGithubRev : itemRev),
     })),
-    skillsFound: skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) }),
+    skillsFound,
+    skillChips: profileSkills({ factSkills: skillsFound, rows: skillRows }).chips,
+    skillCatalog: SKILLS.map((s) => s.name),
     aiReady: aiConfig !== null,
   };
 }
@@ -184,6 +191,76 @@ export async function updateProfile(deps: Deps, input: UpdateProfileInput): Prom
   if (input.targeting?.minPay !== undefined) patch.minPay = input.targeting.minPay;
   if (Object.keys(patch).length) await deps.db.update(users).set(patch).where(eq(users.id, deps.userId));
   return getProfile(deps);
+}
+
+// ---------- Skills used for matching (decision 66) ----------
+
+/**
+ * Add a skill to matching, hide one found in confirmed facts, or clear either. One row per skill,
+ * so adding a hidden skill un-hides it. Matching changes on the next read; jobs already stored are
+ * read for a new skill of the user's own on the next Refresh.
+ */
+export async function setSkill(deps: Deps, { name, state }: SetSkillInput): Promise<ProfileDto> {
+  const clean = normalizeSkillName(name);
+  if (clean.kind === "rejected") throw new AppError({ code: "invalid_input", message: clean.message });
+  const mine = and(eq(userSkills.userId, deps.userId), eq(userSkills.key, clean.key));
+  switch (state) {
+    case "none":
+      await deps.db.delete(userSkills).where(mine);
+      break;
+    case "hidden": {
+      const confirmed = await deps.db
+        .select({ text: facts.text })
+        .from(facts)
+        .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")));
+      if (!skillsInFacts({ texts: confirmed.map((f) => f.text) }).includes(clean.name)) {
+        throw new AppError({
+          code: "not_in_facts",
+          message: `None of your confirmed facts names ${clean.name}, so there is nothing to hide. Remove it instead.`,
+        });
+      }
+      await upsertSkill(deps, { ...clean, kind: "hidden" });
+      break;
+    }
+    case "added": {
+      const [[existing], [total]] = await Promise.all([
+        deps.db.select({ kind: userSkills.kind }).from(userSkills).where(mine),
+        deps.db
+          .select({ n: count() })
+          .from(userSkills)
+          .where(and(eq(userSkills.userId, deps.userId), eq(userSkills.kind, "added"))),
+      ]);
+      if (existing?.kind !== "added" && (total?.n ?? 0) >= MAX_ADDED_SKILLS) {
+        throw new AppError({
+          code: "too_many_skills",
+          message: `You can add up to ${MAX_ADDED_SKILLS} skills. Remove one you no longer use, then add ${clean.name}.`,
+        });
+      }
+      await upsertSkill(deps, { ...clean, kind: "added" });
+      break;
+    }
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+  return getProfile(deps);
+}
+
+async function upsertSkill(
+  deps: Pick<Deps, "db" | "userId" | "clock">,
+  { key, name, kind }: { key: string; name: string; kind: "added" | "hidden" },
+): Promise<void> {
+  const now = deps.clock.now();
+  await deps.db
+    .insert(userSkills)
+    .values({ userId: deps.userId, key, name, kind, createdAt: now })
+    .onConflictDoUpdate({
+      target: [userSkills.userId, userSkills.key],
+      set: { name, kind, createdAt: now },
+      // The same state again keeps the row, so an added skill keeps its place in the order.
+      setWhere: sql`${userSkills.kind} <> excluded.kind`,
+    });
 }
 
 // ---------- Split (section 3.3, steps 2 and 3) ----------

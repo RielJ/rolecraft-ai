@@ -81,12 +81,40 @@ const RANK_WORDS: ReadonlySet<string> = new Set([
   "distinguished",
 ]);
 
-function titleTokens(title: string): ReadonlySet<string> {
+/** Joined words a title may spell either way. "Full-stack" already splits on its hyphen. */
+const TITLE_COMPOUNDS: Readonly<Record<string, readonly string[]>> = {
+  fullstack: ["full", "stack"],
+  frontend: ["front", "end"],
+  backend: ["back", "end"],
+};
+
+/** Role words that mean the same job for title fit. */
+const TITLE_ROLE_WORDS: Readonly<Record<string, string>> = { developer: "engineer", programmer: "engineer" };
+
+/** Where a title's role ends and its tail (team, location, stack) starts: " - ", " | ", " — ", " – " or "(". */
+const TITLE_TAIL = /\s[-|—–]\s|\(/;
+
+function wordsOf(title: string): ReadonlySet<string> {
   return new Set(
     titleKey(title)
       .split(" ")
+      .flatMap((t) => TITLE_COMPOUNDS[t] ?? [t])
+      .map((t) => TITLE_ROLE_WORDS[t] ?? t)
       .filter((t) => t !== "" && !RANK_WORDS.has(t)),
   );
+}
+
+/**
+ * The words title fit compares (section 3.7). Only matching reads these: `titleKey`, which dedup
+ * uses, keeps the title's own words. A tail is cut when at least two words come before it.
+ */
+function titleTokens(title: string): ReadonlySet<string> {
+  const tail = title.search(TITLE_TAIL);
+  if (tail > 0) {
+    const head = wordsOf(title.slice(0, tail));
+    if (head.size >= 2) return head;
+  }
+  return wordsOf(title);
 }
 
 function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {

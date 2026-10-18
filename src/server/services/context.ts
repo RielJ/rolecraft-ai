@@ -55,6 +55,8 @@ const STATUS: Record<ErrorCode, Status> = {
   url_mismatch: 409,
   session_expired: 409,
   output_changed: 409,
+  not_in_facts: 409,
+  too_many_skills: 409,
   internal: 500,
 };
 

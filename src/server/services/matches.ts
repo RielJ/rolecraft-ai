@@ -4,6 +4,7 @@ import { skillsInFacts } from "@/domain/features";
 import { levelRank, type MatchJob, type MatchProfile, matcher, payBelow } from "@/domain/match";
 import { convert, type FxRates, monthlyInView, payFromColumns, toMonthly } from "@/domain/pay";
 import { DESCRIPTION_HEAD_CHARS, roleFit } from "@/domain/roles";
+import { customSkillNames, isBuiltinSkill, profileSkills } from "@/domain/user-skills";
 import {
   type JobId,
   type MatchDetail,
@@ -28,6 +29,7 @@ import {
 } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 import { jobFacts } from "./jobs";
+import { loadUserSkillRows } from "./user-skills";
 
 /**
  * Matches (PLAN.md sections 3.7, 3.7a and 4). The level and the "Role unclear" tag are computed
@@ -40,6 +42,8 @@ export const MAX_MATCHES = 500;
 
 type Targeting = {
   profile: MatchProfile;
+  /** Job skills Matches knows: built-ins and the user's own current list, lowercased (decision 66). */
+  knownSkill: (skill: string) => boolean;
   minPay: Money | null;
   families: readonly RoleFamily[];
   excludeWords: readonly string[];
@@ -49,7 +53,7 @@ type Targeting = {
 
 /** Everything a match reads about the user, loaded once per request. */
 async function loadTargeting(deps: Pick<Deps, "db" | "userId">): Promise<Targeting> {
-  const [[user], confirmed] = await Promise.all([
+  const [[user], confirmed, skillRows] = await Promise.all([
     deps.db
       .select({
         targetTitles: users.targetTitles,
@@ -67,13 +71,17 @@ async function loadTargeting(deps: Pick<Deps, "db" | "userId">): Promise<Targeti
       .select({ text: facts.text })
       .from(facts)
       .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed"))),
+    loadUserSkillRows(deps),
   ]);
   if (!user) throw notFound("Your profile");
+  const custom = new Set(customSkillNames(skillRows).map((s) => s.toLowerCase()));
   return {
+    knownSkill: (skill) => isBuiltinSkill(skill) || custom.has(skill.toLowerCase()),
     profile: {
       targetTitles: user.targetTitles,
-      // The same list Profile shows as "Skills found in your confirmed facts" (decision 9).
-      skills: skillsInFacts({ texts: confirmed.map((f) => f.text) }),
+      // Profile's "Skills used for matching": found in facts, plus added, minus hidden (decision 66).
+      skills: profileSkills({ factSkills: skillsInFacts({ texts: confirmed.map((f) => f.text) }), rows: skillRows })
+        .matching,
       seniority: user.seniority,
       years: user.years,
     },
@@ -236,7 +244,12 @@ const MATCH_COLUMNS = {
   descriptionHead: sql<string>`left(${jobs.description}, ${DESCRIPTION_HEAD_CHARS})`,
 };
 
+/**
+ * A stored job's skills may name a skill the user has since removed from their own list; it is
+ * left out at once rather than on the next Refresh (decision 66).
+ */
 function matchJobOf(
+  t: Pick<Targeting, "knownSkill">,
   row: { title: string; skills: string[]; seniority: MatchJob["seniority"]; minYears: number | null } & Pick<
     MatchJob,
     "eligibility"
@@ -246,7 +259,7 @@ function matchJobOf(
 ): MatchJob {
   return {
     title: row.title,
-    skills: row.skills,
+    skills: row.skills.filter(t.knownSkill),
     seniority: row.seniority,
     minYears: row.minYears,
     eligibility: row.eligibility,
@@ -362,7 +375,7 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       counts.hiddenCompany++;
       continue;
     }
-    const match = score(matchJobOf(row, unclear, row.overridden));
+    const match = score(matchJobOf(t, row, unclear, row.overridden));
     shown.push({
       companyKey: key,
       id: row.id,
@@ -459,7 +472,7 @@ export async function matchDetail(deps: Deps, jobId: JobId): Promise<MatchDetail
     title: job.title,
     descriptionHead: job.description.slice(0, DESCRIPTION_HEAD_CHARS),
   });
-  const match = matcher(t.profile)(matchJobOf(job, unclear, row.overridden));
+  const match = matcher(t.profile)(matchJobOf(t, job, unclear, row.overridden));
   return {
     id: job.id,
     title: job.title,

@@ -78,6 +78,13 @@
       "when": 1792305756602,
       "tag": "0010_hidden_companies",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792323167420,
+      "tag": "0011_user_skills",
+      "breakpoints": true
     }
   ]
 }

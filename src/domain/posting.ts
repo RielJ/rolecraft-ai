@@ -1,6 +1,6 @@
 import { applyUrlKey, companyKey, titleKey } from "./dedup";
 import { classifyEligibility } from "./eligibility";
-import { extractSkills, minYears, seniority } from "./features";
+import { extractSkills, minYears, type SkillDictionary, seniority } from "./features";
 import { parseHours } from "./hours";
 import { type Pay, parsePay } from "./pay";
 import { contentHash, descriptionKey } from "./text";
@@ -21,8 +21,12 @@ export type JobFields = {
   restrictions: readonly string[] | null;
 };
 
-/** The stored columns derived from a job's fields (section 3.1 step 4): keys, features, pay, hours, eligibility. */
-export function derive(fields: JobFields) {
+/**
+ * The stored columns derived from a job's fields (section 3.1 step 4): keys, features, pay, hours,
+ * eligibility. Skills are read with `dict`, the user's dictionary (decision 66); without one, the
+ * built-ins only.
+ */
+export function derive(fields: JobFields, dict?: SkillDictionary) {
   const pay = fields.pay ?? parsePay(fields.description);
   const eligibility = classifyEligibility({
     description: fields.description,
@@ -55,7 +59,7 @@ export function derive(fields: JobFields) {
     payPeriod: pay?.period ?? null,
     payPhrase,
     hours: parseHours(fields.description),
-    skills: extractSkills(`${fields.title}\n${fields.description}`),
+    skills: jobSkills(fields, dict),
     seniority: seniority(fields.title),
     minYears: minYears(fields.description),
     eligibility: eligibility.verdict,
@@ -65,3 +69,8 @@ export function derive(fields: JobFields) {
 }
 
 export type Derived = ReturnType<typeof derive>;
+
+/** The one place a job's skills are read: from its title and description. Refresh re-reads stored jobs with it. */
+export function jobSkills(fields: Pick<JobFields, "title" | "description">, dict?: SkillDictionary): string[] {
+  return extractSkills(`${fields.title}\n${fields.description}`, dict);
+}

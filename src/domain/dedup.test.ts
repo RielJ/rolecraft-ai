@@ -16,6 +16,12 @@ describe("titleKey", () => {
     expect(titleKey("Frontend Engineer, Senior")).toBe("engineer frontend senior");
     expect(titleKey("Jr Developer")).toBe("developer junior");
   });
+  test("keeps compounds, developer and the tail after a dash: dedup keys never move with match words", () => {
+    expect(titleKey("Fullstack Developer")).toBe("developer fullstack");
+    expect(titleKey("Senior Full-Stack Engineer - Payments | Remote (PH)")).toBe(
+      "engineer full payments remote senior stack",
+    );
+  });
 });
 
 describe("companyKey", () => {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { FakeAi } from "@/server/adapters/ai/fake";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
@@ -164,6 +165,41 @@ describe("drafting with citations", () => {
     deps.fake.reset();
     await draft(ws, { kinds: ["letter"] });
     expect(deps.fake.calls[0]?.messages[0]?.content).toContain("Mentored three students");
+  });
+
+  test("a skill added for matching never reaches a draft prompt (decision 66)", async () => {
+    const { ws, profile } = await setup();
+    // Added with no fact behind it, and a skill found in facts hidden from matching.
+    for (const [name, state] of [
+      ["Kubernetes", "added"],
+      ["Hasura", "added"],
+      ["Go", "hidden"],
+    ] as const) {
+      expect((await call("PUT", "/profile/skills", { name, state })).status).toBe(200);
+    }
+    await draft(ws, { kinds: ["resume", "letter"] });
+    const prompts = deps.fake.calls.flatMap((c) => c.messages.map((m) => m.content)).join("\n");
+    expect(prompts).toContain(factId(profile, "payments API").text);
+    expect(prompts).not.toContain("Kubernetes");
+    expect(prompts).not.toContain("Hasura");
+  });
+
+  test("drafting and citation modules never read the skill list for matching (decision 66)", async () => {
+    const root = join(import.meta.dir, "..");
+    const modules = [
+      "src/server/services/workspace.ts",
+      "src/domain/citations.ts",
+      "src/domain/prompts.ts",
+      "src/domain/gate.ts",
+      "src/domain/style.ts",
+    ];
+    const banned = /userSkills|user_skills|skillChips|profileSkills|loadSkillDictionary/;
+    const hits: string[] = [];
+    for (const path of modules) {
+      const source = await Bun.file(join(root, path)).text();
+      if (banned.test(source)) hits.push(`${path}: ${source.match(banned)?.[0]}`);
+    }
+    expect(hits).toEqual([]);
   });
 
   test("a resume citing a fact that became letters_only shows as outdated", async () => {

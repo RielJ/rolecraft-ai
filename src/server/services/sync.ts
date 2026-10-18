@@ -1,7 +1,8 @@
-import { and, eq, inArray, lt, notExists, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, notExists, sql } from "drizzle-orm";
 import { z } from "zod";
 import { acceptAiVerdict } from "@/domain/eligibility";
-import { type Derived, derive } from "@/domain/posting";
+import { BUILTIN_SKILLS, type SkillDictionary } from "@/domain/features";
+import { type Derived, derive, jobSkills } from "@/domain/posting";
 import { buildEligibilityPrompt, ELIGIBILITY_MAX_TOKENS } from "@/domain/prompts";
 import { matchesKeywords, roleDropReason, roleFit } from "@/domain/roles";
 import { type FetchOutcome, type PlannedPosting, planSourceRun, type SourcePlan } from "@/domain/sync-plan";
@@ -42,7 +43,15 @@ const MINUTE_MS = 60_000;
 
 const isBuiltin = (kind: SourceRow["kind"]) => BUILTIN_SOURCE_KINDS.some((k) => k === kind);
 
-export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step" | "taskId">): Promise<RefreshResult> {
+/**
+ * `skills` is the user's dictionary (decision 66). The caller reads it as the app role before the
+ * refresh starts, because `hb_sync` has no grant on `user_skills`.
+ */
+export async function runRefresh(
+  deps: SyncDeps,
+  ctx: Pick<TaskContext, "step" | "taskId">,
+  { skills = BUILTIN_SKILLS }: { skills?: SkillDictionary } = {},
+): Promise<RefreshResult> {
   const { enabled, targeting, aiEligibility } = await asSync(deps.db, async (tx) => {
     const rows = await tx
       .select()
@@ -67,16 +76,19 @@ export async function runRefresh(deps: SyncDeps, ctx: Pick<TaskContext, "step" |
   const newJobIds: JobId[] = [];
   for (const [index, source] of enabled.entries()) {
     await ctx.step(`${source.label} ${index + 1} of ${enabled.length}`);
-    const run = await refreshSource({ deps, source, targeting });
+    const run = await refreshSource({ deps, source, targeting, skills });
     results.push(run.result);
     newJobIds.push(...run.newJobIds);
   }
+
+  await ctx.step("Reading skills in stored jobs");
+  const skillsReread = await rereadSkills({ deps, skills });
 
   const aiPass = aiEligibility ? await aiEligibilityPass({ deps, ctx, newJobIds }) : NOT_RUN_OFF;
 
   await ctx.step("Removing old closed jobs");
   const pruned = await prune(deps);
-  return { sources: results, pruned, aiPass };
+  return { sources: results, pruned, aiPass, skillsReread };
 }
 
 // ---------- one source ----------
@@ -94,10 +106,12 @@ async function refreshSource({
   deps,
   source,
   targeting,
+  skills,
 }: {
   deps: SyncDeps;
   source: SourceRow;
   targeting: Targeting;
+  skills: SkillDictionary;
 }): Promise<SourceRun> {
   const base = { sourceId: source.id, label: source.label };
   const adapter = deps.sources[source.kind];
@@ -129,7 +143,7 @@ async function refreshSource({
       )
     : new Set<string>();
   const fetched: Fetched = adapter
-    ? await fetchAndFilter({ adapter, source, targeting, known })
+    ? await fetchAndFilter({ adapter, source, targeting, known, skills })
     : { kind: "failed", error: `${source.label} has no reader yet.` };
 
   return asSync(deps.db, async (tx) => {
@@ -194,11 +208,13 @@ async function fetchAndFilter({
   source,
   targeting,
   known,
+  skills,
 }: {
   adapter: NonNullable<SyncDeps["sources"][SourceRow["kind"]]>;
   source: SourceRow;
   targeting: Targeting;
   known: ReadonlySet<string>;
+  skills: SkillDictionary;
 }): Promise<Fetched> {
   const keywords = source.keywords ?? targeting.targetTitles;
   let result: Awaited<ReturnType<typeof adapter.fetch>>;
@@ -240,7 +256,7 @@ async function fetchAndFilter({
       continue;
     }
     if (normalized.has(posting.externalId)) continue;
-    normalized.set(posting.externalId, { posting, derived: derive(posting) });
+    normalized.set(posting.externalId, { posting, derived: derive(posting, skills) });
   }
   const postings: PlannedPosting[] = [...normalized.values()].map(({ posting, derived }) => ({
     externalId: posting.externalId,
@@ -482,6 +498,61 @@ async function setStatus(
   >,
 ): Promise<void> {
   await tx.update(sources).set(patch).where(eq(sources.id, sourceId));
+}
+
+// ---------- skills in stored jobs (decision 66) ----------
+
+/** Open jobs are read again in batches this size, each its own transaction. */
+export const REREAD_BATCH = 500;
+
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * Read the skills of every open job again with the current dictionary, so a skill the user added,
+ * or one added to the built-ins, shows on jobs stored before it. Only rows whose skills changed
+ * are written, with one `UPDATE ... FROM (VALUES ...)` per batch. Returns how many changed.
+ */
+export async function rereadSkills({
+  deps,
+  skills,
+}: {
+  deps: Pick<SyncDeps, "db" | "userId">;
+  skills: SkillDictionary;
+}): Promise<number> {
+  let changed = 0;
+  let after: JobId | null = null;
+  for (;;) {
+    const batch: { last: JobId | null; changed: number } = await asSync(deps.db, async (tx) => {
+      const rows = await tx
+        .select({ id: jobs.id, title: jobs.title, description: jobs.description, skills: jobs.skills })
+        .from(jobs)
+        .where(
+          and(eq(jobs.userId, deps.userId), isNull(jobs.closedAt), after === null ? undefined : gt(jobs.id, after)),
+        )
+        .orderBy(asc(jobs.id))
+        .limit(REREAD_BATCH);
+      const updates = rows.flatMap((row) => {
+        const next = jobSkills(row, skills);
+        return sameList(next, row.skills) ? [] : [{ id: row.id, skills: next }];
+      });
+      if (updates.length > 0) {
+        // Each list goes as one JSON parameter: a bare array would be spread into separate parameters.
+        const values = sql.join(
+          updates.map((u) => sql`(${u.id}::uuid, ${JSON.stringify(u.skills)}::jsonb)`),
+          sql`, `,
+        );
+        await tx.execute(sql`
+          UPDATE jobs j
+          SET skills = ARRAY(SELECT e.value FROM jsonb_array_elements_text(v.skills) WITH ORDINALITY e(value, n) ORDER BY e.n)
+          FROM (VALUES ${values}) AS v(id, skills)
+          WHERE j.id = v.id`);
+      }
+      return { last: rows.length < REREAD_BATCH ? null : (rows.at(-1)?.id ?? null), changed: updates.length };
+    });
+    changed += batch.changed;
+    if (batch.last === null) return changed;
+    after = batch.last;
+  }
 }
 
 // ---------- AI eligibility pass (section 3.1 step 8) ----------
