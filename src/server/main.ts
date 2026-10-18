@@ -101,12 +101,12 @@ const deps: Deps = {
 };
 
 const server = new Hono()
-  .route("/", createApp(deps))
+  .route("/", createApp(deps, { allowedHosts: env.HB_ALLOWED_HOSTS }))
   .use("/*", serveStatic({ root: env.HB_STATIC_DIR }))
   // SPA fallback: any non-API path that is not a file gets index.html.
   .get("*", serveStatic({ root: env.HB_STATIC_DIR, path: "index.html" }));
 
-const bun = Bun.serve({ port: env.PORT, fetch: server.fetch });
+const bun = Bun.serve({ hostname: env.HB_HOST, port: env.PORT, fetch: server.fetch });
 console.info(JSON.stringify({ level: "info", msg: "listening", url: bun.url.href }));
 
 async function shutdown(): Promise<void> {

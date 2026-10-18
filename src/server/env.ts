@@ -3,10 +3,32 @@ import { PI_THINKING_LEVELS } from "./adapters/ai/pi";
 
 const DEFAULT_DB = "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay";
 
+/** A bare hostname or bracketed IPv6 address: no scheme, port, path, or wildcard. */
+const HOSTNAME = /^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$/;
+
 const EnvSchema = z
   .object({
     DATABASE_URL: z.url().default(DEFAULT_DB),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    /**
+     * The interface to listen on. Loopback by default, so nothing else on the network can reach
+     * the app. The container image sets 0.0.0.0; Compose publishes the port on 127.0.0.1 only.
+     */
+    HB_HOST: z.string().min(1).default("127.0.0.1"),
+    /**
+     * Extra hostnames (comma-separated, no port) the app answers to besides localhost, 127.0.0.1
+     * and [::1]. Any other Host header gets 403, which blocks DNS rebinding.
+     */
+    HB_ALLOWED_HOSTS: z
+      .string()
+      .transform((list) =>
+        list
+          .split(",")
+          .map((h) => h.trim().toLowerCase())
+          .filter((h) => h !== ""),
+      )
+      .pipe(z.array(z.string().regex(HOSTNAME, "a hostname without scheme or port")))
+      .default([]),
     /** Chromium binary for PDF export. Unset uses Playwright's downloaded browser. */
     HB_CHROMIUM_PATH: z.string().min(1).optional(),
     /** Directory of the built SPA. */

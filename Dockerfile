@@ -29,8 +29,11 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends chromium fonts-dejavu-core fonts-liberation fonts-noto-core \
   && rm -rf /var/lib/apt/lists/*
 
+# HB_HOST: inside the container the server must listen on all interfaces, or Docker's port
+# publishing cannot reach it. Compose publishes the port on the host's loopback only.
 ENV NODE_ENV=production \
     PORT=3000 \
+    HB_HOST=0.0.0.0 \
     HB_CHROMIUM_PATH=/usr/bin/chromium \
     HB_STATIC_DIR=/app/dist \
     HB_DATA_DIR=/data
