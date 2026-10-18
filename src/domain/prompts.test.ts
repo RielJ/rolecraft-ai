@@ -4,6 +4,7 @@ import {
   allowedFacts,
   buildDraftPrompt,
   buildRetryPrompt,
+  buildSplitPrompt,
   buildStyleRewritePrompt,
   cleanModelText,
   type PromptFact,
@@ -112,5 +113,20 @@ describe("cleanModelText", () => {
   test("unwraps a code fence and trims", () => {
     expect(cleanModelText("```markdown\n# Juan\n- Built it [FACT-1]\n```\n")).toBe("# Juan\n- Built it [FACT-1]");
     expect(cleanModelText("  plain  ")).toBe("plain");
+  });
+});
+
+describe("buildSplitPrompt", () => {
+  const item = { kindLabel: "CV", title: "CV", body: "Databases & Tools: PostgreSQL, Redis", skills: [], saved: [] };
+
+  test("asks for skills lines as facts, since matching reads skills only from facts", () => {
+    const { system } = buildSplitPrompt({ item });
+    expect(system).toContain("Keep every line that lists skills, tools or technologies as one fact");
+  });
+
+  test("sends saved facts only when there are some", () => {
+    expect(promptText(buildSplitPrompt({ item }))).not.toContain("SAVED FACTS");
+    const again = promptText(buildSplitPrompt({ item: { ...item, saved: ["Built a billing service"] } }));
+    expect(again).toContain("SAVED FACTS (from an earlier version of this text)\n- Built a billing service");
   });
 });

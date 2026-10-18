@@ -120,6 +120,25 @@ describe("levels are computed on read", () => {
     expect(await levelOf("Backend Engineer")).toBe("strong");
   });
 
+  test("within a level, jobs whose skills your facts cover best come first", async () => {
+    await targeting({ targetTitles: ["Backend Engineer"] });
+    // All three are Possible: the title fits, but none reaches 60% coverage, and none is under 30%.
+    await addJob({
+      title: "Backend Engineer, Two of five",
+      description: `Go, PostgreSQL, Rust, Elixir, Kafka. ${WORLDWIDE}`,
+    });
+    await addJob({ title: "Backend Engineer, No skills named", description: `Build things with us. ${WORLDWIDE}` });
+    await addJob({ title: "Backend Engineer, One of three", description: `Go, Rust, Elixir. ${WORLDWIDE}` });
+    const profile = await pasteCv("- Ran Go and Postgres services in production");
+    await confirm(profile, "Go and Postgres");
+    const shown = await list();
+    expect(shown.jobs.map((j) => [j.title, j.level])).toEqual([
+      ["Backend Engineer, Two of five", "possible"],
+      ["Backend Engineer, One of three", "possible"],
+      ["Backend Engineer, No skills named", "possible"],
+    ]);
+  });
+
   test("a pending fact's skill does not count; Flutter in a confirmed fact matches a Flutter job", async () => {
     await targeting({ targetTitles: ["Mobile Developer"] });
     const id = await addJob({ title: "Mobile Developer", description: `Flutter, Dart and Firebase. ${WORLDWIDE}` });
