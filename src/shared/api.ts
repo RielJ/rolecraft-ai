@@ -319,6 +319,11 @@ export const ProfileDto = z.object({
   skillChips: z.array(z.object({ name: z.string(), source: SkillChipSource, builtin: z.boolean() })),
   /** Every built-in skill name, for the Add skill picker. */
   skillCatalog: z.array(z.string()),
+  /**
+   * The CV's PDF as uploaded, when one is kept (decision 69). Served by `GET /api/profile/cv/file`.
+   * Null for a pasted CV, a DOCX, a PDF over 5 MB, and a PDF read before copies were kept.
+   */
+  cvFile: z.object({ fileName: z.string(), size: z.number().int(), uploadedAt: z.string() }).nullable(),
   /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
   aiReady: z.boolean(),
 });
@@ -339,7 +344,13 @@ export type PasteCvInput = z.infer<typeof PasteCvInput>;
 /** Largest CV file accepted for upload. */
 export const MAX_CV_BYTES = 10 * 1024 * 1024;
 
-/** `POST /api/profile/cv/file` as multipart form data. The file is read once and not kept. */
+/**
+ * Largest CV file kept (decision 69). A PDF up to this size is stored so it can be viewed; a larger
+ * one, up to `MAX_CV_BYTES`, is still read, but its file is not kept.
+ */
+export const MAX_STORED_CV_BYTES = 5 * 1024 * 1024;
+
+/** `POST /api/profile/cv/file` as multipart form data. A PDF of at most 5 MB is kept (decision 69). */
 export const UploadCvForm = z.object({
   file: z
     .instanceof(File, { message: "Choose a PDF or DOCX file." })

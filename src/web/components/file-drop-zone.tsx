@@ -50,7 +50,7 @@ export function FileDropZone({
   busy: boolean;
   busyLabel: string;
   disabled: boolean;
-  /** A line under the hint, e.g. which file was read last. */
+  /** A line under the hint, e.g. which file was read last. It may hold a button or a link. */
   footer?: ReactNode;
   onFile: (file: File) => void;
   onReject: (problem: string) => void;
@@ -79,19 +79,22 @@ export function FileDropZone({
     else if (file) onFile(file);
   }
 
-  function over(event: DragEvent<HTMLLabelElement>) {
+  function over(event: DragEvent<HTMLDivElement>) {
     if (!hasFiles(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = off ? "none" : "copy";
     if (!off) setDragging(true);
   }
 
+  // The zone is a div so the footer can hold a button: a button inside a label is invalid HTML.
+  // The label's ::after covers the whole zone, so a click anywhere but the footer's own controls
+  // opens the picker, as before.
   return (
-    <label
-      htmlFor={id}
+    // biome-ignore lint/a11y/noStaticElementInteractions: drop is a pointer extra; the file input inside is the keyboard path.
+    <div
       data-slot="file-drop-zone"
       data-dragging={dragging || undefined}
-      aria-disabled={off || undefined}
+      data-disabled={off || undefined}
       onDragEnter={over}
       onDragOver={over}
       onDragLeave={(event) => {
@@ -104,38 +107,45 @@ export function FileDropZone({
         if (!off) take(event.dataTransfer.files);
       }}
       className={cn(
-        "flex min-h-44 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-input border-dashed px-6 py-8 text-center",
+        "relative flex min-h-44 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-input border-dashed px-6 py-8 text-center",
         "transition-[background-color,border-color] duration-150 ease-out",
         "hover:border-ring/60 hover:bg-accent/40",
         "has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-[3px] has-[input:focus-visible]:ring-ring/50",
         "data-dragging:border-primary data-dragging:bg-primary/10",
-        "aria-disabled:cursor-not-allowed aria-disabled:hover:border-input aria-disabled:hover:bg-transparent",
+        "data-disabled:cursor-not-allowed data-disabled:hover:border-input data-disabled:hover:bg-transparent",
       )}
     >
-      <input
-        ref={inputRef}
-        id={id}
-        type="file"
-        accept={accept}
-        disabled={off}
-        aria-label={`${title} (${kinds})`}
-        className="sr-only"
-        onChange={(event) => take(event.target.files)}
-      />
-      {busy ? (
-        <LoaderCircle aria-hidden className="size-7 text-muted-foreground motion-safe:animate-spin" />
-      ) : (
-        <FileUp aria-hidden className={cn("size-7", dragging ? "text-primary" : "text-muted-foreground")} />
-      )}
-      <span className="font-medium text-base" aria-live="polite">
-        {busy ? busyLabel : dragging ? "Drop it to upload" : title}
-      </span>
-      {!busy && (
-        <span className="text-muted-foreground text-sm">
-          Drag a {kinds} here, or <span className="text-foreground underline underline-offset-4">choose a file</span>
+      <label htmlFor={id} className="flex flex-col items-center gap-2 after:absolute after:inset-0 after:rounded-lg">
+        <input
+          ref={inputRef}
+          id={id}
+          type="file"
+          accept={accept}
+          disabled={off}
+          aria-label={`${title} (${kinds})`}
+          className="sr-only"
+          onChange={(event) => take(event.target.files)}
+        />
+        {busy ? (
+          <LoaderCircle aria-hidden className="size-7 text-muted-foreground motion-safe:animate-spin" />
+        ) : (
+          <FileUp aria-hidden className={cn("size-7", dragging ? "text-primary" : "text-muted-foreground")} />
+        )}
+        <span className="font-medium text-base" aria-live="polite">
+          {busy ? busyLabel : dragging ? "Drop it to upload" : title}
+        </span>
+        {!busy && (
+          <span className="text-muted-foreground text-sm">
+            Drag a {kinds} here, or <span className="text-foreground underline underline-offset-4">choose a file</span>
+          </span>
+        )}
+      </label>
+      {footer && !busy && (
+        // Above the label's cover, but clicks on plain text still fall through to it.
+        <span className="pointer-events-none relative z-10 text-muted-foreground text-xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+          {footer}
         </span>
       )}
-      {footer && !busy && <span className="text-muted-foreground text-xs">{footer}</span>}
-    </label>
+    </div>
   );
 }

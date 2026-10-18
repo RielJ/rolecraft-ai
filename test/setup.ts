@@ -22,6 +22,9 @@ import { resetTables } from "./reset";
 const url = process.env.DATABASE_URL_TEST || "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay_test";
 await migrateDb({ url });
 
+/** The test database's URL, for a test that needs its own connection. */
+export const testUrl = url;
+
 let shared: { db: Db; closeDb: () => Promise<void>; sql: postgres.Sql; pdf: PdfRenderer } | null = null;
 
 function connections() {

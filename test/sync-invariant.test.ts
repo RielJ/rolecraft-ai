@@ -176,6 +176,10 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
       "INSERT INTO user_skills (user_id, key, name, kind) SELECT id, 'x', 'x', 'added' FROM users",
       "UPDATE user_skills SET kind = 'hidden'",
       "DELETE FROM user_skills",
+      // The stored CV file (decision 69): only the app role saves, serves or deletes it.
+      "INSERT INTO cv_files (user_id, file_name, content_type, size, data) SELECT id, 'cv.pdf', 'application/pdf', 1, '\\x25'::bytea FROM users",
+      "UPDATE cv_files SET file_name = 'x'",
+      "DELETE FROM cv_files",
     ];
     const codes = await Promise.all(statements.map((s) => failure(run(s))));
     expect(Object.fromEntries(statements.map((s, i) => [s, codes[i]]))).toEqual(
@@ -214,6 +218,9 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
     expect(await failure(run("SELECT job_id FROM eligibility_overrides"))).toBe("42501");
     expect(await failure(run("SELECT title FROM role_drops"))).toBe("42501");
     expect(await failure(run("SELECT name FROM user_skills"))).toBe("42501");
+    // Not even the name or size of the stored CV file, let alone its bytes (decision 69).
+    expect(await failure(run("SELECT data FROM cv_files"))).toBe("42501");
+    expect(await failure(run("SELECT user_id, file_name, size FROM cv_files"))).toBe("42501");
   });
 
   test("the granted writes succeed", async () => {
@@ -470,6 +477,11 @@ describe("(c) refresh never changes user tables", () => {
     const kept = await jobByTitle("Platform Engineer");
     if (!kept) throw new Error("no Platform Engineer");
     await testSql()`INSERT INTO eligibility_overrides (user_id, job_id) VALUES (${deps.userId}, ${kept.id})`;
+
+    // A stored CV file (decision 69), so its row is in the hashes too.
+    await testSql()`
+      INSERT INTO cv_files (user_id, file_name, content_type, size, data)
+      VALUES (${deps.userId}, 'cv.pdf', 'application/pdf', 5, ${Buffer.from("%PDF-")})`;
   }
 
   const hours = (h: number) => new Date(Date.parse("2026-10-16T08:00:00Z") + h * 3_600_000);
@@ -485,6 +497,7 @@ describe("(c) refresh never changes user tables", () => {
     expect(before.opportunities).toStartWith("4 rows");
     expect(before.output_facts).toStartWith("3 rows");
     expect(before.eligibility_overrides).toStartWith("1 rows");
+    expect(before.cv_files).toStartWith("1 rows");
     // The role filter dropped Acme's designer at seeding, and sync wrote it as hb_sync.
     const dropped = await testSql()<{ title: string }[]>`SELECT title FROM role_drops ORDER BY title`;
     expect(dropped.map((d) => d.title)).toContain("Product Designer");

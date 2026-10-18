@@ -3,8 +3,9 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { reflowPdfText } from "@/domain/reflow";
 
 /**
- * CV text extraction (section 3.3, step 1): `unpdf` for PDF, `mammoth` for DOCX. The file is
- * read once and never stored; only the text goes on.
+ * CV text extraction (section 3.3, step 1): `unpdf` for PDF, `mammoth` for DOCX. Only the text
+ * goes on to the facts. `uploadCv` keeps a PDF of 5 MB or less in `cv_files` for viewing
+ * (decision 69); nothing here stores anything.
  */
 
 type ExtractFailure = "no_text_layer" | "empty" | "unreadable" | "unsupported";

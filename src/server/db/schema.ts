@@ -35,6 +35,7 @@ import type {
   TaskId,
   UserId,
 } from "@/shared/api";
+import { MAX_STORED_CV_BYTES } from "@/shared/api";
 import {
   AI_PROVIDERS,
   AI_PURPOSES,
@@ -90,6 +91,12 @@ function oneOf(column: string, values: readonly string[]): SQL {
 
 const tsvector = customType<{ data: string }>({
   dataType: () => "tsvector",
+});
+
+/** Raw bytes. postgres.js reads bytea as a Buffer, which is a Uint8Array. */
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => "bytea",
+  toDriver: (value) => Buffer.from(value.buffer, value.byteOffset, value.byteLength),
 });
 
 const createdAt = () => timestamp({ withTimezone: true }).notNull().defaultNow();
@@ -419,6 +426,31 @@ export const userSkills = pgTable(
     primaryKey({ columns: [t.userId, t.key] }),
     check("user_skills_kind", oneOf("kind", USER_SKILL_KINDS)),
     check("user_skills_name", sql`length(btrim(name)) BETWEEN 1 AND 60`),
+  ],
+);
+
+/**
+ * The CV's PDF as uploaded (decision 69), so the user can see it next to the text that was read.
+ * One per user. Only PDFs of at most `MAX_STORED_CV_BYTES` are kept; any other upload, or a paste
+ * that changes the text, deletes it. The sync role has no grant on it, not even to read.
+ */
+export const cvFiles = pgTable(
+  "cv_files",
+  {
+    userId: uuid()
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" })
+      .$type<UserId>(),
+    fileName: text().notNull(),
+    contentType: text().notNull().$type<"application/pdf">(),
+    size: integer().notNull(),
+    data: bytea().notNull(),
+    createdAt: createdAt(),
+  },
+  () => [
+    check("cv_files_content_type", sql`content_type = 'application/pdf'`),
+    check("cv_files_size", sql`size BETWEEN 1 AND ${sql.raw(String(MAX_STORED_CV_BYTES))}`),
+    check("cv_files_data_size", sql`octet_length(data) = size`),
   ],
 );
 

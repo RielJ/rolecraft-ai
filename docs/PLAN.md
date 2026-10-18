@@ -58,7 +58,7 @@ Section 6 has the trade-offs for each question.
 | HTTP response cache | A minimum interval per source (30 min default, 6 h for Remotive) | A skipped source closes nothing, so skipping is always safe, and it respects Remotive's budget without a cache. |
 | Stored HTML | Descriptions converted to plain text with paragraph and list breaks at ingest | There is no sanitizer and no XSS surface. Losing bold text in postings costs little. |
 | `settings` and `profile` tables | Columns on the single `users` row | Both are 1:1 with the user, now and after accounts arrive. |
-| Separate CV import table, stored CV file | `profile_items` row with `kind = 'cv'` holding the extracted text | Only the text is ever used. The user still has their file. |
+| Separate CV import table | `profile_items` row with `kind = 'cv'` holding the extracted text | Only the text is ever used. A PDF up to 5 MB is kept in `cv_files` only so the user can view it (decision 69). |
 | Fact-number counter | `facts.no` identity column, key `FACT-<no>` | Identity numbers are never reused, so a deleted `FACT-12` can never be confused with a new one. |
 | Encrypted API key and its secret | The key lives in a 0600 file in the app's data volume, never in Postgres | A database dump can never leak the key, and there is no secret to manage. See open question 3. |
 | Duplicate-suggestion table | Likely duplicates computed on read for the job in the reading pane | The hint is one quiet line. Nothing else reads it. |
@@ -623,7 +623,7 @@ Pasted and linked jobs can be edited later (title, company, description); the de
 
 ### 3.3 CV to facts to confirm, with re-import
 
-1. **Input.** Upload PDF or DOCX (`adapters/extract.ts`: `unpdf` for PDF, `mammoth` for DOCX) or paste text. The text goes into the single `profile_items` row with `kind = 'cv'`. The file is not kept. A PDF that yields under 200 characters returns "This PDF has no text layer. Paste the text instead."
+1. **Input.** Upload PDF or DOCX (`adapters/extract.ts`: `unpdf` for PDF, `mammoth` for DOCX) or paste text. The text goes into the single `profile_items` row with `kind = 'cv'`. A PDF of 5 MB or less is also kept in `cv_files`, one per user, so Profile → CV → View can show it beside the text (decision 69). A DOCX, a larger PDF, or pasted text that differs from the stored text deletes the kept file; saving the same text keeps it. Nothing but `GET /api/profile/cv/file` reads the file. A PDF that yields under 200 characters returns "This PDF has no text layer. Paste the text instead."
 2. **Split** (`startTask({ kind: 'split', input: { itemId } })`). With an AI key, the light tier returns `{ facts: [{ text }] }`, each fact one claim in the user's words. Without a key, `domain/split.ts` splits on bullets and sentences. Either way, every candidate goes through the same `checkDraft` token check used for drafting (section 3.4), with the item's text as the only allowed evidence. A candidate containing a number, year, proper noun, skill or URL that is not in the source text is dropped.
 3. **Diff** with `diffFacts({ existing, candidates })` in `domain/facts-diff.ts`. Texts are compared after `normalize` (case, whitespace, punctuation).
    - Unchanged (an existing fact matches a candidate): keep the row, its id, key, status and citations. Set `seen_rev = rev`.

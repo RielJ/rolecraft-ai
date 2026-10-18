@@ -23,6 +23,7 @@ import {
   GithubReadSummary,
   type ItemGithubDto,
   type ItemId,
+  MAX_STORED_CV_BYTES,
   type ProfileDto,
   type ProfileItemDto,
   type SetSkillInput,
@@ -39,7 +40,7 @@ import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
 import type { Db, Tx } from "../db/client";
 import { MERGE_SYNC_LOCK } from "../db/locks";
-import { facts, profileItems, userSkills, users } from "../db/schema";
+import { cvFiles, facts, profileItems, userSkills, users } from "../db/schema";
 import { type AiConfig, checkCap, estimateUsd, loadAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { latestTask, startTask, type TaskContext } from "./tasks";
@@ -119,8 +120,32 @@ async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
   };
 }
 
+/** The stored CV file's name, size and upload time. Never its bytes. */
+async function loadCvFile(deps: Pick<Deps, "db" | "userId">): Promise<ProfileDto["cvFile"]> {
+  const [row] = await deps.db
+    .select({ fileName: cvFiles.fileName, size: cvFiles.size, uploadedAt: cvFiles.createdAt })
+    .from(cvFiles)
+    .where(eq(cvFiles.userId, deps.userId));
+  return row ? { ...row, uploadedAt: row.uploadedAt.toISOString() } : null;
+}
+
+/** The stored CV file with its bytes, for `GET /api/profile/cv/file` only (decision 69). */
+export async function readCvFile(deps: Pick<Deps, "db" | "userId">): Promise<{ fileName: string; data: Uint8Array }> {
+  const [row] = await deps.db
+    .select({ fileName: cvFiles.fileName, data: cvFiles.data })
+    .from(cvFiles)
+    .where(eq(cvFiles.userId, deps.userId));
+  if (!row) {
+    throw new AppError({
+      code: "not_found",
+      message: "No copy of your CV's PDF is kept. Upload the PDF again to see it here.",
+    });
+  }
+  return row;
+}
+
 export async function getProfile(deps: Deps): Promise<ProfileDto> {
-  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig, skillRows] = await Promise.all([
+  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig, skillRows, cvFile] = await Promise.all([
     loadContact(deps),
     deps.db
       .select()
@@ -150,6 +175,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
       .orderBy(asc(facts.no)),
     loadAiConfig(deps),
     loadUserSkillRows(deps),
+    loadCvFile(deps),
   ]);
   const dtos = await Promise.all(items.map((row) => toItemDto(deps, row)));
   const skillsFound = skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) });
@@ -168,6 +194,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     skillsFound,
     skillChips: profileSkills({ factSkills: skillsFound, rows: skillRows }).chips,
     skillCatalog: SKILLS.map((s) => s.name),
+    cvFile,
     aiReady: aiConfig !== null,
   };
 }
@@ -499,6 +526,13 @@ async function fillContactFromCv(deps: Pick<Deps, "db" | "userId">, text: string
 }
 
 /**
+ * What a CV save does to the stored file (decision 69). `store` keeps a PDF of at most 5 MB,
+ * replacing any stored one; `drop` deletes it (a DOCX, or a PDF over 5 MB). A paste passes neither:
+ * the file stays when the text is the same as before, and goes when the text changed.
+ */
+type CvFileChange = { kind: "store"; bytes: Uint8Array } | { kind: "drop" };
+
+/**
  * Save CV text into the single `cv` item and start its split. Every save is a new version
  * (`rev + 1`), which is what makes a re-import diff against the facts of the last one.
  */
@@ -507,8 +541,14 @@ export async function saveCv(
   {
     text,
     fileName = null,
+    file,
     confirmOverCap = false,
-  }: { text: string; fileName?: string | null; confirmOverCap?: boolean | undefined },
+  }: {
+    text: string;
+    fileName?: string | null;
+    file?: CvFileChange | undefined;
+    confirmOverCap?: boolean | undefined;
+  },
 ): Promise<ProfileDto> {
   const [cv] = await deps.db
     .select({ id: profileItems.id })
@@ -523,9 +563,26 @@ export async function saveCv(
       .from(profileItems)
       .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")))
       .for("update");
+    // Saving the same text again (to split it again) keeps the file it came from, and its name.
+    const sameText = existing?.body === text;
+    const change: CvFileChange | null = file ?? (sameText ? null : { kind: "drop" });
+    if (change?.kind === "store") {
+      const row = {
+        fileName: fileName ?? "cv.pdf",
+        contentType: "application/pdf" as const,
+        size: change.bytes.byteLength,
+        data: change.bytes,
+        createdAt: now,
+      };
+      await tx
+        .insert(cvFiles)
+        .values({ userId: deps.userId, ...row })
+        .onConflictDoUpdate({ target: cvFiles.userId, set: row });
+    } else if (change !== null) {
+      await tx.delete(cvFiles).where(eq(cvFiles.userId, deps.userId));
+    }
     if (existing) {
-      // Saving the same text again (to split it again) keeps the name of the file it came from.
-      const name = fileName ?? (existing.body === text ? existing.fileName : null);
+      const name = fileName ?? (sameText ? existing.fileName : null);
       await tx
         .update(profileItems)
         .set({ body: text, fileName: name, rev: existing.rev + 1, updatedAt: now })
@@ -544,7 +601,10 @@ export async function saveCv(
   return getProfile(deps);
 }
 
-/** Read an uploaded PDF or DOCX, then save its text like a paste. The file itself is not kept. */
+/**
+ * Read an uploaded PDF or DOCX, then save its text like a paste. A PDF of at most 5 MB is kept so
+ * it can be viewed beside its text; any other upload deletes the kept file (decision 69).
+ */
 export async function uploadCv(
   deps: Deps,
   { fileName, bytes, confirmOverCap = false }: { fileName: string; bytes: Uint8Array; confirmOverCap?: boolean },
@@ -557,7 +617,9 @@ export async function uploadCv(
       details: { reason: result.reason },
     });
   }
-  return saveCv(deps, { text: result.text, fileName, confirmOverCap });
+  const keep = result.format === "pdf" && bytes.byteLength <= MAX_STORED_CV_BYTES;
+  const file: CvFileChange = keep ? { kind: "store", bytes } : { kind: "drop" };
+  return saveCv(deps, { text: result.text, fileName, file, confirmOverCap });
 }
 
 // ---------- Add-ons (decisions 2 to 4) ----------

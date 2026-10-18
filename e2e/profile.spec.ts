@@ -41,7 +41,7 @@ test("a CV dropped on the zone is read, hides the paste box, and fills empty con
   await dropFile(page, zone, { name: "cv.pdf", type: "application/pdf", bytes: pdf });
   await expect(page.getByText("Read cv.pdf. Its facts appear below. Filled your name under Contact.")).toBeVisible();
   await expect(page.getByLabel("Full name")).toHaveValue("Maria Santos");
-  await expect(zone).toContainText("Last read from cv.pdf.");
+  await expect(zone).toContainText("Last read from cv.pdf · View");
   await expect(zone).toContainText("Upload a new version of your CV");
 
   // The text came from the file, so the paste box stays out of the way until asked for.

@@ -7,6 +7,7 @@ import {
   type Contact,
   type FactDto,
   type GithubReadSummary,
+  MAX_STORED_CV_BYTES,
   type OverCapDetails,
   type ProfileDto,
   type ProfileItemDto,
@@ -36,6 +37,7 @@ import {
   userSeniorityLabel,
 } from "@/shared/labels";
 import { ApiError, errorMessage } from "../api";
+import { CvPreviewDialog } from "../components/cv-preview-dialog";
 import { FileDropZone } from "../components/file-drop-zone";
 import { type PageSection, SaveRow, SectionHeading, SectionPage } from "../components/section-page";
 import { SetupChecklist } from "../components/setup-checklist";
@@ -654,8 +656,22 @@ function readMessage(what: string, before: Contact, after: ProfileDto): string {
   return `${what} Its facts appear below.${contactNote}`;
 }
 
-function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Contact; aiReady: boolean }) {
+function CvForm({
+  cv,
+  cvFile,
+  facts,
+  contact,
+  aiReady,
+}: {
+  cv: ProfileDto["cv"];
+  cvFile: ProfileDto["cvFile"];
+  facts: FactDto[];
+  contact: Contact;
+  aiReady: boolean;
+}) {
   const id = useId();
+  const [viewing, setViewing] = useState(false);
+  const viewRef = useRef<HTMLButtonElement>(null);
   const paste = usePasteCv();
   const upload = useUploadCv();
   const overCap = useOverCap();
@@ -683,7 +699,12 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
     upload.mutate(
       { file, confirmOverCap },
       {
-        onSuccess: (profile) => toast(readMessage(`Read ${file.name}.`, contact, profile)),
+        onSuccess: (profile) => {
+          // A PDF over 5 MB is read, but its file is not kept (decision 69).
+          const notKept = profile.cvFile === null && file.size > MAX_STORED_CV_BYTES;
+          const what = notKept ? `Read ${file.name}. It is over 5 MB, so only its text is kept.` : `Read ${file.name}.`;
+          toast(readMessage(what, contact, profile));
+        },
         onError: (error) => {
           if (error instanceof ApiError && error.overCap) return overCap.onError(() => sendFile(file, true))(error);
           setUploadProblem(errorMessage(error));
@@ -707,7 +728,7 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
       <SectionHeading
         id={`${id}-h`}
         title="CV"
-        description={`Upload your CV or paste it as text. ${aiReady ? "AI splits it" : "It is split"} into short facts for you to confirm. The file itself is not kept.`}
+        description={`Upload your CV or paste it as text. ${aiReady ? "AI splits it" : "It is split"} into short facts for you to confirm. A PDF up to 5 MB is kept so you can view it.`}
       />
       <div className="grid gap-2">
         <FileDropZone
@@ -720,7 +741,22 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
           busy={upload.isPending}
           busyLabel="Reading your CV…"
           disabled={busy || splitting}
-          footer={cv?.fileName ? `Last read from ${cv.fileName}.` : undefined}
+          footer={
+            cv?.fileName ? (
+              <>
+                Last read from {cv.fileName} ·{" "}
+                <button
+                  ref={viewRef}
+                  type="button"
+                  className="rounded-xs text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  aria-label={`View ${cv.fileName}`}
+                  onClick={() => setViewing(true)}
+                >
+                  View
+                </button>
+              </>
+            ) : undefined
+          }
           onFile={(file) => sendFile(file, false)}
           onReject={setUploadProblem}
         />
@@ -765,6 +801,16 @@ function CvForm({ cv, contact, aiReady }: { cv: ProfileDto["cv"]; contact: Conta
         </div>
       )}
       {overCap.dialog}
+      {cv && (
+        <CvPreviewDialog
+          cv={cv}
+          cvFile={cvFile}
+          facts={facts}
+          open={viewing}
+          onOpenChange={setViewing}
+          returnFocus={viewRef}
+        />
+      )}
     </form>
   );
 }
@@ -1530,7 +1576,7 @@ export function ProfilePage() {
       </div>
     );
   }
-  const { contact, standardAnswers, targeting, cv, addons, facts, aiReady } = profile.data;
+  const { contact, standardAnswers, targeting, cv, cvFile, addons, facts, aiReady } = profile.data;
   const toReview = facts.filter((f) => f.status === "pending").length;
   const confirmed = facts.length - toReview;
   const answered = MUST_ANSWERS.filter((k) => standardAnswers[k]?.trim()).length;
@@ -1549,7 +1595,7 @@ export function ProfilePage() {
       label: "CV",
       hint: cv ? undefined : "Missing",
       attention: true,
-      content: <CvForm key={cv?.rev ?? 0} cv={cv} contact={contact} aiReady={aiReady} />,
+      content: <CvForm key={cv?.rev ?? 0} cv={cv} cvFile={cvFile} facts={facts} contact={contact} aiReady={aiReady} />,
     },
     {
       id: "facts",

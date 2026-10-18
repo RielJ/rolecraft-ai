@@ -14,7 +14,7 @@ import {
   UpdateProfileInput,
   UploadCvForm,
 } from "@/shared/api";
-import type { Deps } from "../../services/context";
+import { AppError, type Deps } from "../../services/context";
 import { readGithub } from "../../services/github";
 import {
   confirmAllFacts,
@@ -24,6 +24,7 @@ import {
   deleteFact,
   getProfile,
   keepFact,
+  readCvFile,
   saveCv,
   setSkill,
   updateAddon,
@@ -31,6 +32,7 @@ import {
   updateProfile,
   uploadCv,
 } from "../../services/profile";
+import { inlineDisposition } from "../disposition";
 import { validate } from "../validate";
 
 const FactParam = z.object({ id: FactId });
@@ -48,52 +50,72 @@ const uploadLimit = bodyLimit({
 });
 
 export function profileRoutes(deps: Deps) {
-  return new Hono()
-    .get("/profile", async (c) => c.json(await getProfile(deps)))
-    .put("/profile", validate("json", UpdateProfileInput), async (c) =>
-      c.json(await updateProfile(deps, c.req.valid("json"))),
-    )
-    .put("/profile/skills", validate("json", SetSkillInput), async (c) =>
-      c.json(await setSkill(deps, c.req.valid("json"))),
-    )
-    .put("/profile/cv", validate("json", PasteCvInput), async (c) => c.json(await saveCv(deps, c.req.valid("json"))))
-    .post("/profile/cv/file", uploadLimit, validate("form", UploadCvForm), async (c) => {
-      const { file, confirmOverCap } = c.req.valid("form");
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      return c.json(await uploadCv(deps, { fileName: file.name, bytes, confirmOverCap: confirmOverCap === "true" }));
-    })
-    .post("/profile/addons", validate("json", AddonInput), async (c) =>
-      c.json(await createAddon(deps, c.req.valid("json")), 201),
-    )
-    .put("/profile/addons/:id", validate("param", ItemParam), validate("json", AddonInput), async (c) =>
-      c.json(await updateAddon(deps, { itemId: c.req.valid("param").id, ...c.req.valid("json") })),
-    )
-    .post(
-      "/profile/addons/:id/github-read",
-      validate("param", ItemParam),
-      validate("json", ConfirmOverCapInput),
-      async (c) =>
-        c.json(
-          await readGithub(deps, {
-            itemId: c.req.valid("param").id,
-            confirmOverCap: c.req.valid("json").confirmOverCap,
-          }),
-        ),
-    )
-    .delete("/profile/addons/:id", validate("param", ItemParam), async (c) =>
-      c.json(await deleteAddon(deps, { itemId: c.req.valid("param").id })),
-    )
-    .post("/facts/confirm-all", async (c) => c.json(await confirmAllFacts(deps)))
-    .post("/facts/:id/confirm", validate("param", FactParam), async (c) =>
-      c.json(await confirmFact(deps, { factId: c.req.valid("param").id })),
-    )
-    .post("/facts/:id/keep", validate("param", FactParam), async (c) =>
-      c.json(await keepFact(deps, { factId: c.req.valid("param").id })),
-    )
-    .patch("/facts/:id", validate("param", FactParam), validate("json", UpdateFactInput), async (c) =>
-      c.json(await updateFact(deps, { factId: c.req.valid("param").id, ...c.req.valid("json") })),
-    )
-    .delete("/facts/:id", validate("param", FactParam), async (c) =>
-      c.json(await deleteFact(deps, { factId: c.req.valid("param").id })),
-    );
+  return (
+    new Hono()
+      .get("/profile", async (c) => c.json(await getProfile(deps)))
+      .put("/profile", validate("json", UpdateProfileInput), async (c) =>
+        c.json(await updateProfile(deps, c.req.valid("json"))),
+      )
+      .put("/profile/skills", validate("json", SetSkillInput), async (c) =>
+        c.json(await setSkill(deps, c.req.valid("json"))),
+      )
+      .put("/profile/cv", validate("json", PasteCvInput), async (c) => c.json(await saveCv(deps, c.req.valid("json"))))
+      // The kept PDF, shown in an iframe on the Profile page (decision 69). localGuard checks Origin
+      // only on writes, so this read refuses cross-site requests itself: another site may not embed
+      // or fetch the CV. The type is a constant, and nosniff stops a browser guessing another one.
+      // No `sandbox` CSP: Chrome's PDF viewer refuses to render under one.
+      .get("/profile/cv/file", async (c) => {
+        if (c.req.header("sec-fetch-site") === "cross-site") {
+          throw new AppError({ code: "forbidden_origin", message: "Another site may not read your CV." });
+        }
+        const { fileName, data } = await readCvFile(deps);
+        return c.body(data.slice().buffer, 200, {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": inlineDisposition(fileName),
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store",
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "X-Frame-Options": "SAMEORIGIN",
+        });
+      })
+      .post("/profile/cv/file", uploadLimit, validate("form", UploadCvForm), async (c) => {
+        const { file, confirmOverCap } = c.req.valid("form");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        return c.json(await uploadCv(deps, { fileName: file.name, bytes, confirmOverCap: confirmOverCap === "true" }));
+      })
+      .post("/profile/addons", validate("json", AddonInput), async (c) =>
+        c.json(await createAddon(deps, c.req.valid("json")), 201),
+      )
+      .put("/profile/addons/:id", validate("param", ItemParam), validate("json", AddonInput), async (c) =>
+        c.json(await updateAddon(deps, { itemId: c.req.valid("param").id, ...c.req.valid("json") })),
+      )
+      .post(
+        "/profile/addons/:id/github-read",
+        validate("param", ItemParam),
+        validate("json", ConfirmOverCapInput),
+        async (c) =>
+          c.json(
+            await readGithub(deps, {
+              itemId: c.req.valid("param").id,
+              confirmOverCap: c.req.valid("json").confirmOverCap,
+            }),
+          ),
+      )
+      .delete("/profile/addons/:id", validate("param", ItemParam), async (c) =>
+        c.json(await deleteAddon(deps, { itemId: c.req.valid("param").id })),
+      )
+      .post("/facts/confirm-all", async (c) => c.json(await confirmAllFacts(deps)))
+      .post("/facts/:id/confirm", validate("param", FactParam), async (c) =>
+        c.json(await confirmFact(deps, { factId: c.req.valid("param").id })),
+      )
+      .post("/facts/:id/keep", validate("param", FactParam), async (c) =>
+        c.json(await keepFact(deps, { factId: c.req.valid("param").id })),
+      )
+      .patch("/facts/:id", validate("param", FactParam), validate("json", UpdateFactInput), async (c) =>
+        c.json(await updateFact(deps, { factId: c.req.valid("param").id, ...c.req.valid("json") })),
+      )
+      .delete("/facts/:id", validate("param", FactParam), async (c) =>
+        c.json(await deleteFact(deps, { factId: c.req.valid("param").id })),
+      )
+  );
 }
