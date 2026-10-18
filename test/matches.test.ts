@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { derive, type JobFields } from "@/domain/posting";
-import { jobs } from "@/server/db/schema";
+import { jobListings, jobs, sources } from "@/server/db/schema";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import {
   ApiErrorBody,
   BoardItemDto,
+  HiddenCompanies,
   type JobId,
   MatchDetail,
   MatchList,
@@ -323,6 +325,141 @@ describe("search and filters", () => {
 
   test("bad filters are a 400 in the app's error shape", async () => {
     const body = await ok(await call("GET", "/matches?payAtLeast=-5"), ApiErrorBody, 400);
+    expect(body.error.code).toBe("invalid_input");
+  });
+});
+
+/** A source row as Sources saves it: a job site has no board, a company board has one. */
+async function addSource(kind: "remotive" | "remoteok" | "greenhouse", label: string) {
+  const [row] = await deps.db
+    .insert(sources)
+    .values({ userId: deps.userId, kind, board: kind === "greenhouse" ? label.toLowerCase() : null, label })
+    .returning({ id: sources.id });
+  if (!row) throw new Error("insert failed");
+  return row.id;
+}
+
+/** A job seen on these sources, the first one primary. */
+async function addListed(title: string, company: string, sourceIds: readonly (typeof sources.$inferSelect.id)[]) {
+  const id = await addJob({ title, company, description: WORLDWIDE });
+  const at = new Date("2026-10-01T00:00:00Z");
+  for (const [i, sourceId] of sourceIds.entries()) {
+    await deps.db.insert(jobListings).values({
+      sourceId,
+      externalId: `${title}-${i}`,
+      userId: deps.userId,
+      jobId: id,
+      listingUrl: `https://example.com/${encodeURIComponent(title)}`,
+      isPrimary: i === 0,
+      firstSeenAt: at,
+      lastSeenAt: at,
+    });
+  }
+  return id;
+}
+
+describe("company and source filters", () => {
+  test("the Company filter matches every spelling of a company and counts each choice", async () => {
+    await addJob({ title: "Engineer A", company: "Acme Inc.", description: WORLDWIDE });
+    await addJob({ title: "Engineer B", company: "Acme", description: WORLDWIDE });
+    await addJob({ title: "Engineer C", company: "Acme", description: WORLDWIDE });
+    await addJob({ title: "Designer", company: "Globex", description: WORLDWIDE });
+
+    const all = await list();
+    expect(all.facets.companies).toEqual([
+      { key: "acme", name: "Acme", count: 3, hidden: false },
+      { key: "globex", name: "Globex", count: 1, hidden: false },
+    ]);
+
+    const acme = await list("?company=acme");
+    expect(titles(acme).sort()).toEqual(["Engineer A", "Engineer B", "Engineer C"]);
+    expect(acme.counts.picked).toBe(1);
+    // The company counts ignore the company pick, so the other choices keep their numbers.
+    expect(acme.facets.companies.map((c) => c.count)).toEqual([3, 1]);
+
+    const both = await list("?company=Acme%20Inc.&company=globex");
+    expect(both.jobs).toHaveLength(4);
+  });
+
+  test("the Source filter splits company boards, job sites and jobs you added", async () => {
+    const remotive = await addSource("remotive", "Remotive");
+    const remoteok = await addSource("remoteok", "RemoteOK");
+    const board = await addSource("greenhouse", "Acme");
+    await addListed("Site job", "Globex", [remotive]);
+    await addListed("Two sites", "Initech", [remoteok, remotive]);
+    await addListed("Board job", "Acme", [board]);
+    await addListed("Board and site", "Acme", [board, remoteok]);
+    await addJob({ title: "Pasted job", company: "Hooli", description: WORLDWIDE });
+    await deps.db.update(jobs).set({ origin: "paste" }).where(eq(jobs.title, "Pasted job"));
+
+    const all = await list();
+    expect(all.facets.sources.groups).toEqual({ boards: 2, sites: 3, added: 1 });
+    expect(all.facets.sources.sites).toEqual([
+      { id: remoteok, label: "RemoteOK", count: 2 },
+      { id: remotive, label: "Remotive", count: 2 },
+    ]);
+
+    expect(titles(await list("?source=boards")).sort()).toEqual(["Board and site", "Board job"]);
+    expect(titles(await list("?source=sites")).sort()).toEqual(["Board and site", "Site job", "Two sites"]);
+    expect(titles(await list("?source=added"))).toEqual(["Pasted job"]);
+    expect(titles(await list(`?source=${remotive}`)).sort()).toEqual(["Site job", "Two sites"]);
+
+    // Picking a company narrows the source counts, and the other way round.
+    const acme = await list("?company=acme");
+    expect(acme.facets.sources.groups).toEqual({ boards: 2, sites: 1, added: 0 });
+    const sites = await list("?source=sites");
+    expect(sites.facets.companies.map((c) => [c.name, c.count])).toEqual([
+      ["Acme", 1],
+      ["Globex", 1],
+      ["Initech", 1],
+    ]);
+  });
+
+  test("under a picked company, the excluded count is that company's", async () => {
+    await addJob({ title: "Acme open", company: "Acme", description: WORLDWIDE });
+    await addJob({ title: "Acme US only", company: "Acme", description: "Remote, US only." });
+    await addJob({ title: "Globex US only", company: "Globex", description: "Remote, US only." });
+    await addJob({ title: "Initech US only", company: "Initech", description: "Remote, US only." });
+
+    expect((await list()).counts).toMatchObject({ excluded: 3, excludedOpen: 3, picked: 0 });
+    const acme = await list("?company=acme");
+    expect(titles(acme)).toEqual(["Acme open"]);
+    expect(acme.counts).toMatchObject({ excluded: 1, excludedOpen: 1, picked: 2 });
+  });
+
+  test("a bad source is a 400", async () => {
+    const body = await ok(await call("GET", "/matches?source=linkedin"), ApiErrorBody, 400);
+    expect(body.error.code).toBe("invalid_input");
+  });
+});
+
+describe("hidden companies", () => {
+  test("hiding a company hides every spelling of it until it is shown again", async () => {
+    await addJob({ title: "Engineer A", company: "Acme Inc.", description: WORLDWIDE });
+    await addJob({ title: "Engineer B", company: "Acme", description: WORLDWIDE });
+    await addJob({ title: "Designer", company: "Globex", description: WORLDWIDE });
+
+    const hidden = await ok(await call("POST", "/hidden-companies", { company: "Acme Inc." }), HiddenCompanies);
+    expect(hidden).toEqual([{ key: "acme", name: "Acme Inc." }]);
+
+    const after = await list();
+    expect(titles(after)).toEqual(["Designer"]);
+    expect(after.counts.hiddenCompany).toBe(2);
+    expect(after.hiddenCompanies).toEqual([{ key: "acme", name: "Acme Inc." }]);
+    // Still offered in the Company filter, marked hidden, and picking it shows its jobs.
+    expect(after.facets.companies.find((c) => c.key === "acme")).toMatchObject({ count: 2, hidden: true });
+    expect(titles(await list("?company=acme")).sort()).toEqual(["Engineer A", "Engineer B"]);
+
+    // Hiding twice keeps one row.
+    await ok(await call("POST", "/hidden-companies", { company: "ACME" }), HiddenCompanies);
+    expect((await list()).hiddenCompanies).toHaveLength(1);
+
+    expect(await ok(await call("DELETE", "/hidden-companies", { company: "acme" }), HiddenCompanies)).toEqual([]);
+    expect((await list()).jobs).toHaveLength(3);
+  });
+
+  test("a company name with no letters or digits is refused", async () => {
+    const body = await ok(await call("POST", "/hidden-companies", { company: "!!!" }), ApiErrorBody, 400);
     expect(body.error.code).toBe("invalid_input");
   });
 });

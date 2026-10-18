@@ -916,6 +916,11 @@ export type RefreshDto = z.infer<typeof RefreshDto>;
 
 const StringBool = z.enum(["true", "false"]).transform((v) => v === "true");
 
+/** The Source filter's groups: company boards (ATS), job sites (built-ins), and jobs you added. */
+export const MATCH_SOURCE_GROUPS = ["boards", "sites", "added"] as const;
+export const MatchSourceGroup = z.enum(MATCH_SOURCE_GROUPS);
+export type MatchSourceGroup = z.infer<typeof MatchSourceGroup>;
+
 /** `GET /api/matches` filters. Query strings, so booleans arrive as "true" or "false". */
 export const MatchQuery = z.object({
   /** Postgres full-text search over title, company and description. */
@@ -929,6 +934,19 @@ export const MatchQuery = z.object({
    * the minimum pay saved on Profile; 0 turns the filter off.
    */
   payAtLeast: z.coerce.number().min(0).max(1e9).optional(),
+  /**
+   * Show only these companies, matched by `companyKey` so "Acme" and "Acme Inc." are one. A
+   * repeated query parameter, so one value arrives as a string. A picked hidden company shows.
+   */
+  company: z
+    .union([z.string().trim().min(1).max(200), z.array(z.string().trim().min(1).max(200)).max(50)])
+    .transform((v) => (typeof v === "string" ? [v] : v))
+    .optional(),
+  /**
+   * Where the job came from: any company board, any job site, added by you (pasted or a link), or
+   * one job site's source id.
+   */
+  source: z.union([MatchSourceGroup, SourceId]).optional(),
 });
 export type MatchQuery = z.infer<typeof MatchQuery>;
 /** The query string as the SPA sends it. */
@@ -948,6 +966,8 @@ export const MatchItem = z.object({
   id: JobId,
   title: z.string(),
   company: z.string(),
+  /** The company as the Company filter and hidden companies match it: "Acme Inc." is `acme`. */
+  companyKey: z.string(),
   locationText: z.string(),
   firstSeenAt: z.string(),
   applyUrl: z.string().nullable(),
@@ -981,7 +1001,29 @@ export const MatchList = z.object({
     belowPay: z.number().int(),
     /** Not matching the search. */
     search: z.number().int(),
+    /** Hidden because their company is hidden and not picked in the Company filter. */
+    hiddenCompany: z.number().int(),
+    /**
+     * Outside the Company or Source filter. Every other count here, `excludedOpen` included,
+     * counts only jobs inside those filters.
+     */
+    picked: z.number().int(),
   }),
+  /**
+   * Choices for the Company and Source filters, with how many jobs each would show. Each one is
+   * counted with every other filter applied, so a count is what picking it leaves on screen.
+   */
+  facets: z.object({
+    /** Most jobs first. `name` is the most common spelling; `key` is what the filter sends. */
+    companies: z.array(z.object({ key: z.string(), name: z.string(), count: z.number().int(), hidden: z.boolean() })),
+    sources: z.object({
+      groups: z.record(MatchSourceGroup, z.number().int()),
+      /** Each job site with at least one job here, most jobs first. */
+      sites: z.array(z.object({ id: SourceId, label: z.string(), count: z.number().int() })),
+    }),
+  }),
+  /** Companies the user hid, A to Z. */
+  hiddenCompanies: z.array(z.object({ key: z.string(), name: z.string() })),
   viewCurrency: z.string(),
   /** The pay filter in force: monthly, in the view currency. */
   payFilter: z.object({
@@ -994,6 +1036,12 @@ export const MatchList = z.object({
   }),
 });
 export type MatchList = z.infer<typeof MatchList>;
+
+/** `POST` and `DELETE /api/hidden-companies`: hide or show one company's jobs in Matches. */
+export const CompanyInput = z.object({ company: z.string().trim().min(1).max(200) });
+export type CompanyInput = z.infer<typeof CompanyInput>;
+/** Their answer: every hidden company, A to Z. */
+export const HiddenCompanies = MatchList.shape.hiddenCompanies;
 
 /** `GET /api/matches/:id`: the reading pane. */
 export const MatchDetail = z.object({

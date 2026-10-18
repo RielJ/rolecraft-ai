@@ -11,7 +11,11 @@ const SHORTCUTS: readonly { keys: readonly (readonly string[])[]; action: string
   { keys: [["Enter"], ["o"]], action: "Start application: save to the board and open the workspace" },
   { keys: [["s"]], action: "Save for later and move to the next job" },
   { keys: [["Shift", "s"]], action: "Save, write the files in the background, and move on" },
-  { keys: [["d"]], action: "Dismiss: 1 wrong stack, 2 too senior, 3 pay, 4 location, 5 other, Enter without a reason" },
+  {
+    keys: [["d"]],
+    action:
+      "Dismiss: 1 wrong stack, 2 too senior, 3 pay, 4 location, 5 other, Enter without a reason, h hide all from the company",
+  },
   { keys: [["z"]], action: "Undo the last save or dismiss" },
   { keys: [["v"]], action: "Open the posting in a new tab" },
   { keys: [["/"]], action: "Focus search; Esc returns to the list" },

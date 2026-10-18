@@ -1,13 +1,32 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { companyKey } from "@/domain/dedup";
 import { skillsInFacts } from "@/domain/features";
 import { levelRank, type MatchJob, type MatchProfile, matcher, payBelow } from "@/domain/match";
 import { convert, type FxRates, monthlyInView, payFromColumns, toMonthly } from "@/domain/pay";
 import { DESCRIPTION_HEAD_CHARS, roleFit } from "@/domain/roles";
-import type { JobId, MatchDetail, MatchItem, MatchList, MatchQuery, Money } from "@/shared/api";
-import type { RoleFamily } from "@/shared/enums";
+import {
+  type JobId,
+  type MatchDetail,
+  type MatchItem,
+  type MatchList,
+  type MatchQuery,
+  MatchSourceGroup,
+  type Money,
+  type SourceId,
+} from "@/shared/api";
+import { isAtsKind, type JobOrigin, type RoleFamily, type SourceKind } from "@/shared/enums";
 import { SOURCE_SITES } from "@/shared/labels";
-import { eligibilityOverrides, facts, jobListings, jobs, opportunities, sources, users } from "../db/schema";
-import { type Deps, notFound } from "./context";
+import {
+  eligibilityOverrides,
+  facts,
+  hiddenCompanies,
+  jobListings,
+  jobs,
+  opportunities,
+  sources,
+  users,
+} from "../db/schema";
+import { AppError, type Deps, notFound } from "./context";
 import { jobFacts } from "./jobs";
 
 /**
@@ -84,6 +103,99 @@ function roleUnclear(
     excludeWords: t.excludeWords,
   });
   return fit.fit === "keep" ? null : { reason: fit.reason };
+}
+
+type Listing = { sourceId: SourceId; kind: SourceKind; label: string; listingUrl: string };
+
+/** Every listing of the user's open jobs, primary first, so each job's source is known before the list is cut. */
+async function listingsByJob(deps: Pick<Deps, "db" | "userId">) {
+  const rows = await deps.db
+    .select({
+      jobId: jobListings.jobId,
+      sourceId: sources.id,
+      kind: sources.kind,
+      label: sources.label,
+      listingUrl: jobListings.listingUrl,
+    })
+    .from(jobListings)
+    .innerJoin(sources, eq(sources.id, jobListings.sourceId))
+    .innerJoin(jobs, eq(jobs.id, jobListings.jobId))
+    .where(and(eq(jobListings.userId, deps.userId), isNull(jobs.closedAt)))
+    .orderBy(desc(jobListings.isPrimary), asc(sources.label));
+  const byJob = new Map<JobId, Listing[]>();
+  for (const { jobId, ...listing } of rows) {
+    const list = byJob.get(jobId) ?? [];
+    list.push(listing);
+    byJob.set(jobId, list);
+  }
+  return byJob;
+}
+
+const seenOnOf = (listings: readonly Listing[]): MatchItem["seenOn"] =>
+  listings.map(({ kind, label, listingUrl }) => {
+    const site = SOURCE_SITES[kind];
+    return { label, listingUrl, via: site.attribution ? site.name : null };
+  });
+
+/** The Source filter's groups a job belongs to: a job seen on a board and a site is in both. */
+function sourceGroupsOf(origin: JobOrigin, listings: readonly Listing[]): Set<MatchSourceGroup> {
+  const groups = new Set<MatchSourceGroup>();
+  if (origin !== "source") groups.add("added");
+  for (const l of listings) groups.add(isAtsKind(l.kind) ? "boards" : "sites");
+  return groups;
+}
+
+function inSource(source: MatchQuery["source"], groups: ReadonlySet<MatchSourceGroup>, listings: readonly Listing[]) {
+  if (source === undefined) return true;
+  const group = MatchSourceGroup.safeParse(source);
+  if (group.success) return groups.has(group.data);
+  return listings.some((l) => l.sourceId === source);
+}
+
+/** Tallies for the Company and Source filters' choices. */
+class Facets {
+  private readonly companies = new Map<string, { count: number; spellings: Map<string, number> }>();
+  private readonly groups: Record<MatchSourceGroup, number> = { boards: 0, sites: 0, added: 0 };
+  private readonly sites = new Map<SourceId, { label: string; count: number }>();
+
+  constructor(private readonly hiddenKeys: ReadonlySet<string>) {}
+
+  addCompany(key: string, name: string) {
+    const entry = this.companies.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+    entry.count++;
+    entry.spellings.set(name, (entry.spellings.get(name) ?? 0) + 1);
+    this.companies.set(key, entry);
+  }
+
+  addSources(groups: ReadonlySet<MatchSourceGroup>, listings: readonly Listing[]) {
+    for (const g of groups) this.groups[g]++;
+    const seen = new Set<SourceId>();
+    for (const l of listings) {
+      if (isAtsKind(l.kind) || seen.has(l.sourceId)) continue;
+      seen.add(l.sourceId);
+      const site = this.sites.get(l.sourceId) ?? { label: l.label, count: 0 };
+      site.count++;
+      this.sites.set(l.sourceId, site);
+    }
+  }
+
+  result(): MatchList["facets"] {
+    const companies = [...this.companies].map(([key, { count, spellings }]) => ({
+      key,
+      // The most common spelling, then the first A to Z, so the name is stable between reads.
+      name: [...spellings].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? key,
+      count,
+      hidden: this.hiddenKeys.has(key),
+    }));
+    const sites = [...this.sites].map(([id, { label, count }]) => ({ id, label, count }));
+    return {
+      companies: companies.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+      sources: {
+        groups: { ...this.groups },
+        sites: sites.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+      },
+    };
+  }
 }
 
 async function seenOn(deps: Pick<Deps, "db">, ids: readonly JobId[]) {
@@ -174,7 +286,8 @@ function payFilterOf(t: Targeting, payAtLeast: number | undefined): MatchList["p
 export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: MatchQuery = {}): Promise<MatchList> {
   const q = query.q?.trim() ?? "";
   const tsQuery = sql`websearch_to_tsquery('english', ${q})`;
-  const [t, rows] = await Promise.all([
+  const picked = new Set((query.company ?? []).map(companyKey));
+  const [t, rows, listings, hidden] = await Promise.all([
     loadTargeting(deps),
     deps.db
       .select({
@@ -187,26 +300,50 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       .leftJoin(opportunities, eq(opportunities.jobId, jobs.id))
       .leftJoin(eligibilityOverrides, eq(eligibilityOverrides.jobId, jobs.id))
       .where(and(eq(jobs.userId, deps.userId), isNull(jobs.closedAt), isNull(opportunities.id))),
+    listingsByJob(deps),
+    listHiddenCompanies(deps),
   ]);
 
   const score = matcher(t.profile);
   const payFilter = payFilterOf(t, query.payAtLeast);
-  const counts = { open: rows.length, excluded: 0, excludedOpen: 0, unsure: 0, belowPay: 0, search: 0 };
+  const hiddenKeys = new Set(hidden.map((h) => h.key));
+  const facets = new Facets(hiddenKeys);
+  const counts = {
+    open: rows.length,
+    excluded: 0,
+    excludedOpen: 0,
+    unsure: 0,
+    belowPay: 0,
+    search: 0,
+    hiddenCompany: 0,
+    picked: 0,
+  };
   const shown: (MatchItem & { rank: number; coverage: number; skillsMatched: number; seenAt: number })[] = [];
   for (const row of rows) {
+    // The Company and Source filters: the summary counts only jobs inside them, so "12 excluded"
+    // under a picked company means 12 of that company's jobs.
+    const key = companyKey(row.company);
+    const jobListings = listings.get(row.id) ?? [];
+    const groups = sourceGroupsOf(row.origin, jobListings);
+    const companyOk = picked.size === 0 || picked.has(key);
+    const sourceOk = inSource(query.source, groups, jobListings);
+    const inPick = companyOk && sourceOk;
+    const hiddenOut = hiddenKeys.has(key) && !picked.has(key);
+    if (!inPick) counts.picked++;
+
     const excluded = row.eligibility === "excluded" && !row.overridden;
-    if (excluded) counts.excludedOpen++;
+    if (excluded && inPick) counts.excludedOpen++;
     if (!row.hit) {
-      counts.search++;
+      if (inPick) counts.search++;
       continue;
     }
     if (excluded && query.excluded !== true) {
-      counts.excluded++;
+      if (inPick) counts.excluded++;
       continue;
     }
     const unclear = roleUnclear(t, row);
     if (unclear && query.unsure === false) {
-      counts.unsure++;
+      if (inPick) counts.unsure++;
       continue;
     }
     const pay = payFromColumns(row);
@@ -214,11 +351,20 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       payFilter.atLeast !== null &&
       payBelow({ pay, atLeast: payFilter.atLeast, viewCurrency: t.viewCurrency, rates: t.rates })
     ) {
-      counts.belowPay++;
+      if (inPick) counts.belowPay++;
+      continue;
+    }
+    // Each filter's choices are counted with the other filter on, so a count is what picking it shows.
+    if (sourceOk) facets.addCompany(key, row.company);
+    if (companyOk && !hiddenOut) facets.addSources(groups, jobListings);
+    if (!inPick) continue;
+    if (hiddenOut) {
+      counts.hiddenCompany++;
       continue;
     }
     const match = score(matchJobOf(row, unclear, row.overridden));
     shown.push({
+      companyKey: key,
       id: row.id,
       title: row.title,
       company: row.company,
@@ -252,19 +398,46 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
       a.title.localeCompare(b.title),
   );
   const page = shown.slice(0, MAX_MATCHES);
-  const listings = await seenOn(
-    deps,
-    page.map((j) => j.id),
-  );
   return {
     jobs: page.map(({ rank: _rank, coverage: _coverage, skillsMatched: _skillsMatched, seenAt: _seenAt, ...item }) => ({
       ...item,
-      seenOn: listings.get(item.id) ?? [],
+      seenOn: seenOnOf(listings.get(item.id) ?? []),
     })),
     counts,
+    facets: facets.result(),
+    hiddenCompanies: hidden,
     viewCurrency: t.viewCurrency,
     payFilter,
   };
+}
+
+// ---------- Hidden companies ----------
+
+async function listHiddenCompanies(deps: Pick<Deps, "db" | "userId">): Promise<MatchList["hiddenCompanies"]> {
+  const rows = await deps.db
+    .select({ key: hiddenCompanies.companyKey, name: hiddenCompanies.name })
+    .from(hiddenCompanies)
+    .where(eq(hiddenCompanies.userId, deps.userId));
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Hide every job from this company in Matches. Hiding it again keeps the first spelling. */
+export async function hideCompany(deps: Pick<Deps, "db" | "userId">, company: string) {
+  const key = companyKey(company);
+  if (key === "") throw new AppError({ code: "invalid_input", message: "That company name has no letters or digits." });
+  await deps.db
+    .insert(hiddenCompanies)
+    .values({ userId: deps.userId, companyKey: key, name: company.trim() })
+    .onConflictDoNothing();
+  return listHiddenCompanies(deps);
+}
+
+/** Show the company's jobs in Matches again. Showing one that is not hidden does nothing. */
+export async function showCompany(deps: Pick<Deps, "db" | "userId">, company: string) {
+  await deps.db
+    .delete(hiddenCompanies)
+    .where(and(eq(hiddenCompanies.userId, deps.userId), eq(hiddenCompanies.companyKey, companyKey(company))));
+  return listHiddenCompanies(deps);
 }
 
 /** The reading pane for one job: its facts, match level and every reason. */

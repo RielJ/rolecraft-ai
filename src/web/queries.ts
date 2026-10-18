@@ -11,6 +11,7 @@ import {
   type DraftInput,
   type FactId,
   FilteredList,
+  HiddenCompanies,
   type ItemId,
   type JobId,
   type MarkReviewedInput,
@@ -514,11 +515,30 @@ export function useMatches(query: MatchQueryInput) {
   });
 }
 
-/** Query strings carry only what is set. */
-function matchQueryString(query: MatchQueryInput): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(query).flatMap(([k, v]) => (v === undefined || v === "" ? [] : [[k, String(v)]])),
-  );
+/** Query strings carry only what is set. A list repeats its key: `company=a&company=b`. */
+function matchQueryString(query: MatchQueryInput): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [k, v] of Object.entries(query)) {
+    if (Array.isArray(v)) {
+      if (v.length > 0) out[k] = v.map(String);
+    } else if (v !== undefined && v !== "") out[k] = String(v);
+  }
+  return out;
+}
+
+/** Hide or show every job from one company in Matches. The list reloads either way. */
+export function useHideCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ company, hidden }: { company: string; hidden: boolean }) =>
+      unwrap(
+        hidden
+          ? client.api["hidden-companies"].$post({ json: { company } })
+          : client.api["hidden-companies"].$delete({ json: { company } }),
+        HiddenCompanies,
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.matches }),
+  });
 }
 
 const matchDetailQuery = (id: JobId) => ({

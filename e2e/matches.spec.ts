@@ -166,6 +166,53 @@ test("overlays a key opens never animate; a click eases them in; reduced motion 
   expect(await motion()).toMatchObject({ scale: "1", opacity: "0" });
 });
 
+test("the Company filter narrows the list; d h hides a company, Undo and Show bring it back", async ({ page }) => {
+  await withSql(async (sql) => {
+    // Charlie and Delta move to Globex, so the list has two companies.
+    await sql`UPDATE jobs SET company = 'Globex Inc.', company_key = 'globex' WHERE title IN ('Charlie Engineer', 'Delta Engineer')`;
+  });
+  await page.goto("/");
+  await expect(list(page).getByRole("option")).toHaveCount(5);
+
+  await page.getByRole("button", { name: "Company" }).click();
+  const companies = page.getByRole("list", { name: "Companies" });
+  await expect(companies.getByRole("listitem")).toHaveText(["Acme3", "Globex Inc.2"]);
+  await page.getByRole("searchbox", { name: "Find a company" }).fill("glo");
+  await companies.getByRole("checkbox").click();
+  await page.keyboard.press("Escape");
+  await expect(list(page).getByRole("option")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Globex Inc." })).toBeVisible();
+  await page.getByRole("button", { name: "Globex Inc." }).click();
+  await page.getByRole("button", { name: "Clear company" }).click();
+  await page.keyboard.press("Escape");
+  await expect(list(page).getByRole("option")).toHaveCount(5);
+
+  // Hide Acme from the dismiss menu: its three jobs leave at once, and the toast can undo it.
+  await list(page).focus();
+  await page.keyboard.press("d");
+  await page.keyboard.press("h");
+  await expect(page.getByText("Hid 3 jobs from Acme")).toBeVisible();
+  await expect(list(page).getByRole("option")).toHaveCount(2);
+  await expect(page.getByText("3 from hidden companies")).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(list(page).getByRole("option")).toHaveCount(5);
+
+  // Hiding moved the selection to the next company's job, so this time Globex goes. Hidden
+  // survives a reload, and Show in the Company filter brings it back.
+  await expect(selected(page)).toContainText("Charlie Engineer");
+  await list(page).focus();
+  await page.keyboard.press("d");
+  await page.keyboard.press("h");
+  await expect(list(page).getByRole("option")).toHaveCount(3);
+  await page.reload();
+  await expect(list(page).getByRole("option")).toHaveCount(3);
+  await page.getByText("2 from hidden companies").click();
+  const hidden = page.getByRole("region", { name: "Hidden companies" });
+  await hidden.getByRole("button", { name: "Show" }).click();
+  await expect(list(page).getByRole("option")).toHaveCount(5);
+  await expect(hidden).toBeHidden();
+});
+
 test("e shows excluded jobs, ? opens the sheet, / focuses search and Esc returns", async ({ page }) => {
   await page.goto("/");
   await expect(list(page).getByRole("option")).toHaveCount(5);

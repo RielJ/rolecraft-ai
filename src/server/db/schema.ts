@@ -373,6 +373,21 @@ export const eligibilityOverrides = pgTable("eligibility_overrides", {
   createdAt: createdAt(),
 });
 
+/**
+ * Companies whose jobs Matches hides until the user shows them again. Keyed by `companyKey`, so
+ * "Acme" and "Acme Inc." are one company; `name` is the spelling the user hid it under.
+ */
+export const hiddenCompanies = pgTable(
+  "hidden_companies",
+  {
+    userId: userRef(),
+    companyKey: text().notNull(),
+    name: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.companyKey] })],
+);
+
 export const opportunities = pgTable(
   "opportunities",
   {

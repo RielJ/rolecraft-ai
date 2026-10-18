@@ -7,6 +7,7 @@ import { DISMISS_REASONS, type DismissReason } from "@/shared/enums";
 import { dismissReasonLabel, matchLevelLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { JobList, JobListSkeleton, optionId } from "../components/job-list";
+import { CompanyFilter, SourceFilter, type SourcePick } from "../components/match-filters";
 import { type PaneActions, ReadingPane } from "../components/reading-pane";
 import { SetupChecklist } from "../components/setup-checklist";
 import { ShortcutSheet } from "../components/shortcut-sheet";
@@ -17,6 +18,7 @@ import { useSettled } from "../lib/use-settled";
 import { cn } from "../lib/utils";
 import {
   useDismissJob,
+  useHideCompany,
   useMatchDetail,
   useMatches,
   useMergeJob,
@@ -111,12 +113,17 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 /** The reason popover for `d`, anchored at the selected row (section 4). */
 function DismissPopover({
   open,
+  company,
   onChoose,
+  onHideCompany,
   onCancel,
   restoreFocus,
 }: {
   open: boolean;
+  /** The shown job's company, offered as "Hide all from …". */
+  company: string | null;
   onChoose: (reason: DismissReason | null) => void;
+  onHideCompany: () => void;
   onCancel: () => void;
   restoreFocus: () => void;
 }) {
@@ -148,6 +155,9 @@ function DismissPopover({
           } else if (e.key === "Enter" && e.target === contentRef.current) {
             e.preventDefault();
             onChoose(null);
+          } else if (e.key === "h" && company) {
+            e.preventDefault();
+            onHideCompany();
           }
         }}
       >
@@ -175,6 +185,21 @@ function DismissPopover({
           Without a reason
           <Kbd>Enter</Kbd>
         </Button>
+        {company && (
+          <>
+            <hr className="-mx-1 my-1 border-border" />
+            <Button
+              static
+              variant="ghost"
+              size="sm"
+              className="w-full justify-between gap-3 rounded-sm font-normal"
+              onClick={onHideCompany}
+            >
+              <span className="truncate">Hide all from {company}</span>
+              <Kbd>H</Kbd>
+            </Button>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -221,6 +246,10 @@ export function MatchesPage() {
   const [payText, setPayText] = useState<string | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
   const [showUnsure, setShowUnsure] = useState(true);
+  // Picked companies by key, with the name shown on the button.
+  const [companies, setCompanies] = useState<ReadonlyMap<string, string>>(new Map());
+  const [source, setSource] = useState<SourcePick>(null);
+  const [companyOpen, setCompanyOpen] = useState(false);
   const q = useSettled(search.trim(), 250);
   // Blank turns the filter off (0); untouched leaves it to the saved minimum (undefined).
   const payAtLeast = useSettled(payText === null ? undefined : Number(payText) || 0, 400);
@@ -229,6 +258,8 @@ export function MatchesPage() {
     excluded: showExcluded ? "true" : undefined,
     unsure: showUnsure ? undefined : "false",
     payAtLeast,
+    company: companies.size > 0 ? [...companies.keys()] : undefined,
+    source: source ?? undefined,
   };
   const matches = useMatches(query);
 
@@ -296,6 +327,7 @@ export function MatchesPage() {
   const dismiss = useDismissJob();
   const undo = useUndoJob();
   const merge = useMergeJob();
+  const hideCompany = useHideCompany();
   const [mergingInto, setMergingInto] = useState<JobId | null>(null);
 
   // Focus the list once there is something in it, so the keys work at once.
@@ -466,6 +498,61 @@ export function MatchesPage() {
     );
   }
 
+  /**
+   * Hide every job from the shown job's company: they all leave the list now, and the toast can
+   * bring them back. Picking the company in the Company filter still shows them.
+   */
+  function hideCurrentCompany() {
+    setDismissing(false);
+    if (!current) return;
+    const { company, companyKey } = current;
+    const leaving = visible.filter((j) => j.companyKey === companyKey).map((j) => j.id);
+    // The list holds at most 500 jobs; the Company filter's count covers all of them.
+    const total = matches.data?.facets.companies.find((c) => c.key === companyKey)?.count ?? leaving.length;
+    const i = visible.findIndex((j) => j.id === current.id);
+    const next = [...visible.slice(i + 1), ...visible.slice(0, i).reverse()].find((j) => j.companyKey !== companyKey);
+    setGone((g) => new Set([...g, ...leaving]));
+    setSelectedId(next?.id ?? null);
+    lastIndex.current = Math.max(0, i);
+    const restore = () =>
+      setGone((g) => {
+        const copy = new Set(g);
+        for (const id of leaving) copy.delete(id);
+        return copy;
+      });
+    hideCompany.mutate(
+      { company, hidden: true },
+      {
+        onSuccess: () =>
+          toast(`Hid ${plural(total, "job")} from ${company}`, {
+            id: `hidden-${companyKey}`,
+            cancel: {
+              label: "Undo",
+              onClick: () =>
+                hideCompany.mutate(
+                  { company, hidden: false },
+                  {
+                    onSuccess: restore,
+                    onError: (error) => toast.error(`Could not show ${company} again. ${errorMessage(error)}`),
+                  },
+                ),
+            },
+          }),
+        onError: (error) => {
+          restore();
+          toast.error(`Could not hide ${company}. ${errorMessage(error)}`);
+        },
+      },
+    );
+  }
+
+  function showCompany(company: string) {
+    hideCompany.mutate(
+      { company, hidden: false },
+      { onError: (error) => toast.error(`Could not show ${company} again. ${errorMessage(error)}`) },
+    );
+  }
+
   function openPosting() {
     const url = postingUrl(current);
     if (url) window.open(url, "_blank", "noopener,noreferrer");
@@ -548,9 +635,17 @@ export function MatchesPage() {
   }, []);
 
   const payFilter = matches.data?.payFilter;
-  const filtered = q !== "" || showExcluded || !showUnsure || (payFilter?.atLeast ?? null) !== null;
+  const filtered =
+    q !== "" ||
+    showExcluded ||
+    !showUnsure ||
+    (payFilter?.atLeast ?? null) !== null ||
+    companies.size > 0 ||
+    source !== null;
   function clearFilters() {
     setSearch("");
+    setCompanies(new Map());
+    setSource(null);
     // Off, not back to the saved minimum: clearing means show everything.
     setPayText("");
     setShowExcluded(false);
@@ -566,6 +661,24 @@ export function MatchesPage() {
   ]
     .filter(Boolean)
     .join(" · ");
+  const hiddenByCompany = counts?.hiddenCompany ?? 0;
+  const summaryNode = (
+    <>
+      {summary}
+      {hiddenByCompany > 0 && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            className="underline-offset-4 hover:text-foreground hover:underline"
+            onClick={() => setCompanyOpen(true)}
+          >
+            {hiddenByCompany} from hidden companies
+          </button>
+        </>
+      )}
+    </>
+  );
 
   // On a phone the list and the job take turns; on a wide screen the layout decides.
   const listHidden = isWide ? layout === "focus" : phoneView === "job";
@@ -582,7 +695,9 @@ export function MatchesPage() {
   const dismissPopover = (
     <DismissPopover
       open={dismissing}
+      company={current?.company ?? null}
       onChoose={dismissCurrent}
+      onHideCompany={hideCurrentCompany}
       onCancel={() => setDismissing(false)}
       restoreFocus={() => (listBeside ? listRef.current?.focus() : undefined)}
     />
@@ -595,7 +710,7 @@ export function MatchesPage() {
   };
 
   return (
-    <div className="grid gap-4 md:h-[calc(100dvh-8.5rem)] md:min-h-96 md:grid-rows-[auto_minmax(0,1fr)]">
+    <div className="grid gap-4 md:h-[calc(100dvh-8.5rem)] md:min-h-96 md:grid-rows-[auto_auto_minmax(0,1fr)]">
       <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-2", !isWide && phoneView === "job" && "hidden")}>
         <h1 className="display mr-3 text-3xl max-md:w-full">Matches</h1>
         <div className="relative w-full md:max-w-64">
@@ -622,6 +737,49 @@ export function MatchesPage() {
             className="h-8 pl-8"
           />
         </div>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          aria-label="Layout"
+          value={layout}
+          onValueChange={(v) => v && setLayout(v === "focus" ? "focus" : "split")}
+          className="ml-auto max-md:hidden"
+        >
+          <ToggleGroupItem value="split" aria-keyshortcuts="l" className="px-3">
+            List
+          </ToggleGroupItem>
+          <ToggleGroupItem value="focus" aria-keyshortcuts="l" className="px-3">
+            One at a time
+          </ToggleGroupItem>
+        </ToggleGroup>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground max-md:hidden"
+          onClick={() => setSheet("click")}
+        >
+          Shortcuts <Kbd>?</Kbd>
+        </Button>
+      </div>
+      <fieldset
+        aria-label="Filters"
+        className={cn("-mt-1 flex min-w-0 flex-wrap items-center gap-2", !isWide && phoneView === "job" && "hidden")}
+      >
+        <CompanyFilter
+          companies={matches.data?.facets.companies ?? []}
+          hidden={matches.data?.hiddenCompanies ?? []}
+          picked={companies}
+          onPick={setCompanies}
+          onShowCompany={showCompany}
+          open={companyOpen}
+          onOpenChange={setCompanyOpen}
+        />
+        <SourceFilter
+          sources={matches.data?.facets.sources ?? { groups: { boards: 0, sites: 0, added: 0 }, sites: [] }}
+          value={source}
+          onChange={setSource}
+        />
         <div className="flex items-center gap-2">
           <Label htmlFor={payId} className="text-muted-foreground text-sm">
             Pay at least
@@ -653,31 +811,7 @@ export function MatchesPage() {
           {/* Open jobs that exclude the Philippines, shown or not (decision 53). Part of the name. */}
           {counts && <span className="text-muted-foreground tabular-nums">{counts.excludedOpen}</span>}
         </Toggle>
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          aria-label="Layout"
-          value={layout}
-          onValueChange={(v) => v && setLayout(v === "focus" ? "focus" : "split")}
-          className="ml-auto max-md:hidden"
-        >
-          <ToggleGroupItem value="split" aria-keyshortcuts="l" className="px-3">
-            List
-          </ToggleGroupItem>
-          <ToggleGroupItem value="focus" aria-keyshortcuts="l" className="px-3">
-            One at a time
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground max-md:hidden"
-          onClick={() => setSheet("click")}
-        >
-          Shortcuts <Kbd>?</Kbd>
-        </Button>
-      </div>
+      </fieldset>
 
       {matches.isPending ? (
         <div className="surface grid min-h-0 overflow-hidden rounded-xl md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
@@ -730,7 +864,7 @@ export function MatchesPage() {
               atSelected={listHidden ? null : dismissPopover}
             />
             <p aria-live="polite" className="border-t px-4 py-2 text-muted-foreground text-xs tabular-nums">
-              {summary}
+              {summaryNode}
             </p>
           </div>
           <ReadingPane
@@ -748,7 +882,7 @@ export function MatchesPage() {
                 layout === "focus" && (
                   <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b bg-card px-4 py-1.5">
                     {pager}
-                    <span className="truncate text-muted-foreground text-xs tabular-nums">{summary}</span>
+                    <span className="truncate text-muted-foreground text-xs tabular-nums">{summaryNode}</span>
                   </div>
                 )
               ) : (

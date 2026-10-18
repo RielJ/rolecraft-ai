@@ -11,6 +11,11 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     build: { outDir: "dist", emptyOutDir: true },
-    server: { port: 5173, proxy: { "/api": `http://localhost:${apiPort}` } },
+    server: {
+      port: 5173,
+      // changeOrigin stays false (Vite's string shorthand turns it on): the API's Origin check
+      // compares Origin with Host, so Host must stay localhost:5173 or every write is a 403.
+      proxy: { "/api": { target: `http://localhost:${apiPort}`, changeOrigin: false } },
+    },
   };
 });

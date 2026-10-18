@@ -151,6 +151,9 @@ export const SourceKind = z.enum(SOURCE_KINDS);
 export type SourceKind = z.infer<typeof SourceKind>;
 export type AtsSourceKind = (typeof ATS_SOURCE_KINDS)[number];
 export type BuiltinSourceKind = (typeof BUILTIN_SOURCE_KINDS)[number];
+const ATS_KINDS: ReadonlySet<SourceKind> = new Set(ATS_SOURCE_KINDS);
+/** A company board on an ATS, as opposed to a job site. */
+export const isAtsKind = (kind: SourceKind): kind is AtsSourceKind => ATS_KINDS.has(kind);
 
 export const SOURCE_STATUSES = ["ok", "failed", "rate_limited", "suspicious_empty", "skipped"] as const;
 export const SourceStatus = z.enum(SOURCE_STATUSES);
