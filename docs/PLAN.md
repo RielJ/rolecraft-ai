@@ -208,7 +208,7 @@ hanapbuhay/
                    reading-pane.tsx  output-editor.tsx  needs-input.tsx  shortcut-sheet.tsx
       ui/       # shadcn components
   test/
-    setup.ts                # preload: migrate test DB, resetDb() truncates
+    setup.ts                # preload: migrate test DB, resetDb() empties tables
     architecture.test.ts
     sync-invariant.test.ts
     fixtures/               # source payloads, HTML pages, cv.pdf, cv.docx
@@ -788,7 +788,7 @@ build       = vite build
 e2e         = playwright test        # starts the built app with HB_AI=fake HB_SOURCES=fixture
 ```
 
-Tests use `DATABASE_URL_TEST` against the same Compose Postgres. `test/setup.ts` (bunfig preload) migrates once, and `resetDb()` truncates every table except `users`.
+Tests use `DATABASE_URL_TEST` against the same Compose Postgres. `test/setup.ts` (bunfig preload) migrates once, and `resetDb()` empties every table except `users` (DELETE in foreign-key order, then restart sequences; see `test/reset.ts`).
 
 ### Slice 1. Gated application kit (no AI, no sources)
 

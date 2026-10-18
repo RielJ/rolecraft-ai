@@ -172,11 +172,27 @@ Domain code may not read the clock or use randomness. Callers pass `now`.
 
 | Command | What it runs |
 |---|---|
-| `bun run check` | Biome, `tsc --noEmit`, and `bun test`. The unit tests and the service tests run against a real Postgres database, `hanapbuhay_test`. |
+| `bun run check` | Biome, `tsc --noEmit` for the app and the extension, `bun test`, and the extension's unit tests. The unit tests and the service tests run against a real Postgres database, `hanapbuhay_test`. |
+| `bun run check:changed` | Biome and both `tsc` runs, then only the tests your uncommitted changes reach: `bun test --changed`, `bun run build`, and `scripts/e2e-changed.ts`. That script runs every e2e spec when the app changed, and `playwright test --only-changed` otherwise. |
 | `bun run e2e` | Playwright specs in `e2e/`. Run `bun run build` first. The suite starts the server on port 3100 with `HB_AI=fake`, `HB_SOURCES=fixture` and `HB_FX=fixture`, against `hanapbuhay_e2e`. |
 | `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. Run `bun run build` first. See [docs/EXTENSION.md](docs/EXTENSION.md). |
 | `bun run eval ...` | The evaluation set. It makes real AI calls, so it costs money. |
 
 Start Postgres with `bun run db:up` before `bun run check` or `bun run e2e`.
+
+### Which checks to run when
+
+1. After each small step, run `bun run check:changed`.
+2. At the end of a slice, and before every commit, run the full `bun run check` and the full e2e suite: `bun run build && bunx playwright test`.
+
+Set `HB_E2E_PORT` to run the e2e server on a port other than 3100, for example `HB_E2E_PORT=3101 bun run check:changed`.
+
+`check:changed` picks tests by following imports from the files that changed since `HEAD`. Staged, unstaged and new untracked files all count. It misses these changes:
+
+- Changes that no test file imports: SQL migrations, environment variables, CSS, and fixture files.
+- For e2e, nothing is skipped when the app changes. A Playwright spec drives the app over HTTP, so `--only-changed` alone would select no spec for a change in `src/web/` or `src/server/`. `scripts/e2e-changed.ts` therefore runs every spec, about 80 s, when the changes touch `src/` (other than `*.test.ts`), `drizzle/`, `test/fixtures/`, CSS or `playwright.config.ts`.
+- The extension's unit tests (`bun run test:extension`).
+
+A change to a module that most files import, such as `src/shared/api.ts`, `src/server/db/schema.ts` or `test/reset.ts`, selects most of the tests. That is expected.
 
 `e2e/craft.spec.ts` runs axe on every screen in the light and dark themes. It also checks focus rings, the themed selection and scrollbar, and the empty, loading, and error states. It saves screenshots to `test-results/craft/`.

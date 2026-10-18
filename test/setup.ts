@@ -40,7 +40,7 @@ function connections() {
   return shared;
 }
 
-/** Truncate every table except `users`, and reset the user row's profile fields. */
+/** Empty every table except `users`, restart their sequences, and reset the user row's profile fields. */
 export async function resetDb(): Promise<void> {
   const { db, sql } = connections();
   await ensureUser(db);

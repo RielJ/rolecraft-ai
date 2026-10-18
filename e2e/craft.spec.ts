@@ -151,6 +151,9 @@ for (const colorScheme of SCHEMES) {
 
     test("loading and error states name the problem and offer Retry", async ({ page }) => {
       await reset();
+      // The page's clock, so the test can skip the retry backoff (1 s, then 2 s) instead of waiting it out.
+      // It runs in real time otherwise; fastForward only jumps it ahead.
+      await page.clock.install();
       const screens = [
         { path: "/", api: /\/api\/matches(\?|$)/, error: "Could not load matches." },
         { path: "/board", api: /\/api\/board$/, error: "Could not load your board." },
@@ -159,17 +162,30 @@ for (const colorScheme of SCHEMES) {
         { path: "/settings", api: /\/api\/settings$/, error: "Could not load settings." },
       ];
       for (const screen of screens) {
-        await page.route(screen.api, (route) =>
-          route.fulfill({
+        let requests = 0;
+        await page.route(screen.api, (route) => {
+          requests += 1;
+          return route.fulfill({
             status: 500,
             contentType: "application/json",
             body: JSON.stringify({ error: { code: "internal", message: "Something went wrong on our side." } }),
-          }),
-        );
+          });
+        });
         await page.goto(screen.path);
         const alert = page.getByRole("alert").filter({ hasText: screen.error });
-        // Queries retry server errors twice before showing the banner.
-        await expect(alert).toBeVisible({ timeout: 15_000 });
+        // Queries retry server errors twice before showing the banner: three requests in all. Each poll
+        // moves the page's clock past the next backoff timer, whenever the page has set it.
+        await expect
+          .poll(
+            async () => {
+              await page.clock.fastForward(500);
+              return requests;
+            },
+            { intervals: [50], timeout: 15_000 },
+          )
+          .toBe(3);
+        await expect(alert).toBeVisible();
+        expect(requests, `${screen.path}: the first try and two retries`).toBe(3);
         await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible();
         await axe(page, `${screen.path} error, ${colorScheme}`);
         await page.screenshot({ path: `test-results/craft/error-${slug(screen.path)}-${colorScheme}.png` });
