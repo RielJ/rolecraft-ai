@@ -92,6 +92,20 @@
       "when": 1792324653396,
       "tag": "0012_fx_auto",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792326948007,
+      "tag": "0013_skills_stamp",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792328672139,
+      "tag": "0014_jobs_fillfactor",
+      "breakpoints": true
     }
   ]
 }

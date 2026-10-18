@@ -182,13 +182,13 @@ describe("levels are computed on read", () => {
     await ok(await setSkill("Go", "hidden"), ProfileDto);
     expect(await reasons()).toContain("Not in your facts: Go");
 
-    // Removing Hasura from your list drops it from the job's skills before any refresh.
+    // Removing Hasura from your list drops it from Matches and from the job's skills at once (decision 68).
     await ok(await setSkill("Hasura", "none"), ProfileDto);
     const after = await reasons();
     expect(after).toContain("In your facts: PostgreSQL");
     expect(after.join("\n")).not.toContain("Hasura");
     const [stored] = await testSql()<{ skills: string[] }[]>`SELECT skills FROM jobs WHERE id = ${id}`;
-    expect(stored?.skills).toEqual(["Go", "PostgreSQL", "Hasura"]);
+    expect(stored?.skills).toEqual(["Go", "PostgreSQL"]);
   });
 
   test("the reading pane carries the level, every reason and the job's facts", async () => {

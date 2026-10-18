@@ -132,6 +132,21 @@ test("confirmed facts group by job: closed past 8 facts, a search opens the grou
 });
 
 test("skills used for matching: hide one found in facts, restore it, add your own and remove it", async ({ page }) => {
+  // A stored job that names Hasura, read before Hasura was on the list: it asks for Go only.
+  const sql = postgres(E2E_DATABASE_URL, { max: 1, onnotice: () => {} });
+  try {
+    const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;
+    await sql`
+      INSERT INTO jobs (user_id, origin, title, company, title_key, company_key, description, skills,
+        content_hash, description_key, eligibility, eligibility_phrase)
+      VALUES (${user?.id ?? ""}, 'source', 'Platform Engineer', 'Acme', 'engineer platform', 'acme',
+        'Go services behind Hasura. This role is open worldwide.', '{Go}', 'platform', 'platform',
+        'worldwide', 'open worldwide')`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const row = page.getByRole("listbox", { name: "Matches" }).getByRole("option", { name: /Platform Engineer/ });
+
   await page.goto("/profile");
   await page.getByLabel("CV text").fill("- Built a payments API in Go and Postgres");
   await page.getByRole("button", { name: "Save and split into facts" }).click();
@@ -152,16 +167,19 @@ test("skills used for matching: hide one found in facts, restore it, add your ow
   await page.getByRole("searchbox", { name: "Find or type a skill" }).fill("kube");
   await page.getByRole("button", { name: "Kubernetes", exact: true }).click();
   await expect(chips.getByRole("listitem")).toHaveText(["Go", "PostgreSQL", "Kubernetes", "Add skill"]);
-  await expect(page.getByRole("status").filter({ hasText: "next Refresh" })).toBeHidden();
 
-  // One of your own, typed in.
+  // One of your own, typed in. The stored job gains it at once, with no Refresh (decision 68).
   await chips.getByRole("button", { name: "Add skill" }).click();
   await page.getByRole("searchbox", { name: "Find or type a skill" }).fill("Hasura");
   await page.getByRole("button", { name: "Add “Hasura” as your own skill" }).click();
   await expect(chips.getByRole("listitem")).toHaveText(["Go", "PostgreSQL", "Kubernetes", "Hasura", "Add skill"]);
-  await expect(page.getByText("Jobs you already have are read for Hasura on the next Refresh.")).toBeVisible();
+  await expect(page.getByText(/next Refresh/)).toBeHidden();
+  await page.goto("/");
+  await expect(row).toContainText("2 of 2 skills");
 
-  await page.reload();
+  await page.goto("/profile");
   await chips.getByRole("button", { name: "Remove Hasura" }).click();
   await expect(chips.getByRole("listitem")).toHaveText(["Go", "PostgreSQL", "Kubernetes", "Add skill"]);
+  await page.goto("/");
+  await expect(row).toContainText("1 of 1 skills");
 });

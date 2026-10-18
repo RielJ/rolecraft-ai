@@ -37,12 +37,13 @@ import {
 import type { FactOrigin } from "@/shared/enums";
 import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
-import type { Db } from "../db/client";
+import type { Db, Tx } from "../db/client";
+import { MERGE_SYNC_LOCK } from "../db/locks";
 import { facts, profileItems, userSkills, users } from "../db/schema";
 import { type AiConfig, checkCap, estimateUsd, loadAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { latestTask, startTask, type TaskContext } from "./tasks";
-import { loadUserSkillRows } from "./user-skills";
+import { applySkillChange, loadSkillDictionary, loadUserSkillRows } from "./user-skills";
 
 type ItemRow = typeof profileItems.$inferSelect;
 
@@ -197,19 +198,39 @@ export async function updateProfile(deps: Deps, input: UpdateProfileInput): Prom
 
 /**
  * Add a skill to matching, hide one found in confirmed facts, or clear either. One row per skill,
- * so adding a hidden skill un-hides it. Matching changes on the next read; jobs already stored are
- * read for a new skill of the user's own on the next Refresh.
+ * so adding a hidden skill un-hides it. Matching changes on the next read. Adding or removing a
+ * skill of your own also updates stored jobs' skills in the same transaction (decision 68).
  */
 export async function setSkill(deps: Deps, { name, state }: SetSkillInput): Promise<ProfileDto> {
   const clean = normalizeSkillName(name);
   if (clean.kind === "rejected") throw new AppError({ code: "invalid_input", message: clean.message });
+  await deps.db.transaction(async (tx) => {
+    const scope = { db: tx, userId: deps.userId };
+    // A built-in is already read on every job, and hiding is a read-time filter: no job changes.
+    const custom = !clean.builtin;
+    if (custom) {
+      // No sync transaction may write a job between reading the jobs and stamping them.
+      await tx.execute(sql.raw(`SELECT pg_advisory_xact_lock(${MERGE_SYNC_LOCK})`));
+    }
+    const before = custom ? await loadSkillDictionary(scope) : null;
+    await writeSkillRow(tx, deps, { clean, state });
+    if (before) await applySkillChange(tx, { userId: deps.userId, before, after: await loadSkillDictionary(scope) });
+  });
+  return getProfile(deps);
+}
+
+async function writeSkillRow(
+  tx: Tx,
+  deps: Pick<Deps, "userId" | "clock">,
+  { clean, state }: { clean: { name: string; key: string }; state: SetSkillInput["state"] },
+): Promise<void> {
   const mine = and(eq(userSkills.userId, deps.userId), eq(userSkills.key, clean.key));
   switch (state) {
     case "none":
-      await deps.db.delete(userSkills).where(mine);
-      break;
+      await tx.delete(userSkills).where(mine);
+      return;
     case "hidden": {
-      const confirmed = await deps.db
+      const confirmed = await tx
         .select({ text: facts.text })
         .from(facts)
         .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")));
@@ -219,13 +240,13 @@ export async function setSkill(deps: Deps, { name, state }: SetSkillInput): Prom
           message: `None of your confirmed facts names ${clean.name}, so there is nothing to hide. Remove it instead.`,
         });
       }
-      await upsertSkill(deps, { ...clean, kind: "hidden" });
-      break;
+      await upsertSkill(tx, deps, { ...clean, kind: "hidden" });
+      return;
     }
     case "added": {
       const [[existing], [total]] = await Promise.all([
-        deps.db.select({ kind: userSkills.kind }).from(userSkills).where(mine),
-        deps.db
+        tx.select({ kind: userSkills.kind }).from(userSkills).where(mine),
+        tx
           .select({ n: count() })
           .from(userSkills)
           .where(and(eq(userSkills.userId, deps.userId), eq(userSkills.kind, "added"))),
@@ -236,23 +257,23 @@ export async function setSkill(deps: Deps, { name, state }: SetSkillInput): Prom
           message: `You can add up to ${MAX_ADDED_SKILLS} skills. Remove one you no longer use, then add ${clean.name}.`,
         });
       }
-      await upsertSkill(deps, { ...clean, kind: "added" });
-      break;
+      await upsertSkill(tx, deps, { ...clean, kind: "added" });
+      return;
     }
     default: {
       const _exhaustive: never = state;
       return _exhaustive;
     }
   }
-  return getProfile(deps);
 }
 
 async function upsertSkill(
-  deps: Pick<Deps, "db" | "userId" | "clock">,
+  tx: Tx,
+  deps: Pick<Deps, "userId" | "clock">,
   { key, name, kind }: { key: string; name: string; kind: "added" | "hidden" },
 ): Promise<void> {
   const now = deps.clock.now();
-  await deps.db
+  await tx
     .insert(userSkills)
     .values({ userId: deps.userId, key, name, kind, createdAt: now })
     .onConflictDoUpdate({

@@ -138,6 +138,13 @@ export const SKILLS: readonly Skill[] = [
   { name: "Selenium", spellings: ["selenium"] },
   { name: "Jest", spellings: ["Jest"] },
 ];
+/**
+ * Bump this whenever `SKILLS` or the way a spelling matches changes: every stored job's skills
+ * stamp goes stale and the next Refresh reads them all again once (decision 68). A test pins a
+ * fingerprint of the dictionary to this number, so an edit without a bump fails.
+ */
+export const BUILTIN_SKILLS_VERSION = 1;
+
 // Measured extras (open jobs naming each in the dev database, 2026-10-18; kept at 5 or more):
 // GitHub Actions 36, LangChain 34, BigQuery 28, Databricks 26, Vercel 25, Tableau 22, Jenkins 21,
 // Hugging Face 15, Redux 11, Sentry 10, Looker 9, Storybook 5. Left out: Webpack 4, Ethereum 4,
@@ -186,14 +193,58 @@ function spellingPattern(
  * The skills one user's jobs are read for: the built-in dictionary, then the user's own skills in
  * the order they were added. Compiled once per refresh or request, never per job.
  */
-export type SkillDictionary = {
-  readonly names: readonly string[];
-  readonly patterns: readonly { name: string; re: RegExp }[];
+export type SkillPattern = {
+  readonly name: string;
+  readonly re: RegExp;
+  /**
+   * The spelling's longest piece without spaces, folded with `foldCase`. Every text the regex
+   * matches contains it once folded, so a text without it skips the regex (decision 68).
+   */
+  readonly literal: string;
+  /**
+   * The same piece before folding. Adding a skill of your own asks Postgres for the open jobs whose
+   * text contains it, lowercased there (decision 68); Postgres' `lower` is not `foldCase`, so it
+   * gets the piece as written and lowercases both sides itself.
+   */
+  readonly piece: string;
 };
 
-const BUILTIN_PATTERNS = SKILLS.flatMap((skill) =>
+export type SkillDictionary = {
+  readonly names: readonly string[];
+  readonly patterns: readonly SkillPattern[];
+  /** The user's own names that compiled, in the order added: what the skills stamp records (decision 68). */
+  readonly custom: readonly string[];
+};
+
+/**
+ * Characters that a case-insensitive regex (`iu`) folds to another letter but `toLowerCase` keeps:
+ * µ, ſ, ς, ϐ, ϑ, ϕ, ϖ, ϰ, ϱ, ϵ, the combining iota, Cyrillic ᲀ to ᲈ, ẛ and ι. Found by checking every
+ * code point (test/skills-quick-check.test.ts). Each maps to its upper case, lowercased.
+ */
+const FOLD_EXTRA = "[\u00b5\u017f\u0345\u03c2\u03d0\u03d1\u03d5\u03d6\u03f0\u03f1\u03f5\u1c80-\u1c88\u1e9b\u1fbe]";
+const HAS_FOLD_EXTRA = new RegExp(FOLD_EXTRA, "u");
+const FOLD_EXTRA_ALL = new RegExp(FOLD_EXTRA, "gu");
+const foldExtra = (c: string) => c.toUpperCase().toLowerCase();
+
+/**
+ * Lowercase, so that two strings a case-insensitive regex treats as equal fold to the same text.
+ * Only the quick-check uses it; the regex still decides.
+ */
+export function foldCase(text: string): string {
+  const lower = text.toLowerCase();
+  return HAS_FOLD_EXTRA.test(lower) ? lower.replace(FOLD_EXTRA_ALL, foldExtra) : lower;
+}
+
+/** The piece every match of `spelling` contains: its longest run without spaces, as written. */
+function pieceOf(spelling: string): string {
+  return spelling.split(" ").reduce((best, piece) => (piece.length > best.length ? piece : best), "");
+}
+
+const BUILTIN_PATTERNS: SkillPattern[] = SKILLS.flatMap((skill) =>
   skill.spellings.map((spelling) => ({
     name: skill.name,
+    piece: pieceOf(spelling),
+    literal: foldCase(pieceOf(spelling)),
     re: spellingPattern(spelling, {
       exactCase: spelling !== spelling.toLowerCase(),
       ...(skill.strict ? { strict: true } : {}),
@@ -215,27 +266,43 @@ export const CUSTOM_EXACT_CASE_MAX = 3;
  */
 export function compileSkills(custom: readonly string[]): SkillDictionary {
   const seen = new Set(BUILTIN_KEYS);
-  const extra: { name: string; re: RegExp }[] = [];
+  const extra: SkillPattern[] = [];
   for (const name of custom) {
     const key = name.toLowerCase();
     if (name.trim() === "" || seen.has(key)) continue;
     seen.add(key);
-    extra.push({ name, re: spellingPattern(name, { exactCase: name.length <= CUSTOM_EXACT_CASE_MAX }) });
+    extra.push({
+      name,
+      piece: pieceOf(name),
+      literal: foldCase(pieceOf(name)),
+      re: spellingPattern(name, { exactCase: name.length <= CUSTOM_EXACT_CASE_MAX }),
+    });
   }
   return {
     names: [...SKILLS.map((s) => s.name), ...extra.map((e) => e.name)],
     patterns: [...BUILTIN_PATTERNS, ...extra],
+    custom: extra.map((e) => e.name),
   };
 }
 
 /** The dictionary with no user skills: what every caller without a user list reads with. */
 export const BUILTIN_SKILLS: SkillDictionary = compileSkills([]);
 
-/** Skills from the dictionary that `text` names: built-ins in dictionary order, then the user's own, each once. */
-export function extractSkills(text: string, dict: SkillDictionary = BUILTIN_SKILLS): string[] {
+/**
+ * Skills from the dictionary that `text` names: built-ins in dictionary order, then the user's own,
+ * each once. The text is folded once, and a pattern whose literal it lacks skips its regex
+ * (decision 68). `quickCheck: false` runs every regex; the output is the same, and a test proves it.
+ */
+export function extractSkills(
+  text: string,
+  dict: SkillDictionary = BUILTIN_SKILLS,
+  { quickCheck = true }: { quickCheck?: boolean } = {},
+): string[] {
+  const folded = quickCheck ? foldCase(text) : "";
   const found = new Set<string>();
-  for (const { name, re } of dict.patterns) {
-    if (!found.has(name) && re.test(text)) found.add(name);
+  for (const { name, re, literal } of dict.patterns) {
+    if (found.has(name) || (quickCheck && !folded.includes(literal))) continue;
+    if (re.test(text)) found.add(name);
   }
   return dict.names.filter((name) => found.has(name));
 }

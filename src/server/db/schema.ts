@@ -241,6 +241,12 @@ export const jobs = pgTable(
     payPhrase: text(),
     hours: jsonb().$type<JobHours>(),
     skills: text().array().notNull().default(sql`'{}'::text[]`),
+    /**
+     * Which dictionary `skills` was read with: the built-in version and the user's own skill names
+     * (decision 68, `skillsStamp`). Null, or any other value than the current one, means stale: the
+     * next Refresh reads the job again.
+     */
+    skillsStamp: text(),
     seniority: text().$type<(typeof JOB_SENIORITIES)[number]>(),
     minYears: smallint(),
     eligibility: text().notNull().default("unclear").$type<(typeof ELIGIBILITIES)[number]>(),

@@ -964,7 +964,7 @@ export const RefreshResult = z.object({
   /** Closed jobs older than 60 days with no board entry, deleted. */
   pruned: z.number().int(),
   aiPass: AiPassResult,
-  /** Stored open jobs whose skills changed when read again with the current dictionary (decision 66). */
+  /** Stored open jobs read again because their skills stamp was stale (decisions 66 and 68). */
   skillsReread: z.number().int().default(0),
 });
 export type RefreshResult = z.infer<typeof RefreshResult>;

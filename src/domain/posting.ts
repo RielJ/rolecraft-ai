@@ -4,6 +4,7 @@ import { extractSkills, minYears, type SkillDictionary, seniority } from "./feat
 import { parseHours } from "./hours";
 import { type Pay, parsePay } from "./pay";
 import { contentHash, descriptionKey } from "./text";
+import { dictionaryStamp } from "./user-skills";
 
 // One normalizer for every way a job arrives: paste, link, and sync (section 3.1 step 4).
 
@@ -60,6 +61,8 @@ export function derive(fields: JobFields, dict?: SkillDictionary) {
     payPhrase,
     hours: parseHours(fields.description),
     skills: jobSkills(fields, dict),
+    // Which dictionary read them, so a Refresh reads the job again only when that changes (decision 68).
+    skillsStamp: dictionaryStamp(dict),
     seniority: seniority(fields.title),
     minYears: minYears(fields.description),
     eligibility: eligibility.verdict,

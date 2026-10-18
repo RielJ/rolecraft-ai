@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { z } from "zod";
-import { compileSkills } from "@/domain/features";
+import { BUILTIN_SKILLS_VERSION, compileSkills } from "@/domain/features";
+import { dictionaryStamp, skillsStamp } from "@/domain/user-skills";
 import { createHttpClient, type FetchFn } from "@/server/adapters/http";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { ensureBuiltinSources } from "@/server/services/sources";
-import { rereadSkills } from "@/server/services/sync";
+import { rereadSkills, runRefresh } from "@/server/services/sync";
 import { waitForTask } from "@/server/services/tasks";
-import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto } from "@/shared/api";
+import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto, TaskId } from "@/shared/api";
 import { CUSTOM_SKILLS, skillTexts } from "./fixtures/skill-texts";
 import { resetDb, testDeps, testSql } from "./setup";
 
@@ -371,37 +372,92 @@ describe("prune and attach", () => {
   });
 });
 
-describe("skills in stored jobs (decision 66)", () => {
+describe("skills in stored jobs (decisions 66 and 68)", () => {
   const skillsOf = async (title: string) => {
     const [row] = await testSql()<{ skills: string[] }[]>`SELECT skills FROM jobs WHERE title = ${title}`;
     return row?.skills ?? null;
   };
+  const stamps = async () => {
+    const rows = await testSql()<{ stamp: string | null; n: number }[]>`
+      SELECT skills_stamp AS stamp, count(*)::int AS n FROM jobs GROUP BY 1 ORDER BY 1`;
+    return Object.fromEntries(rows.map((r) => [r.stamp ?? "null", r.n]));
+  };
   const setSkill = async (name: string, state: "added" | "none") => {
     expect((await call("PUT", "/profile/skills", { name, state })).status).toBe(200);
   };
+  const OLD_VERSION = skillsStamp({ version: BUILTIN_SKILLS_VERSION - 1, customNames: [] });
 
-  test("Refresh reads stored open jobs for a skill you added, and again when you remove it", async () => {
+  test("new jobs get the current stamp, and a second Refresh with nothing changed reads none", async () => {
     await only("greenhouse");
     await addBoard("acme");
     expect((await refresh(hours(0))).result?.skillsReread).toBe(0);
-    expect(await skillsOf("Site Reliability Engineer")).toEqual(["Linux", "Grafana", "Prometheus"]);
-    // An older dictionary's answer, and a closed job that is left as it is.
-    await testSql()`UPDATE jobs SET skills = '{Linux}' WHERE title = 'Site Reliability Engineer'`;
-    await testSql()`UPDATE jobs SET closed_at = ${hours(0)} WHERE title = 'Senior Frontend Engineer'`;
-    await setSkill("payroll", "added");
+    expect(await stamps()).toEqual({ [dictionaryStamp()]: 7 });
+    expect((await refresh(hours(0.1))).result?.skillsReread).toBe(0);
+  });
 
-    // The board is inside its minimum interval and skipped; the re-read still runs.
-    const second = await refresh(hours(0.1));
-    expect(second.result?.sources).toMatchObject([{ status: "skipped" }]);
+  test("a job saved with an older stamp, or none, is read again; a closed one is not", async () => {
+    await only("greenhouse");
+    await addBoard("acme");
+    await refresh(hours(0));
+    // An older dictionary's answer, a row from before the stamp, and a closed job.
+    await testSql()`UPDATE jobs SET skills = '{Linux}', skills_stamp = ${OLD_VERSION} WHERE title = 'Site Reliability Engineer'`;
+    await testSql()`UPDATE jobs SET skills = '{}', skills_stamp = NULL WHERE title = 'Backend Engineer'`;
+    await testSql()`UPDATE jobs SET skills = '{}', skills_stamp = NULL, closed_at = ${hours(0)} WHERE title = 'Senior Frontend Engineer'`;
+    expect((await refresh(hours(0.1))).result?.skillsReread).toBe(2);
+    expect(await skillsOf("Site Reliability Engineer")).toEqual(["Linux", "Grafana", "Prometheus"]);
+    expect(await skillsOf("Backend Engineer")).not.toEqual([]);
+    expect(await skillsOf("Senior Frontend Engineer")).toEqual([]);
+    expect(await stamps()).toEqual({ [dictionaryStamp()]: 6, null: 1 });
+    expect((await refresh(hours(0.2))).result?.skillsReread).toBe(0);
+  });
+
+  test("a new built-in version reads every open job again, once", async () => {
+    await only("greenhouse");
+    await addBoard("acme");
+    await refresh(hours(0));
+    const before = await testSql()<
+      { title: string; skills: string[] }[]
+    >`SELECT title, skills FROM jobs ORDER BY title`;
+    await testSql()`UPDATE jobs SET skills = '{}', skills_stamp = ${OLD_VERSION}`;
+    expect((await refresh(hours(0.1))).result?.skillsReread).toBe(7);
+    expect(await testSql()`SELECT title, skills FROM jobs ORDER BY title`).toEqual(before);
+    expect((await refresh(hours(0.2))).result?.skillsReread).toBe(0);
+  });
+
+  test("a skill you add or remove reaches stored jobs at once, so the next Refresh reads none", async () => {
+    await only("greenhouse");
+    await addBoard("acme");
+    await refresh(hours(0));
+    await setSkill("payroll", "added");
     expect(await skillsOf("Site Reliability Engineer")).toEqual(["Linux", "Grafana", "Prometheus", "payroll"]);
     expect(await skillsOf("Product Designer")).toEqual(["payroll"]);
-    expect(await skillsOf("Senior Frontend Engineer")).toEqual(["TypeScript", "React"]);
-    expect(second.result?.skillsReread).toBe(2);
+    expect(await stamps()).toEqual({ [skillsStamp({ version: BUILTIN_SKILLS_VERSION, customNames: ["payroll"] })]: 7 });
+    // The board is inside its minimum interval and skipped; the re-read step still runs, and reads none.
+    const second = await refresh(hours(0.1));
+    expect(second.result?.sources).toMatchObject([{ status: "skipped" }]);
+    expect(second.result?.skillsReread).toBe(0);
 
     await setSkill("payroll", "none");
-    expect((await refresh(hours(0.2))).result?.skillsReread).toBe(2);
     expect(await skillsOf("Product Designer")).toEqual([]);
-    expect((await refresh(hours(0.3))).result?.skillsReread).toBe(0);
+    expect(await stamps()).toEqual({ [dictionaryStamp()]: 7 });
+    expect((await refresh(hours(0.2))).result?.skillsReread).toBe(0);
+  });
+
+  test("a Refresh that started before you added a skill saves old stamps, and the next Refresh reads them", async () => {
+    await only("greenhouse");
+    await addBoard("acme");
+    // The running Refresh loaded the list before "payroll" was added.
+    const started = compileSkills([]);
+    await setSkill("payroll", "added");
+    const ctx = { taskId: TaskId.parse(crypto.randomUUID()), step: async () => {} };
+    const late = await runRefresh(deps, ctx, { skills: started });
+    expect(late.skillsReread).toBe(0);
+    expect(await skillsOf("Product Designer")).toEqual([]);
+    expect(await stamps()).toEqual({ [dictionaryStamp()]: 7 });
+
+    const next = await refresh(hours(0.1));
+    expect(next.result?.skillsReread).toBe(7);
+    expect(await skillsOf("Product Designer")).toEqual(["payroll"]);
   });
 
   test("timing: the re-read step over 1,930 open jobs of 8 KB with 20 skills of your own", async () => {

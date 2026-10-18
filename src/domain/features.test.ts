@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { compileSkills, extractSkills, minYears, SKILLS, seniority } from "./features";
+import {
+  BUILTIN_SKILLS,
+  BUILTIN_SKILLS_VERSION,
+  compileSkills,
+  extractSkills,
+  minYears,
+  SKILLS,
+  seniority,
+} from "./features";
+import { sha256Hex } from "./text";
 
 describe("extractSkills", () => {
   test("finds dictionary skills once each, under one name", () => {
@@ -123,6 +132,20 @@ describe("compileSkills", () => {
   });
   test("a name that is a built-in or a repeat adds nothing", () => {
     expect(compileSkills(["go", "Hasura", "hasura"]).names.slice(SKILLS.length)).toEqual(["Hasura"]);
+  });
+});
+
+describe("BUILTIN_SKILLS_VERSION (decision 68)", () => {
+  test("moves with the dictionary", () => {
+    // Changed SKILLS or how a spelling matches? Bump BUILTIN_SKILLS_VERSION and pin the new
+    // fingerprint here, so the next Refresh reads every stored job again.
+    const fingerprint = sha256Hex(
+      BUILTIN_SKILLS.patterns.map((p) => `${p.name}\u0000${p.re.source}\u0000${p.re.flags}`).join("\n"),
+    );
+    expect({ version: BUILTIN_SKILLS_VERSION, fingerprint }).toEqual({
+      version: 1,
+      fingerprint: "2a0e491226d15ee7c3da2ed1273ad35062601332260f552b4ff02e0538ba5bf4",
+    });
   });
 });
 

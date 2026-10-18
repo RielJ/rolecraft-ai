@@ -68,3 +68,71 @@ export const CUSTOM_SKILLS = [
   "Amplitude",
   "Retool",
 ];
+
+const SYLLABLES = [
+  "ka",
+  "lo",
+  "mi",
+  "ne",
+  "ru",
+  "sa",
+  "ti",
+  "vo",
+  "ba",
+  "de",
+  "fu",
+  "gi",
+  "ho",
+  "ja",
+  "pe",
+  "qu",
+  "ri",
+  "su",
+  "to",
+  "wy",
+  "xe",
+  "zo",
+  "an",
+  "el",
+  "or",
+];
+
+/** Words shared across `variedTexts`, as postings share a language: a few common, most rare. */
+const VOCABULARY = 2500;
+
+/**
+ * `count` texts of at least `bytes` characters, like real postings in the way that matters to
+ * Postgres (decision 68): each `search` tsvector holds a few hundred lexemes and a few KB, as on
+ * the dev database (about 335 lexemes and 5 KB per job of about 5.6 KB). Words come from a shared, skewed
+ * vocabulary of made-up words; every text names payroll in its first sentence and mixes in the
+ * posting sentences above.
+ */
+export function variedTexts({ count, bytes }: { count: number; bytes: number }): string[] {
+  let seed = 7;
+  const next = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+    // The low bits of this generator repeat quickly; the high ones vary.
+    return Math.floor(seed / 65_536);
+  };
+  const words = Array.from({ length: VOCABULARY }, (_, i) => {
+    let w = "";
+    for (let n = i; n > 0 || w === ""; n = Math.floor(n / SYLLABLES.length)) w += SYLLABLES[n % SYLLABLES.length];
+    return `${w}x`;
+  });
+  // A uniform draw to the 8th power makes low indexes common: a skewed, Zipf-like pick, about 500
+  // distinct words in 8 KB.
+  const word = () => words[Math.floor(VOCABULARY * ((next() % 10_000) / 10_000) ** 8)] ?? "";
+  return Array.from({ length: count }, (_, i) => {
+    const parts = [`Job ${i}: Senior Software Engineer.`, SENTENCES[0] ?? ""];
+    let size = parts.join(" ").length;
+    while (size < bytes) {
+      const piece =
+        next() % 8 === 0
+          ? (SENTENCES[next() % SENTENCES.length] ?? "")
+          : `${Array.from({ length: 8 + (next() % 8) }, word).join(" ")}.`;
+      parts.push(piece);
+      size += piece.length + 1;
+    }
+    return parts.join(next() % 3 === 0 ? "\n" : " ");
+  });
+}

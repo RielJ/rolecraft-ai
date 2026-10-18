@@ -245,8 +245,9 @@ const MATCH_COLUMNS = {
 };
 
 /**
- * A stored job's skills may name a skill the user has since removed from their own list; it is
- * left out at once rather than on the next Refresh (decision 66).
+ * A stored job's skills may name a skill the user has since removed from their own list; removing
+ * one takes it off stored jobs at once (decision 68), and this read-time filter is the safety net
+ * (decision 66).
  */
 function matchJobOf(
   t: Pick<Targeting, "knownSkill">,

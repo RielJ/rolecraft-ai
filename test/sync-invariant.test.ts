@@ -220,6 +220,8 @@ describe("(b) as hb_sync, writes outside the grants fail with 42501", () => {
     const allowed = [
       "UPDATE sources SET last_status = last_status, last_error = last_error WHERE false",
       "UPDATE jobs SET title = title WHERE false",
+      // The skills stamp (decision 68) is covered by the table-level grant on jobs.
+      "UPDATE jobs SET skills = skills, skills_stamp = skills_stamp WHERE false",
       "DELETE FROM job_listings WHERE false",
       "SELECT id, target_titles, role_families, exclude_title_words FROM users",
       "SELECT job_id FROM opportunities",

@@ -19,27 +19,17 @@ const onError = (error: unknown) => toast.error(errorMessage(error));
 /**
  * Profile → Facts: the skills Matches scores against (decision 66). Skills found in confirmed facts
  * and skills the user added show as chips; hidden ones sit in a collapsed list with Restore. Facts
- * stay the only source of what a draft may claim; this list only changes matching.
+ * stay the only source of what a draft may claim; this list only changes matching. A skill of the
+ * user's own reaches stored jobs inside the same request (decision 68), so there is nothing to wait for.
  */
 export function SkillsForMatching({ profile }: { profile: ProfileDto }) {
   const id = useId();
   const setSkill = useSetSkill();
-  const [note, setNote] = useState<string | null>(null);
   const shown = profile.skillChips.filter((c) => c.source !== "hidden");
   const hidden = profile.skillChips.filter((c) => c.source === "hidden");
 
-  function send(input: SetSkillInput, after: (profile: ProfileDto) => void = () => {}) {
-    setNote(null);
-    setSkill.mutate(input, { onError, onSuccess: after });
-  }
-
-  function add(name: string) {
-    const before = new Set(profile.skillChips.map((c) => c.name));
-    send({ name, state: "added" }, (next) => {
-      // An off-list skill is read in stored jobs on the next Refresh; say so.
-      const fresh = next.skillChips.find((c) => c.source === "added" && !c.builtin && !before.has(c.name));
-      if (fresh) setNote(`Jobs you already have are read for ${fresh.name} on the next Refresh.`);
-    });
+  function send(input: SetSkillInput) {
+    setSkill.mutate(input, { onError });
   }
 
   return (
@@ -80,18 +70,13 @@ export function SkillsForMatching({ profile }: { profile: ProfileDto }) {
             catalog={profile.skillCatalog}
             taken={new Set(shown.map((c) => c.name.toLowerCase()))}
             disabled={setSkill.isPending}
-            onAdd={add}
+            onAdd={(name) => send({ name, state: "added" })}
           />
         </li>
       </ul>
       {shown.length === 0 && (
         <p className="text-muted-foreground text-sm">
           None yet. A skill counts once a confirmed fact names it, or once you add it.
-        </p>
-      )}
-      {note && (
-        <p role="status" className="text-muted-foreground text-sm">
-          {note}
         </p>
       )}
       {hidden.length > 0 && (

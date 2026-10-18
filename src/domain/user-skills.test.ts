@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { SKILLS } from "./features";
-import { customSkillNames, isBuiltinSkill, MAX_SKILL_NAME, normalizeSkillName, profileSkills } from "./user-skills";
+import { BUILTIN_SKILLS, BUILTIN_SKILLS_VERSION, compileSkills, SKILLS } from "./features";
+import {
+  customSkillNames,
+  dictionaryStamp,
+  isBuiltinSkill,
+  MAX_SKILL_NAME,
+  normalizeSkillName,
+  profileSkills,
+  skillsStamp,
+} from "./user-skills";
 
 describe("normalizeSkillName", () => {
   test("trims and collapses spaces, keeping the user's spelling", () => {
@@ -87,5 +95,32 @@ describe("profileSkills", () => {
         { name: "Hasura", kind: "added" },
       ]),
     ).toEqual(["Temporal", "Hasura"]);
+  });
+});
+
+describe("skillsStamp (decision 68)", () => {
+  const stamp = (customNames: string[], version = 1) => skillsStamp({ version, customNames });
+  test("the same set in another order gives the same stamp", () => {
+    expect(stamp(["Temporal", "Hasura", "Zig"])).toBe(stamp(["Zig", "Temporal", "Hasura"]));
+    expect(stamp([])).toBe(stamp([]));
+  });
+  test("any change to the set, or to the version, gives another stamp", () => {
+    const stamps = [
+      stamp([]),
+      stamp(["Temporal"]),
+      stamp(["Temporal", "Hasura"]),
+      stamp(["Hasura"]),
+      stamp(["temporal"]),
+      stamp(["Temporal Hasura"]),
+      stamp([], 2),
+      stamp(["Temporal"], 2),
+    ];
+    expect(new Set(stamps).size).toBe(stamps.length);
+  });
+  test("a dictionary's stamp is the current version with its own names", () => {
+    expect(dictionaryStamp()).toBe(stamp([], BUILTIN_SKILLS_VERSION));
+    expect(dictionaryStamp(BUILTIN_SKILLS)).toBe(dictionaryStamp(compileSkills([])));
+    // A built-in or repeated name compiles to nothing, so it does not change the stamp.
+    expect(dictionaryStamp(compileSkills(["Hasura", "go", "hasura"]))).toBe(stamp(["Hasura"], BUILTIN_SKILLS_VERSION));
   });
 });

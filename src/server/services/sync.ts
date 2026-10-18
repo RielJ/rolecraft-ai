@@ -6,6 +6,7 @@ import { type Derived, derive, jobSkills } from "@/domain/posting";
 import { buildEligibilityPrompt, ELIGIBILITY_MAX_TOKENS } from "@/domain/prompts";
 import { matchesKeywords, roleDropReason, roleFit } from "@/domain/roles";
 import { type FetchOutcome, type PlannedPosting, planSourceRun, type SourcePlan } from "@/domain/sync-plan";
+import { dictionaryStamp } from "@/domain/user-skills";
 import type { AiPassResult, JobId, RefreshResult, RefreshSourceResult } from "@/shared/api";
 import { BUILTIN_SOURCE_KINDS, type SourceStatus } from "@/shared/enums";
 import { type Posting, SourceError } from "../adapters/sources";
@@ -500,7 +501,7 @@ async function setStatus(
   await tx.update(sources).set(patch).where(eq(sources.id, sourceId));
 }
 
-// ---------- skills in stored jobs (decision 66) ----------
+// ---------- skills in stored jobs (decisions 66 and 68) ----------
 
 /** Open jobs are read again in batches this size, each its own transaction. */
 export const REREAD_BATCH = 500;
@@ -508,9 +509,10 @@ export const REREAD_BATCH = 500;
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /**
- * Read the skills of every open job again with the current dictionary, so a skill the user added,
- * or one added to the built-ins, shows on jobs stored before it. Only rows whose skills changed
- * are written, with one `UPDATE ... FROM (VALUES ...)` per batch. Returns how many changed.
+ * Read the skills of open jobs again, but only the jobs whose `skills_stamp` is not the stamp of
+ * `skills` (decision 68): jobs read with an older built-in version, with another set of the
+ * user's own skills, or never stamped. Each gets the new stamp; only rows whose skills changed get
+ * new skills. One `UPDATE ... FROM (VALUES ...)` per batch. Returns how many jobs were read.
  */
 export async function rereadSkills({
   deps,
@@ -519,38 +521,47 @@ export async function rereadSkills({
   deps: Pick<SyncDeps, "db" | "userId">;
   skills: SkillDictionary;
 }): Promise<number> {
-  let changed = 0;
+  const stamp = dictionaryStamp(skills);
+  let read = 0;
   let after: JobId | null = null;
   for (;;) {
-    const batch: { last: JobId | null; changed: number } = await asSync(deps.db, async (tx) => {
+    const batch: { last: JobId | null; read: number } = await asSync(deps.db, async (tx) => {
       const rows = await tx
         .select({ id: jobs.id, title: jobs.title, description: jobs.description, skills: jobs.skills })
         .from(jobs)
         .where(
-          and(eq(jobs.userId, deps.userId), isNull(jobs.closedAt), after === null ? undefined : gt(jobs.id, after)),
+          and(
+            eq(jobs.userId, deps.userId),
+            isNull(jobs.closedAt),
+            sql`${jobs.skillsStamp} IS DISTINCT FROM ${stamp}`,
+            after === null ? undefined : gt(jobs.id, after),
+          ),
         )
         .orderBy(asc(jobs.id))
         .limit(REREAD_BATCH);
-      const updates = rows.flatMap((row) => {
-        const next = jobSkills(row, skills);
-        return sameList(next, row.skills) ? [] : [{ id: row.id, skills: next }];
-      });
-      if (updates.length > 0) {
-        // Each list goes as one JSON parameter: a bare array would be spread into separate parameters.
+      if (rows.length > 0) {
+        // Each list goes as one JSON parameter: a bare array would be spread into separate
+        // parameters. Null keeps the stored list, which is already right.
         const values = sql.join(
-          updates.map((u) => sql`(${u.id}::uuid, ${JSON.stringify(u.skills)}::jsonb)`),
+          rows.map((row) => {
+            const next = jobSkills(row, skills);
+            const changed = sameList(next, row.skills) ? null : JSON.stringify(next);
+            return sql`(${row.id}::uuid, ${changed}::jsonb)`;
+          }),
           sql`, `,
         );
         await tx.execute(sql`
           UPDATE jobs j
-          SET skills = ARRAY(SELECT e.value FROM jsonb_array_elements_text(v.skills) WITH ORDINALITY e(value, n) ORDER BY e.n)
+          SET skills_stamp = ${stamp},
+            skills = CASE WHEN v.skills IS NULL THEN j.skills
+              ELSE ARRAY(SELECT e.value FROM jsonb_array_elements_text(v.skills) WITH ORDINALITY e(value, n) ORDER BY e.n) END
           FROM (VALUES ${values}) AS v(id, skills)
           WHERE j.id = v.id`);
       }
-      return { last: rows.length < REREAD_BATCH ? null : (rows.at(-1)?.id ?? null), changed: updates.length };
+      return { last: rows.length < REREAD_BATCH ? null : (rows.at(-1)?.id ?? null), read: rows.length };
     });
-    changed += batch.changed;
-    if (batch.last === null) return changed;
+    read += batch.read;
+    if (batch.last === null) return read;
     after = batch.last;
   }
 }

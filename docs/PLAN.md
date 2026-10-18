@@ -360,6 +360,7 @@ CREATE TABLE jobs (
   pay_phrase          text,              -- the posted wording, shown next to the conversion
   hours               jsonb,             -- {phrase, tz, start, end} | {phrase, tz, overlapHours}
   skills              text[] NOT NULL DEFAULT '{}',
+  skills_stamp        text,              -- the dictionary the skills were read with; null is stale (decision 68)
   seniority           text CHECK (seniority IN ('intern','junior','mid','senior','lead','staff','principal','manager')),
   min_years           smallint,
   eligibility         text NOT NULL DEFAULT 'unclear'
@@ -376,7 +377,7 @@ CREATE TABLE jobs (
   CHECK (pay_min IS NULL OR pay_currency IS NOT NULL),
   CHECK (pay_min IS NULL OR pay_max IS NULL OR pay_max >= pay_min),
   CHECK (eligibility_phrase IS NOT NULL OR eligibility = 'unclear')
-);
+) WITH (fillfactor = 50);                -- skills and stamp updates stay HOT (decision 68)
 CREATE UNIQUE INDEX jobs_apply_url_key ON jobs (user_id, apply_url_key, title_key); -- dedup key 1, DB-enforced;
                                          -- title_key is included so a generic careers-page apply URL can't force two roles together
 CREATE INDEX jobs_company_title ON jobs (user_id, company_key, title_key, description_key); -- dedup key 2 lookup
@@ -699,7 +700,7 @@ Exclusion beats inclusion of a region, and every pattern is case-insensitive wit
 `matchJob({ job, profile })` in `domain/match.ts`, where `profile` holds the target titles, the skills used for matching (`profileSkills`: skills in confirmed facts, plus the user's added skills, minus hidden ones; decision 66), seniority and years. It returns `{ level: 'strong' | 'possible' | 'weak'; reasons: Reason[] }`, where each reason has a sign and a short sentence.
 
 - **Title fit**: best token Jaccard between the job's title words and each target title's, with seniority words removed from both. Title words are `title_key`'s, with fullstack/frontend/backend split, developer and programmer read as engineer, and the tail after " - ", " | ", " — ", " – " or "(" cut when two words come before it (decision 66; `title_key` itself, which dedup uses, is unchanged). ≥ 0.6 is a fit, ≥ 0.3 partial, below that none.
-- **Skills**: `matched = job.skills ∩ profile.skills`, `missing = job.skills − profile.skills`, `coverage = matched / max(1, job.skills.length)`. Reasons name up to five of each. `job.skills` is read with the user's dictionary (built-ins, then their own skills) and filtered on read to skills still in it; Refresh reads every open job's skills again.
+- **Skills**: `matched = job.skills ∩ profile.skills`, `missing = job.skills − profile.skills`, `coverage = matched / max(1, job.skills.length)`. Reasons name up to five of each. `job.skills` is read with the user's dictionary (built-ins, then their own skills) and filtered on read to skills still in it. Adding or removing a skill of your own updates stored open jobs in the same request, and a Refresh reads again only the open jobs whose `skills_stamp` is stale (decision 68).
 - **Seniority**: on the ladder intern < junior < mid < senior < lead < staff < principal, a gap of two or more steps is a negative. Manager roles are a negative unless the user's targets include a manager title.
 - **Years**: `job.min_years > profile.years + 1` is a negative.
 - **Eligibility**: `ph`, `worldwide`, `apac` are positives. `americas` and `unclear` cap the level at Possible. `excluded` forces Weak.

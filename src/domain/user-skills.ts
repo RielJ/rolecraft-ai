@@ -1,5 +1,6 @@
 import type { SkillChipSource, UserSkillKind } from "@/shared/enums";
-import { SKILLS } from "./features";
+import { BUILTIN_SKILLS, BUILTIN_SKILLS_VERSION, SKILLS, type SkillDictionary } from "./features";
+import { sha256Hex } from "./text";
 
 /**
  * The user's own skill list (decision 66): skills added to matching, and skills found in confirmed
@@ -98,4 +99,19 @@ export function profileSkills({
 /** The user's own skills that are not built in, in the order added: what `compileSkills` reads jobs for. */
 export function customSkillNames(rows: readonly { name: string; kind: UserSkillKind }[]): string[] {
   return rows.filter((r) => r.kind === "added" && !isBuiltinSkill(r.name)).map((r) => r.name);
+}
+
+/**
+ * What a job's `skills_stamp` holds (decision 68): the built-in dictionary version and the set of
+ * the user's own names it was read with. Order does not count: the same names added in another
+ * order give the same stamp, and any added or removed name gives another one.
+ */
+export function skillsStamp({ version, customNames }: { version: number; customNames: readonly string[] }): string {
+  const names = [...new Set(customNames)].sort();
+  return `${version}:${sha256Hex(names.join("\u0000")).slice(0, 16)}`;
+}
+
+/** The stamp of the dictionary `dict` reads with. */
+export function dictionaryStamp(dict: SkillDictionary = BUILTIN_SKILLS): string {
+  return skillsStamp({ version: BUILTIN_SKILLS_VERSION, customNames: dict.custom });
 }
