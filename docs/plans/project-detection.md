@@ -48,4 +48,23 @@ A side project reaches drafts only after the user adds it as an add-on by hand: 
 ## Later (not planned)
 
 - **Public API listing**, for Docker or users without gh: `users/<user>/repos?type=owner`, public repos only, 60 requests an hour.
-- **Local folder scan** (`HB_PROJECTS_DIR`), to find repos with no remote (6 today, including `hanapbuhay` and `pi-adw`): own repos by commit authors (`git log --format=%ae` against `git config user.email`), at least 5 commits and half the commits yours; a repo with a github.com remote merges with the gh list by owner and name; a repo with none becomes a link-less add-on with the first README paragraph as text. Only works when the server runs on the user's machine.
+
+## Local folder scan (decision 79, built)
+
+`HB_PROJECTS_DIR` adds a second section to the dialog, listed first. Findings from the real folder (25 subfolders) that shaped the rules:
+
+- 13 folders are clones of listed repos. They merge into the GitHub row and show "N commits by you locally". Five of those repos are under 5 KB on GitHub but have 10 to 277 local commits, so local history overrides "nearly empty".
+- 4 repos have no remote or a remote GitHub no longer has: `hanapbuhay`, `pi-adw`, `adw-graph-tui`, and `portfolio-next`, whose remote returns 404. With a gh listing, an unlisted remote of yours gets no link, so a dead link never reaches a resume.
+- `pi-mux-ref` is a clone of someone else's repo (0 of 31 commits yours), so it is hidden as "mostly others".
+- `job-hunter`'s one commit is by `local`. Authors without an "@" count as no one, so it is hidden as "few commits", not "others".
+- 5 folders are not git repos.
+- `portfolio-next`'s README opens with create-next-app's boilerplate. Known generator openers give no summary.
+
+The folder is read with `git log --format=%ae%x09%cI` (at most 5000 commits) and `git config --get remote.origin.url`, both with `-c core.fsmonitor=false` and `GIT_OPTIONAL_LOCKS=0`. A scan of 25 folders and 75 GitHub repos takes about 2 seconds.
+
+## One project into the add-on form (decision 80, built)
+
+- `src/domain/project-source.ts` parses a pasted GitHub link, GitLab link or folder path and turns what was read into form values. Only gitlab.com and `HB_GITLAB_HOSTS` count as GitLab.
+- `about` on the GitHub reader returns a repo's or pull request's name, visibility, description, language and README. `src/server/adapters/gitlab.ts` reads public GitLab projects. `createFolderReader` in `local-projects.ts` reads one folder; the folder scan now uses it too.
+- `POST /profile/addons/prefill` only reads. The form's save sends `linkPrivate` while the filled-in link is unchanged.
+- Tests: `src/domain/project-source.test.ts`, `test/prefill.test.ts` (GitHub fixtures, a fake GitLab, real temporary folders), and an e2e test with an accessibility check in both themes.

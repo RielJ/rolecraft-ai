@@ -191,6 +191,26 @@ function defaultGithubPicks(request: AiCompletionRequest): string {
 }
 
 /**
+ * Feature grouping (decision 81): commits grouped by the first word of their subject, in list
+ * order, at most 3 per feature and 6 features.
+ */
+function defaultFeatures(request: AiCompletionRequest): string {
+  const prompt = request.messages[0]?.content ?? "";
+  const user = /^PERSON: (.*)$/m.exec(prompt)?.[1] ?? "";
+  const groups = new Map<string, string[]>();
+  for (const line of dataBlock(prompt, `COMMITS BY ${user}`).split("\n")) {
+    const m = /^([0-9a-f]{7,40}) \S+ \+\d+ -\d+ (\S+)/.exec(line);
+    if (!m?.[1] || !m[2]) continue;
+    const word = m[2].replace(/[:(].*$/, "").toLowerCase();
+    const shas = groups.get(word) ?? [];
+    if (shas.length < 3) shas.push(m[1]);
+    groups.set(word, shas);
+  }
+  const features = [...groups].slice(0, 6).map(([name, commits]) => ({ name, commits }));
+  return JSON.stringify({ features });
+}
+
+/**
  * GitHub facts: one per commit (its subject, citing its sha), plus the README's first plain
  * sentence citing the README. Everything comes from the data, so every fact passes the checks.
  */
@@ -283,6 +303,7 @@ function defaultReply(request: AiCompletionRequest): string {
   if (last.includes('{"questions"')) return defaultQuestions(request);
   if (last.includes('{"rewrites"')) return defaultRewrite(request);
   if (last.includes('{"files"')) return defaultGithubPicks(request);
+  if (last.includes('{"features"')) return defaultFeatures(request);
   // Before the split check: the GitHub facts reply shape also starts with {"facts".
   if (last.includes('"evidence"')) return defaultGithubFacts(request);
   if (last.includes('{"facts"')) return defaultSplit(request);

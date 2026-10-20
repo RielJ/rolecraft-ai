@@ -4,8 +4,10 @@ import { Hono } from "hono";
 import { createFakeAi } from "@/server/adapters/ai/fake";
 import { offlineFx } from "@/server/adapters/fx";
 import { createPublicReader } from "@/server/adapters/github";
+import { createGitlabReader } from "@/server/adapters/gitlab";
 import { createHttpClient } from "@/server/adapters/http";
 import { createFileKeyStore } from "@/server/adapters/key-store";
+import { createFolderReader } from "@/server/adapters/local-projects";
 import { createChromiumPdf } from "@/server/adapters/pdf";
 import { createSourceAdapters } from "@/server/adapters/sources";
 import { createDb } from "@/server/db/client";
@@ -209,6 +211,9 @@ describe("createApp mounts the guard first", () => {
     http,
     sources: createSourceAdapters(http),
     github: createPublicReader({ http, user: null }),
+    projects: null,
+    folders: createFolderReader({ readConfigEmail: false }),
+    gitlab: createGitlabReader({ http }),
     fx: offlineFx(),
     clock: { now: () => new Date("2026-10-18T00:00:00Z") },
   };

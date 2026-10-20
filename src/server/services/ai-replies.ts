@@ -63,6 +63,15 @@ export function parseGithubPicksReply(text: string): string[] | null {
   return parseReply(text, GithubPicksReply)?.files ?? null;
 }
 
+const FeaturesReply = z.object({
+  features: z.array(z.object({ name: z.string().max(300), commits: z.array(z.string().max(80)).max(20) })).max(30),
+});
+
+/** The features the light model grouped commits into, unvalidated (validateFeatures checks them). Null when unreadable. */
+export function parseFeaturesReply(text: string): { name: string; commits: string[] }[] | null {
+  return parseReply(text, FeaturesReply)?.features ?? null;
+}
+
 const GithubFactsReply = z.object({
   facts: z.array(z.object({ text: z.string().max(2000), evidence: z.string().max(300) })),
 });

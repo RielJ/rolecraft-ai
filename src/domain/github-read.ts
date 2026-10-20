@@ -1,5 +1,7 @@
 import type { FactEvidence } from "@/shared/api";
 import { commitUrl, fileUrl, type GithubRepoRef } from "./github-link";
+import type { CommitPatch, Feature, Framing } from "./project-read";
+import { isSecretPath } from "./project-read";
 import { estimateTokens } from "./prompts";
 import { checkCandidates } from "./split";
 import { normalize } from "./text";
@@ -64,9 +66,9 @@ export function manifestPaths(tree: readonly string[]): string[] {
 const SKIPPED_FILE =
   /(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Gemfile\.lock|composer\.lock)$|\.(?:png|jpe?g|gif|webp|ico|svg|pdf|zip|gz|tgz|jar|exe|dll|so|dylib|woff2?|ttf|otf|mp[34]|mov|wasm|min\.js|map)$/i;
 
-/** Whether a tree path is worth reading as text: not a lock file, image, archive or binary. */
+/** Whether a tree path is worth reading as text: not a lock file, image, archive, binary or secret. */
 export function isReadablePath(path: string): boolean {
-  return !SKIPPED_FILE.test(path);
+  return !SKIPPED_FILE.test(path) && !isSecretPath(path);
 }
 
 // ---------- Budget ----------
@@ -107,27 +109,40 @@ export type GithubCommit = { sha: string; subject: string };
 export type ChangedFile = { path: string; additions: number; deletions: number };
 export type GithubComment = { author: string; body: string };
 
-type BundleBase = GithubRepoRef & {
-  /** The GitHub user whose work this is. */
+type ReadBase = {
+  /** Whose work this is: a GitHub login, or the user's commit emails for a folder. */
   user: string;
   private: boolean;
   description: string;
-  /** The branch (repo) or head commit (pull request) that file links point at. */
-  at: string;
-  /** The user's commits, newest first, at most 50. */
+  /** The user's commits listed for the AI, newest first; picked commits always among them. */
   commits: GithubCommit[];
   /** Tokens of repo text used, at most `GITHUB_TOKEN_CAP`. */
   tokens: number;
+  /** Whether the README describes the user's project (decision 81). */
+  framing: Framing;
+  /** The user's commits and all commits, when counted; null when framing came from the owner. */
+  share: { mine: number; total: number } | null;
+  /** The features the light model found, each with the commits whose hunks were read. */
+  features: Feature[];
+  /** Hunks of the picked commits, within `PATCH_TOKENS`. */
+  patches: CommitPatch[];
 };
 
-export type RepoBundle = BundleBase & {
-  kind: "repo";
+type BundleBase = GithubRepoRef &
+  ReadBase & {
+    /** The branch (repo) or head commit (pull request) that file links point at. */
+    at: string;
+  };
+
+type TreeFiles = {
   /** README, manifests and picked files, in the order they were read. */
   files: GithubFile[];
   /** Tree paths shown to the AI, and how many the tree had in all. */
   tree: string[];
   treeTotal: number;
 };
+
+export type RepoBundle = BundleBase & TreeFiles & { kind: "repo" };
 
 export type PullBundle = BundleBase & {
   kind: "pull";
@@ -142,6 +157,49 @@ export type PullBundle = BundleBase & {
 };
 
 export type GithubBundle = RepoBundle | PullBundle;
+
+/**
+ * Where a folder's evidence links point (decision 81): its remote, when that answers without
+ * login. Only commits on a remote branch and files in the remote's tree get links.
+ */
+export type RemoteLinks = {
+  host: "github" | "gitlab";
+  /** `https://github.com/o/r` or `https://gitlab.com/g/p`. */
+  web: string;
+  /** The remote commit file links point at. */
+  at: string;
+  pushed: string[];
+  files: string[];
+};
+
+/** A folder on this machine, read with git (decision 81). */
+export type FolderBundle = ReadBase &
+  TreeFiles & {
+    kind: "folder";
+    /** The project's name: its remote's `owner/repo`, or the folder's name. */
+    name: string;
+    /** Null for a private project: its facts show only `name`. */
+    links: RemoteLinks | null;
+  };
+
+/** Anything a read fills: a GitHub repo or pull request, or a folder. */
+export type ProjectBundle = GithubBundle | FolderBundle;
+
+/** `owner/repo` for GitHub bundles, the project name for folders. */
+export function bundleName(bundle: ProjectBundle): string {
+  return bundle.kind === "folder" ? bundle.name : `${bundle.owner}/${bundle.repo}`;
+}
+
+function remoteFileUrl(links: RemoteLinks, path: string): string {
+  const parts = path.split("/").map(encodeURIComponent).join("/");
+  return links.host === "github"
+    ? `${links.web}/blob/${encodeURIComponent(links.at)}/${parts}`
+    : `${links.web}/-/blob/${encodeURIComponent(links.at)}/${parts}`;
+}
+
+function remoteCommitUrl(links: RemoteLinks, sha: string): string {
+  return links.host === "github" ? `${links.web}/commit/${sha}` : `${links.web}/-/commit/${sha}`;
+}
 
 /** Picks from the AI, kept only when they are readable tree paths not read yet. At most five. */
 export function validatePicks({
@@ -170,57 +228,61 @@ export function validatePicks({
 
 const SHA = /^[0-9a-f]{7,40}$/i;
 
-/** The files a fact may cite: those whose text was read (repo), or the changed files (pull request). */
-function citableFiles(bundle: GithubBundle): string[] {
-  return bundle.kind === "repo" ? bundle.files.map((f) => f.path) : bundle.changed.map((f) => f.path);
+/** The files a fact may cite: those whose text was read (repo, folder), or the changed files (pull request). */
+function citableFiles(bundle: ProjectBundle): string[] {
+  return bundle.kind === "pull" ? bundle.changed.map((f) => f.path) : bundle.files.map((f) => f.path);
+}
+
+/** A file's or commit's link: GitHub for GitHub bundles, the public remote for folders, else null. */
+function evidenceUrl(bundle: ProjectBundle, ref: { path: string } | { sha: string }): string | null {
+  if (bundle.kind !== "folder") {
+    return "path" in ref
+      ? fileUrl({ owner: bundle.owner, repo: bundle.repo, at: bundle.at, path: ref.path })
+      : commitUrl({ owner: bundle.owner, repo: bundle.repo, sha: ref.sha });
+  }
+  const links = bundle.links;
+  if (!links) return null;
+  if ("path" in ref) return links.files.includes(ref.path) ? remoteFileUrl(links, ref.path) : null;
+  return links.pushed.includes(ref.sha) ? remoteCommitUrl(links, ref.sha) : null;
 }
 
 /**
  * The evidence a cited path or sha stands for, or null when it names nothing that was read. A sha
  * may be shortened to seven characters as long as it names one commit.
  */
-export function resolveEvidence({ bundle, cited }: { bundle: GithubBundle; cited: string }): FactEvidence | null {
+export function resolveEvidence({ bundle, cited }: { bundle: ProjectBundle; cited: string }): FactEvidence | null {
   const ref = cited.trim();
-  const repo = `${bundle.owner}/${bundle.repo}`;
+  const repo = bundleName(bundle);
   const path = ref.replace(/^\.?\//, "");
   if (citableFiles(bundle).includes(path)) {
-    return {
-      kind: "file",
-      path,
-      url: fileUrl({ owner: bundle.owner, repo: bundle.repo, at: bundle.at, path }),
-      repo,
-      private: bundle.private,
-    };
+    return { kind: "file", path, url: evidenceUrl(bundle, { path }), repo, private: bundle.private };
   }
   if (SHA.test(ref)) {
     const prefix = ref.toLowerCase();
     const matches = bundle.commits.filter((c) => c.sha.toLowerCase().startsWith(prefix));
     const [commit] = matches;
     if (matches.length === 1 && commit) {
-      return {
-        kind: "commit",
-        sha: commit.sha,
-        url: commitUrl({ owner: bundle.owner, repo: bundle.repo, sha: commit.sha }),
-        repo,
-        private: bundle.private,
-      };
+      return { kind: "commit", sha: commit.sha, url: evidenceUrl(bundle, commit), repo, private: bundle.private };
     }
   }
   return null;
 }
 
 /** Every word of repo text the AI saw: the only evidence a fact's numbers and names may rest on. */
-export function bundleEvidenceText(bundle: GithubBundle): string {
-  const head = [`${bundle.owner}/${bundle.repo}`, bundle.repo, bundle.description];
+export function bundleEvidenceText(bundle: ProjectBundle): string {
+  const name = bundleName(bundle);
+  const head = [name, name.split("/").at(-1) ?? name, bundle.description];
   const commits = bundle.commits.map((c) => c.subject);
-  if (bundle.kind === "repo")
-    return [...head, ...bundle.files.map((f) => f.text), ...bundle.tree, ...commits].join("\n");
+  const patches = bundle.patches.map((p) => `${p.path}\n${p.text}`);
+  if (bundle.kind !== "pull")
+    return [...head, ...bundle.files.map((f) => f.text), ...bundle.tree, ...commits, ...patches].join("\n");
   return [
     ...head,
     bundle.title,
     bundle.body,
     ...bundle.changed.map((f) => f.path),
     ...commits,
+    ...patches,
     ...bundle.discussion.map((c) => c.body),
   ].join("\n");
 }
@@ -238,7 +300,7 @@ export function acceptGithubFacts({
   bundle,
   proposals,
 }: {
-  bundle: GithubBundle;
+  bundle: ProjectBundle;
   proposals: readonly GithubProposal[];
 }): { kept: AcceptedGithubFact[]; dropped: DroppedGithubFact[] } {
   const kept: AcceptedGithubFact[] = [];

@@ -8,8 +8,10 @@ import type { AiClients, AiSource } from "./adapters/ai/types";
 import { createFixtureFx, createFxSource } from "./adapters/fx";
 import { createGhReader, createPublicReader, type GithubReader } from "./adapters/github";
 import { createFixtureReader } from "./adapters/github-fixture";
+import { createGitlabReader } from "./adapters/gitlab";
 import { createHttpClient } from "./adapters/http";
 import { createFileKeyStore } from "./adapters/key-store";
+import { createFolderReader, createProjectsReader } from "./adapters/local-projects";
 import { createChromiumPdf } from "./adapters/pdf";
 import { createSourceAdapters } from "./adapters/sources";
 import { createFixtureSources } from "./adapters/sources/fixture";
@@ -87,6 +89,11 @@ function buildGithub(): GithubReader {
   }
 }
 const github = buildGithub();
+const folders = createFolderReader({ extraEmails: env.HB_GIT_EMAILS ?? [] });
+const gitlab = createGitlabReader({ http, hosts: env.HB_GITLAB_HOSTS ?? [] });
+const projects = env.HB_PROJECTS_DIR
+  ? createProjectsReader({ dir: env.HB_PROJECTS_DIR, extraEmails: env.HB_GIT_EMAILS ?? [] })
+  : null;
 const fx = env.HB_FX === "fixture" ? createFixtureFx({ dir: env.HB_FX_DIR }) : createFxSource(http);
 
 const deps: Deps = {
@@ -99,6 +106,9 @@ const deps: Deps = {
   http,
   sources,
   github,
+  projects,
+  folders,
+  gitlab,
   fx,
   clock: { now: () => new Date() },
 };

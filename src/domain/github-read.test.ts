@@ -34,6 +34,10 @@ const repo: RepoBundle = {
     { sha: SHA_B, subject: "Cache route lookups" },
   ],
   tokens: 100,
+  framing: "own",
+  share: null,
+  features: [],
+  patches: [],
 };
 
 describe("budget", () => {
@@ -139,6 +143,10 @@ describe("evidence", () => {
       commits: [{ sha: SHA_A, subject: "Retry webhooks with backoff" }],
       discussion: [{ author: "maria", body: "Looks good." }],
       tokens: 50,
+      framing: "contribution",
+      share: null,
+      features: [],
+      patches: [],
     };
     const { kept } = acceptGithubFacts({
       bundle: pull,

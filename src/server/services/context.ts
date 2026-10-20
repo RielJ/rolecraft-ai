@@ -2,8 +2,10 @@ import type { ErrorCode, UserId } from "@/shared/api";
 import type { AiClients, AiSource } from "../adapters/ai/types";
 import type { FxSource } from "../adapters/fx";
 import type { GithubReader } from "../adapters/github";
+import type { GitlabReader } from "../adapters/gitlab";
 import type { HttpClient } from "../adapters/http";
 import type { KeyStore } from "../adapters/key-store";
+import type { FolderReader, ProjectsReader } from "../adapters/local-projects";
 import type { PdfRenderer } from "../adapters/pdf";
 import type { SourceAdapters } from "../adapters/sources";
 import type { Db } from "../db/client";
@@ -26,6 +28,12 @@ export type Deps = {
   sources: SourceAdapters;
   /** Reads GitHub links on add-ons: public REST, `gh api` (HB_GITHUB=gh) or fixture snapshots. */
   github: GithubReader;
+  /** The local projects folder (HB_PROJECTS_DIR), or null when unset (decision 78). */
+  projects: ProjectsReader | null;
+  /** Reads one folder by path, to fill the add-on form (decision 80). */
+  folders: FolderReader;
+  /** Reads one public GitLab project, to fill the add-on form (decision 80). */
+  gitlab: GitlabReader;
   /** Exchange-rate sources (decision 67): live, fixture files (HB_FX=fixture), or offline in tests. */
   fx: FxSource;
   clock: Clock;

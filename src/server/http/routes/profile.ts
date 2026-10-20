@@ -3,13 +3,14 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
   AddonInput,
-  AddReposInput,
+  AddProjectsInput,
   type ApiErrorBody,
   ConfirmOverCapInput,
   FactId,
   ItemId,
   MAX_CV_BYTES,
   PasteCvInput,
+  PrefillAddonInput,
   SaveRolesInput,
   SetSkillInput,
   UpdateFactInput,
@@ -17,7 +18,8 @@ import {
   UploadCvForm,
 } from "@/shared/api";
 import { AppError, type Deps } from "../../services/context";
-import { addGithubRepos, readGithub, scanGithubRepos } from "../../services/github";
+import { readGithub } from "../../services/github";
+import { prefillAddon } from "../../services/prefill";
 import {
   confirmAllFacts,
   confirmFact,
@@ -36,6 +38,7 @@ import {
   updateProfile,
   uploadCv,
 } from "../../services/profile";
+import { addProjects, scanProjects } from "../../services/projects";
 import { inlineDisposition } from "../disposition";
 import { validate } from "../validate";
 
@@ -87,10 +90,14 @@ export function profileRoutes(deps: Deps) {
         const bytes = new Uint8Array(await file.arrayBuffer());
         return c.json(await uploadCv(deps, { fileName: file.name, bytes, confirmOverCap: confirmOverCap === "true" }));
       })
-      // Finding the user's own repos through gh (decision 78).
-      .get("/profile/github/repos", async (c) => c.json(await scanGithubRepos(deps)))
-      .post("/profile/github/repos", validate("json", AddReposInput), async (c) =>
-        c.json(await addGithubRepos(deps, c.req.valid("json"))),
+      // Filling the add-on form from one link or folder (decision 80); nothing is saved.
+      .post("/profile/addons/prefill", validate("json", PrefillAddonInput), async (c) =>
+        c.json(await prefillAddon(deps, c.req.valid("json"))),
+      )
+      // Finding the user's projects on GitHub and in a local folder (decision 78).
+      .get("/profile/projects", async (c) => c.json(await scanProjects(deps)))
+      .post("/profile/projects", validate("json", AddProjectsInput), async (c) =>
+        c.json(await addProjects(deps, c.req.valid("json"))),
       )
       .post("/profile/addons", validate("json", AddonInput), async (c) =>
         c.json(await createAddon(deps, c.req.valid("json")), 201),

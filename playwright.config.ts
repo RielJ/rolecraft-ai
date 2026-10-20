@@ -25,6 +25,7 @@ function slotOf(slot: number) {
     databaseUrl: db.toString(),
     sourcesLog: join(dir, "sources.log"),
     githubDir: join(dir, "github"),
+    projectsDir: join(dir, "projects"),
     fxDir: join(dir, "fx"),
     dataDir: join(dir, "data"),
   };
@@ -40,6 +41,12 @@ export const E2E_SOURCES_LOG = own.sourcesLog;
 
 /** Recorded GitHub repos the server reads (HB_GITHUB=fixture). Tests copy snapshots here. */
 export const E2E_GITHUB_DIR = own.githubDir;
+
+/** The local projects folder the server scans (HB_PROJECTS_DIR). Tests make git repos here. */
+export const E2E_PROJECTS_DIR = own.projectsDir;
+
+/** The commit email the e2e server counts as the user's (HB_GIT_EMAILS). */
+export const E2E_GIT_EMAIL = "juan@example.ph";
 
 /**
  * Recorded exchange-rate bodies the server reads (HB_FX=fixture). Empty, so every rate fetch fails
@@ -82,6 +89,8 @@ export default defineConfig({
       HB_SOURCES_LOG: slot.sourcesLog,
       HB_GITHUB: "fixture",
       HB_GITHUB_DIR: slot.githubDir,
+      HB_PROJECTS_DIR: slot.projectsDir,
+      HB_GIT_EMAILS: E2E_GIT_EMAIL,
       HB_FX: "fixture",
       HB_FX_DIR: slot.fxDir,
       HB_DATA_DIR: slot.dataDir,

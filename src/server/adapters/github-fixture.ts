@@ -71,6 +71,7 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
       private: snapshot.private,
       description: snapshot.description,
       default_branch: snapshot.defaultBranch,
+      language: snapshot.language,
     };
   }
   if (rest.startsWith("git/trees/")) return { tree: paths.map((path) => ({ path, type: "blob" })), truncated: false };
@@ -193,6 +194,10 @@ export function createFixtureReader({ dir, user }: { dir: string; user: string |
     async read(input) {
       const transport = createFixtureTransport({ snapshots: await loadSnapshots(dir) });
       return createReader({ mode: "fixture", user, transport }).read(input);
+    },
+    async about(link) {
+      const transport = createFixtureTransport({ snapshots: await loadSnapshots(dir) });
+      return createReader({ mode: "fixture", user, transport }).about(link);
     },
     async list({ user: owner }) {
       return ownedSnapshots({ snapshots: await loadSnapshots(dir), user: owner });

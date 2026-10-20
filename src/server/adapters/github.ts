@@ -16,6 +16,7 @@ import {
   type TokenBudget,
   validatePicks,
 } from "@/domain/github-read";
+import type { GithubAbout } from "@/domain/project-source";
 import { estimateTokens } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
 import { type HttpClient, HttpError, MAX_BYTES } from "./http";
@@ -181,6 +182,7 @@ const Repo = z.object({
   private: z.boolean(),
   description: z.string().nullable(),
   default_branch: z.string(),
+  language: z.string().nullable().default(null),
 });
 const TreeEntry = z.object({ path: z.string(), type: z.string() });
 const Tree = z.object({ tree: z.array(TreeEntry), truncated: z.boolean().default(false) });
@@ -246,6 +248,8 @@ export type GithubReader = {
   /** `HB_GITHUB_USER`, when set. With gh it is required and is the only account gh may be. */
   readonly user: string | null;
   read(input: GithubReadInput): Promise<GithubBundle>;
+  /** A repo's or pull request's name, visibility, description, language and README, to fill the add-on form (decision 80). */
+  about(link: GithubLink): Promise<GithubAbout>;
   /** The repos `user` owns, organizations' excluded (decision 78). Null when this reader can't list. */
   readonly list: ((input: { user: string }) => Promise<OwnedRepo[]>) | null;
 };
@@ -459,6 +463,10 @@ export function createReader({
       treeTotal: all.length,
       commits,
       tokens: GITHUB_TOKEN_CAP - budget.left(),
+      framing: owner.toLowerCase() === input.user.toLowerCase() ? "own" : "contribution",
+      share: null,
+      features: [],
+      patches: [],
     };
   }
 
@@ -567,6 +575,47 @@ export function createReader({
       commits,
       discussion,
       tokens: GITHUB_TOKEN_CAP - budget.left(),
+      framing: "contribution",
+      share: null,
+      features: [],
+      patches: [],
+    };
+  }
+
+  /** At most this much README text is kept: the form only takes its first paragraph. */
+  const ABOUT_README_CHARS = 16_000;
+
+  async function about(link: GithubLink): Promise<GithubAbout> {
+    const info = await meta(link);
+    const [owner = link.owner, repo = link.repo] = info.full_name.split("/");
+    const base = repoPath({ owner, repo });
+    let pull: GithubAbout["pull"] = null;
+    if (link.kind === "pull") {
+      try {
+        const p = parse(Pull, await get(`${base}/pulls/${link.number}`), "the pull request");
+        pull = { number: link.number, title: p.title, body: p.body?.slice(0, ABOUT_README_CHARS) ?? null };
+      } catch (err) {
+        if (err instanceof GithubError && err.kind === "not_found") {
+          throw new GithubError({
+            kind: "not_found",
+            message: `Pull request #${link.number} of ${owner}/${repo} was not found.`,
+          });
+        }
+        throw err;
+      }
+    }
+    const readme =
+      link.kind === "repo"
+        ? await optional(async () => parse(Content, await get(`${base}/readme`), "the README"), null)
+        : null;
+    return {
+      owner,
+      repo,
+      private: info.private,
+      description: info.description,
+      language: info.language,
+      readme: readme ? (decodeContent(readme)?.slice(0, ABOUT_README_CHARS) ?? null) : null,
+      pull,
     };
   }
 
@@ -577,6 +626,10 @@ export function createReader({
       await beforeRead();
       const { link } = input;
       return link.kind === "pull" ? readPull({ ...input, link }) : readRepo({ ...input, link });
+    },
+    async about(link) {
+      await beforeRead();
+      return about(link);
     },
     list: null,
   };

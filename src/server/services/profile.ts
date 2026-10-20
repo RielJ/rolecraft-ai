@@ -22,6 +22,7 @@ import {
   type Contact,
   type FactId,
   GithubReadSummary,
+  type ItemFolderDto,
   type ItemGithubDto,
   type ItemId,
   MAX_STORED_CV_BYTES,
@@ -89,26 +90,42 @@ export async function loadContact(deps: Pick<Deps, "db" | "userId">): Promise<{
   };
 }
 
-/** The item's GitHub link, its read task and what the last finished read did; null for other links. */
-async function githubOf(deps: Deps, row: ItemRow): Promise<ItemGithubDto | null> {
-  const link = row.kind !== "cv" && row.link ? parseGithubLink(row.link) : null;
-  if (!link) return null;
+/**
+ * The item's read source: its folder (decision 81), else its GitHub link, with the read task and
+ * what the last finished read did. Both null for other items.
+ */
+async function readSourceOf(
+  deps: Deps,
+  row: ItemRow,
+): Promise<{ github: ItemGithubDto | null; folder: ItemFolderDto | null }> {
+  if (row.kind === "cv") return { github: null, folder: null };
+  const link = row.link ? parseGithubLink(row.link) : null;
+  if (!row.folder && !link) return { github: null, folder: null };
   const read = await latestTask(deps, { kind: "github_read", inputMatches: { itemId: row.id } });
   const summary = GithubReadSummary.safeParse(read?.result);
-  return {
+  const lastRead = summary.success ? summary.data : null;
+  if (row.folder) {
+    return {
+      github: null,
+      folder: { path: row.folder, private: row.githubPrivate, readTask: read?.task ?? null, lastRead },
+    };
+  }
+  if (!link) return { github: null, folder: null };
+  const github: ItemGithubDto = {
     kind: link.kind,
     label: githubLabel(link),
     private: row.githubPrivate,
     readTask: read?.task ?? null,
-    lastRead: summary.success ? summary.data : null,
+    lastRead,
   };
+  return { github, folder: null };
 }
 
 async function toItemDto(deps: Deps, row: ItemRow, itemRoles: readonly RoleDto[]): Promise<ProfileItemDto> {
   const withRoles = hasRoles(row.kind);
-  const [split, github, rolesRead] = await Promise.all([
+  const [split, { github, folder }, rolesRead] = await Promise.all([
     latestTask(deps, { kind: "split", inputMatches: { itemId: row.id } }),
-    githubOf(deps, row),
+    readSourceOf(deps, row),
     withRoles ? latestTask(deps, { kind: "roles_read", inputMatches: { itemId: row.id } }) : null,
   ]);
   return {
@@ -124,6 +141,7 @@ async function toItemDto(deps: Deps, row: ItemRow, itemRoles: readonly RoleDto[]
     fileName: row.fileName,
     splitTask: split?.task ?? null,
     github,
+    folder,
     roles: withRoles ? [...itemRoles] : [],
     rolesTask: rolesRead?.task ?? null,
   };
@@ -208,7 +226,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     skillCatalog: SKILLS.map((s) => s.name),
     cvFile,
     aiReady: aiConfig !== null,
-    githubScan: deps.github.list !== null,
+    projectScan: { github: deps.github.list !== null, local: deps.projects !== null },
   };
 }
 
@@ -831,14 +849,24 @@ function addonValues(input: AddonInput) {
   } satisfies Partial<typeof profileItems.$inferInsert>;
 }
 
+/** The folder an add-on is read from (decision 81), resolved again here: the form's copy is only a hint. */
+async function resolveFolder(deps: Deps, raw: string): Promise<string> {
+  try {
+    return await deps.folders.resolve(raw);
+  } catch (err) {
+    throw new AppError({ code: "needs_input", message: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 /** Save a new add-on and split it into pending facts. */
 export async function createAddon(deps: Deps, input: AddonInput): Promise<ProfileDto> {
   const values = addonValues(input);
   const confirmOverCap = input.confirmOverCap ?? false;
+  const folder = input.folder ? await resolveFolder(deps, input.folder) : null;
   await checkSplitCap(deps, { item: splitItem(values, []), kind: values.kind, confirmOverCap });
   const [created] = await deps.db
     .insert(profileItems)
-    .values({ userId: deps.userId, ...values })
+    .values({ userId: deps.userId, ...values, folder, githubPrivate: input.linkPrivate ? true : null })
     .returning({ id: profileItems.id });
   if (!created) throw new Error("Could not save the add-on.");
   await startSplit(deps, { itemId: created.id, confirmOverCap });
@@ -846,7 +874,11 @@ export async function createAddon(deps: Deps, input: AddonInput): Promise<Profil
 }
 
 /** An add-on created by the app rather than typed (decision 78), with its repo's visibility. */
-export type NewAddon = Omit<AddonInput, "confirmOverCap"> & { githubPrivate: boolean | null };
+export type NewAddon = Omit<AddonInput, "confirmOverCap" | "folder"> & {
+  githubPrivate: boolean | null;
+  /** A resolved folder path, read for facts with git (decision 81). */
+  folder?: string | null;
+};
 
 /**
  * Save several add-ons at once and split each into pending facts: one cap check for all the
@@ -858,14 +890,17 @@ export async function createAddons(
   { addons, confirmOverCap }: { addons: readonly NewAddon[]; confirmOverCap: boolean },
 ): Promise<ProfileDto> {
   if (addons.length === 0) return getProfile(deps);
-  const rows = addons.map((a) => ({ ...addonValues(a), githubPrivate: a.githubPrivate }));
+  const rows = addons.map((a) => ({ ...addonValues(a), githubPrivate: a.githubPrivate, folder: a.folder ?? null }));
   await checkSplitsCap(deps, {
     splits: rows.map((values) => ({ item: splitItem(values, []), kind: values.kind })),
     confirmOverCap,
   });
+  const now = Date.now();
   const created = await deps.db
     .insert(profileItems)
-    .values(rows.map((values) => ({ userId: deps.userId, ...values })))
+    // One millisecond apart, so the add-ons list in the order they were picked; one shared
+    // timestamp would leave the order to their random ids.
+    .values(rows.map((values, i) => ({ userId: deps.userId, ...values, createdAt: new Date(now + i) })))
     .returning({ id: profileItems.id });
   for (const { id } of created) await startSplit(deps, { itemId: id, confirmOverCap });
   return getProfile(deps);

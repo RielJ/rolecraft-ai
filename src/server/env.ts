@@ -67,6 +67,32 @@ const EnvSchema = z
     HB_GH_BIN: z.string().min(1).default("gh"),
     HB_GITHUB_DIR: z.string().min(1).default("./test/fixtures/github"),
     /**
+     * A local folder of project folders to look through for your own repos (decision 78). Only
+     * for a server on your own machine; unset hides the option.
+     */
+    HB_PROJECTS_DIR: z.string().min(1).optional(),
+    /** Self-hosted GitLab hosts a pasted link may be read from, comma-separated (decision 80). */
+    HB_GITLAB_HOSTS: z
+      .string()
+      .transform((v) =>
+        v
+          .split(",")
+          .map((h) => h.trim().toLowerCase())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.string().regex(HOSTNAME, "a hostname without scheme or port")))
+      .optional(),
+    /** Other emails your commits use, comma-separated, besides `git config --global user.email`. */
+    HB_GIT_EMAILS: z
+      .string()
+      .transform((v) =>
+        v
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean),
+      )
+      .optional(),
+    /**
      * Where exchange rates come from (decision 67). `live` asks Frankfurter (ECB) and currency-api.
      * `fixture` reads recorded bodies from HB_FX_DIR; a missing file fails like an unreachable site.
      */

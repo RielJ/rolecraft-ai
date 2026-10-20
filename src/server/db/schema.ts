@@ -183,6 +183,11 @@ export const profileItems = pgTable(
     githubRev: integer().notNull().default(0),
     /** The repo's visibility at the last read; null until read. */
     githubPrivate: boolean(),
+    /**
+     * The folder on this machine the add-on was added from (decisions 79, 80, 81), as a resolved
+     * absolute path; read for facts, never shown in an export.
+     */
+    folder: text(),
     createdAt: createdAt(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -191,6 +196,7 @@ export const profileItems = pgTable(
     check("profile_items_usage", oneOf("usage", ITEM_USAGES)),
     check("profile_items_cv_usage", sql`kind <> 'cv' OR usage = 'everywhere'`),
     check("profile_items_file_name", sql`kind = 'cv' OR file_name IS NULL`),
+    check("profile_items_folder", sql`kind <> 'cv' OR folder IS NULL`),
     uniqueIndex("profile_items_one_cv").on(sql`user_id`).where(sql`kind = 'cv'`),
   ],
 );

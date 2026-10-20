@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { cp, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText, getDocumentProxy } from "unpdf";
@@ -23,12 +23,22 @@ import {
   type GithubSnapshotInput,
 } from "@/server/adapters/github-fixture";
 import { createHttpClient } from "@/server/adapters/http";
+import { createProjectsReader, type ProjectsReader } from "@/server/adapters/local-projects";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { githubAppError, githubUserFor, privateGithubRepos } from "@/server/services/github";
 import { waitForTask } from "@/server/services/tasks";
-import { AddJobResult, ApiErrorBody, ProfileDto, RepoScanDto, TaskDto, TextExport, WorkspaceDto } from "@/shared/api";
+import {
+  AddJobResult,
+  ApiErrorBody,
+  ProfileDto,
+  ProjectScanDto,
+  TaskDto,
+  TextExport,
+  WorkspaceDto,
+} from "@/shared/api";
 import { githubExitCode, runGithubEval } from "../eval/run";
+import { makeRepo } from "./git-repos";
 import { resetDb, testDeps, testSql, waitForGithubReads, waitForSplits } from "./setup";
 
 const FIXTURES = join(import.meta.dir, "fixtures", "github");
@@ -464,9 +474,15 @@ async function fixtureDir(): Promise<string> {
   return dir;
 }
 
-async function setup(github: GithubReader, { links = ["https://github.com/juandc"] } = {}) {
+async function setup(
+  github: GithubReader,
+  {
+    links = ["https://github.com/juandc"],
+    projects = null,
+  }: { links?: string[]; projects?: ProjectsReader | null } = {},
+) {
   await resetDb();
-  deps = await testDeps({ github });
+  deps = await testDeps({ github, projects });
   app = createApp(deps);
   expect((await call("PUT", "/settings/ai-key", { provider: "anthropic", key: "sk-ant-good-key-a1B2" })).status).toBe(
     200,
@@ -702,8 +718,9 @@ describe("export filter", () => {
     await call("POST", "/facts/confirm-all");
     const privFact = githubFacts(profile).find((f) => f.evidence?.private && f.evidence.kind === "commit");
     const pubFact = githubFacts(profile).find((f) => !f.evidence?.private);
-    if (!privFact?.evidence || !pubFact?.evidence) throw new Error("missing facts");
+    if (!privFact?.evidence?.url || !pubFact?.evidence?.url) throw new Error("missing facts");
     const privateUrl = privFact.evidence.url;
+    const publicUrl = pubFact.evidence.url;
 
     const added = await json(
       await call("POST", "/jobs/from-paste", {
@@ -720,7 +737,7 @@ describe("export filter", () => {
       "# Juan Dela Cruz",
       `- ${privFact.text} (${privateUrl}) [${privFact.key}]`,
       `- Source: https://github.com/juandc/sari-ledger and github.com/JuanDC/sari-ledger/blob/main/go.mod. [${privFact.key}]`,
-      `- ${pubFact.text}, see ${pubFact.evidence.url} [${pubFact.key}]`,
+      `- ${pubFact.text}, see ${publicUrl} [${pubFact.key}]`,
     ].join("\n");
     await call("PATCH", `/outputs/${byKind("letter")}`, { body: `Dear Acme, see ${privateUrl} [${privFact.key}].` });
     await call("PATCH", `/outputs/${byKind("message")}`, { body: `Hi [${pubFact.key}].` });
@@ -729,7 +746,7 @@ describe("export filter", () => {
     const text = await json(await call("GET", `/outputs/${byKind("resume")}/text`), TextExport);
     expect(text.text).not.toMatch(/sari-ledger/i);
     expect(text.text).toContain(privFact.text);
-    expect(text.text).toContain(pubFact.evidence.url);
+    expect(text.text).toContain(publicUrl);
     const letter = await json(await call("GET", `/outputs/${byKind("letter")}/text`), TextExport);
     expect(letter.text).toBe("Dear Acme, see.");
 
@@ -770,9 +787,14 @@ async function listingDir(extra: GithubSnapshotInput[]): Promise<string> {
   return dir;
 }
 
-const scan = async (status = 200) => json(await call("GET", "/profile/github/repos"), RepoScanDto, status);
+const scanBoth = async () => json(await call("GET", "/profile/projects"), ProjectScanDto);
+const scan = async () => {
+  const { github } = await scanBoth();
+  if (github?.status !== "ok") throw new Error(`no GitHub listing: ${JSON.stringify(github)}`);
+  return github;
+};
 
-describe("Find my GitHub repos", () => {
+describe("Find my projects: GitHub", () => {
   beforeEach(async () => {
     const dir = await listingDir([
       listedOnly("forked-lib", { fork: true, pushedAt: "2026-10-01T00:00:00Z" }),
@@ -784,7 +806,8 @@ describe("Find my GitHub repos", () => {
   });
 
   test("lists the user's repos; rules move forks, the profile repo and tiny repos to a hidden group", async () => {
-    expect((await json(await call("GET", "/profile"), ProfileDto)).githubScan).toBe(true);
+    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({ github: true, local: false });
+    expect((await scanBoth()).local).toBeNull();
     const result = await scan();
     expect(result.user).toBe("juandc");
     expect(result.shown.map((r) => [r.name, r.private, r.language, r.added])).toEqual([
@@ -803,24 +826,24 @@ describe("Find my GitHub repos", () => {
 
   test("adds picked repos, hidden ones included, as open-source add-ons split into facts", async () => {
     const profile = await settle(
-      await call("POST", "/profile/github/repos", { names: ["jeep-route", "forked-lib", "org-thing", "nope"] }),
+      await call("POST", "/profile/projects", { repos: ["jeep-route", "forked-lib", "org-thing", "nope"] }),
     );
     expect(
       profile.addons.map((a) => ({ kind: a.kind, title: a.title, body: a.body, link: a.link, skills: a.skills })),
     ).toEqual([
       {
         kind: "open_source",
-        title: "forked-lib",
-        body: "forked-lib, a repository on GitHub.",
-        link: "https://github.com/juandc/forked-lib",
-        skills: [],
-      },
-      {
-        kind: "open_source",
         title: "jeep-route",
         body: "Jeepney route planner for Cebu City",
         link: "https://github.com/juandc/jeep-route",
         skills: ["TypeScript"],
+      },
+      {
+        kind: "open_source",
+        title: "forked-lib",
+        body: "forked-lib, a repository on GitHub.",
+        link: "https://github.com/juandc/forked-lib",
+        skills: [],
       },
     ]);
     // Each add-on's text was split; nothing was read from GitHub yet.
@@ -832,27 +855,127 @@ describe("Find my GitHub repos", () => {
     const after = await scan();
     expect(after.shown.find((r) => r.name === "jeep-route")?.added).toBe(true);
     expect(after.hidden.find((r) => r.name === "forked-lib")?.added).toBe(true);
-    const again = await call("POST", "/profile/github/repos", { names: ["jeep-route"] });
+    const again = await call("POST", "/profile/projects", { repos: ["jeep-route"] });
     expect(again.status).toBe(409);
   });
 
   test("a private repo is marked private when added, before any read", async () => {
-    const profile = await settle(await call("POST", "/profile/github/repos", { names: ["sari-ledger"] }));
+    const profile = await settle(await call("POST", "/profile/projects", { repos: ["sari-ledger"] }));
     expect(profile.addons[0]?.github?.private).toBe(true);
     expect(profile.addons[0]?.github?.lastRead).toBeNull();
     expect(await privateGithubRepos(deps)).toEqual([{ owner: "juandc", repo: "sari-ledger" }]);
   });
 
-  test("rejects more than 20 names at once", async () => {
-    const names = Array.from({ length: 21 }, (_, i) => `r${i}`);
-    expect((await call("POST", "/profile/github/repos", { names })).status).toBe(400);
+  test("rejects more than 20 names at once, counting both sources, and an empty pick", async () => {
+    const repos = Array.from({ length: 12 }, (_, i) => `r${i}`);
+    const folders = Array.from({ length: 9 }, (_, i) => `f${i}`);
+    expect((await call("POST", "/profile/projects", { repos, folders })).status).toBe(400);
+    expect((await call("POST", "/profile/projects", {})).status).toBe(400);
   });
 
-  test("without gh, the option is off and the routes answer 409", async () => {
+  test("without gh or a projects folder, the option is off and the routes answer 409", async () => {
     await setup(createPublicReader({ http: createHttpClient({}), user: null }));
-    expect((await json(await call("GET", "/profile"), ProfileDto)).githubScan).toBe(false);
-    expect((await call("GET", "/profile/github/repos")).status).toBe(409);
-    expect((await call("POST", "/profile/github/repos", { names: ["jeep-route"] })).status).toBe(409);
+    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({
+      github: false,
+      local: false,
+    });
+    expect((await call("GET", "/profile/projects")).status).toBe(409);
+    expect((await call("POST", "/profile/projects", { repos: ["jeep-route"] })).status).toBe(409);
+  });
+});
+
+describe("Find my projects: a local folder", () => {
+  const ME = "juan@example.ph";
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "hb-projects-"));
+    // A clone of a listed repo GitHub calls nearly empty, with real history and a README.
+    await makeRepo(join(dir, "empty-clone"), { commits: { [ME]: 7 }, remote: "git@github.com:juandc/empty.git" });
+    await Bun.write(join(dir, "empty-clone", "README.md"), "# empty\n\nOffline flashcards for the LET exam.");
+    await makeRepo(join(dir, "kain-tayo"), { commits: { [ME]: 9 } });
+    await Bun.write(join(dir, "kain-tayo", "README.md"), "# Kain Tayo\n\nRecipe planner for carinderias.");
+    await Bun.write(join(dir, "kain-tayo", "go.mod"), "module kain");
+    await makeRepo(join(dir, "their-lib"), {
+      commits: { "maria@example.ph": 8, [ME]: 1 },
+      remote: "https://github.com/maria/their-lib.git",
+    });
+  });
+
+  const local = async () => {
+    const { local } = await scanBoth();
+    if (local?.status !== "ok") throw new Error(`no local scan: ${JSON.stringify(local)}`);
+    return local;
+  };
+
+  test("folders are split by rules; a clone of a listed repo shows under GitHub and lifts it out of hidden", async () => {
+    const listing = await listingDir([listedOnly("empty", { sizeKb: 1 })]);
+    await setup(createFixtureReader({ dir: listing, user: null }), {
+      projects: createProjectsReader({ dir, extraEmails: [ME], readConfigEmail: false }),
+    });
+    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({ github: true, local: true });
+    const found = await local();
+    expect(found.dir).toBe(dir);
+    expect(found.onGithub).toBe(1);
+    expect(found.shown.map((f) => [f.folder, f.languages, f.summary, f.url])).toEqual([
+      ["kain-tayo", ["Go"], "Recipe planner for carinderias.", null],
+    ]);
+    expect(found.hidden.map((f) => [f.folder, f.hiddenBy])).toEqual([["their-lib", "others"]]);
+
+    const github = await scan();
+    const empty = github.shown.find((r) => r.name === "empty");
+    expect(empty).toMatchObject({ localCommits: 7, description: "Offline flashcards for the LET exam." });
+    expect(github.hidden.map((r) => r.name)).not.toContain("empty");
+  });
+
+  test("adds picked folders and repos together; text comes from the scan, not the request", async () => {
+    const listing = await listingDir([listedOnly("empty", { sizeKb: 1 })]);
+    await setup(createFixtureReader({ dir: listing, user: null }), {
+      projects: createProjectsReader({ dir, extraEmails: [ME], readConfigEmail: false }),
+    });
+    const profile = await settle(
+      await call("POST", "/profile/projects", { repos: ["empty"], folders: ["kain-tayo", "their-lib", "../etc"] }),
+    );
+    // GitHub repos first, then folders, each in the order the scan lists them.
+    expect(profile.addons.map((a) => [a.title, a.body, a.link, a.skills])).toEqual([
+      ["empty", "Offline flashcards for the LET exam.", "https://github.com/juandc/empty", []],
+      ["kain-tayo", "Recipe planner for carinderias.", null, ["Go"]],
+      ["their-lib", "their-lib, a personal project.", null, []],
+    ]);
+    const after = await local();
+    expect(after.shown.find((f) => f.folder === "kain-tayo")?.added).toBe(true);
+    expect((await call("POST", "/profile/projects", { folders: ["kain-tayo"] })).status).toBe(409);
+  });
+
+  test("a projects folder alone works without gh; a missing folder is reported, not fatal", async () => {
+    await setup(createPublicReader({ http: createHttpClient({}), user: null }), {
+      projects: createProjectsReader({ dir, extraEmails: [ME], readConfigEmail: false }),
+    });
+    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({ github: false, local: true });
+    const result = await scanBoth();
+    expect(result.github).toBeNull();
+    // Without a listing, your own remote is linked and treated as private until read.
+    if (result.local?.status !== "ok") throw new Error("no local scan");
+    expect(result.local.shown.map((f) => [f.folder, f.url])).toEqual([
+      ["empty-clone", "https://github.com/juandc/empty"],
+      ["kain-tayo", null],
+    ]);
+    const added = await settle(await call("POST", "/profile/projects", { folders: ["empty-clone"] }));
+    // A git folder keeps its path and is read with git, not through GitHub (decision 81).
+    expect(added.addons[0]?.folder).toMatchObject({ path: await realpath(join(dir, "empty-clone")), private: true });
+    expect(added.addons[0]?.github).toBeNull();
+
+    const listing = await listingDir([]);
+    await setup(createFixtureReader({ dir: listing, user: null }), {
+      projects: createProjectsReader({ dir: join(dir, "nope"), readConfigEmail: false }),
+    });
+    const broken = await scanBoth();
+    expect(broken.github?.status).toBe("ok");
+    expect(broken.local).toEqual({
+      status: "error",
+      message: `HB_PROJECTS_DIR (${join(dir, "nope")}) is not a folder.`,
+    });
+    expect((await call("POST", "/profile/projects", { folders: ["kain-tayo"] })).status).toBe(409);
   });
 });
 

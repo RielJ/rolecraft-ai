@@ -6,8 +6,10 @@ import postgres from "postgres";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
 import { offlineFx } from "@/server/adapters/fx";
 import { createPublicReader } from "@/server/adapters/github";
+import { createGitlabReader } from "@/server/adapters/gitlab";
 import { createHttpClient, type HttpClient } from "@/server/adapters/http";
 import { createFileKeyStore, type KeyStore } from "@/server/adapters/key-store";
+import { createFolderReader } from "@/server/adapters/local-projects";
 import { createChromiumPdf, type PdfRenderer } from "@/server/adapters/pdf";
 import { createSourceAdapters } from "@/server/adapters/sources";
 import { createDb, type Db } from "@/server/db/client";
@@ -89,7 +91,22 @@ export function offlineHttp(): HttpClient {
  * scriptable fake (both providers share it), returned as `fake` so a test can queue replies.
  */
 export async function testDeps(
-  over: Partial<Pick<Deps, "clock" | "pdf" | "keyStore" | "http" | "sources" | "aiSource" | "github" | "fx">> = {},
+  over: Partial<
+    Pick<
+      Deps,
+      | "clock"
+      | "pdf"
+      | "keyStore"
+      | "http"
+      | "sources"
+      | "aiSource"
+      | "github"
+      | "projects"
+      | "folders"
+      | "gitlab"
+      | "fx"
+    >
+  > = {},
 ): Promise<Deps & { fake: FakeAi }> {
   const { db, pdf } = connections();
   const fake = createFakeAi();
@@ -105,6 +122,9 @@ export async function testDeps(
     // Sources read through the same injected client, so a test's fake fetch serves both.
     sources: over.sources ?? createSourceAdapters(http),
     github: over.github ?? createPublicReader({ http, user: null }),
+    projects: over.projects ?? null,
+    folders: over.folders ?? createFolderReader({ readConfigEmail: false }),
+    gitlab: over.gitlab ?? createGitlabReader({ http }),
     // Rate sources refuse every call unless a test passes its own (decision 67).
     fx: over.fx ?? offlineFx(),
     clock: over.clock ?? { now: () => new Date("2026-10-16T08:00:00Z") },
@@ -118,10 +138,10 @@ export async function waitForSplits(profile: ProfileDto): Promise<void> {
   for (const item of items) if (item?.splitTask?.status === "running") await waitForTask(item.splitTask.id);
 }
 
-/** Wait for every GitHub read a profile response shows as running. */
+/** Wait for every GitHub or folder read a profile response shows as running. */
 export async function waitForGithubReads(profile: ProfileDto): Promise<void> {
   for (const item of profile.addons) {
-    const task = item.github?.readTask;
+    const task = item.github?.readTask ?? item.folder?.readTask;
     if (task?.status === "running") await waitForTask(task.id);
   }
 }

@@ -4,15 +4,19 @@ import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from
 import { toast } from "sonner";
 import {
   AddonInput,
+  type AddonPrefillDto,
   type Contact,
   type FactDto,
   type GithubReadSummary,
-  MAX_REPOS_PER_ADD,
+  type LocalHideReason,
+  MAX_PROJECTS_PER_ADD,
   MAX_STORED_CV_BYTES,
   type OverCapDetails,
   type ProfileDto,
   type ProfileItemDto,
+  type ProjectScanDto,
   type RepoHideReason,
+  type ScannedFolderDto,
   type ScannedRepoDto,
   type StandardAnswers,
   type Targeting,
@@ -49,16 +53,17 @@ import { SetupChecklist } from "../components/setup-checklist";
 import { SkillsForMatching } from "../components/skills-for-matching";
 import { cn } from "../lib/utils";
 import {
-  useAddGithubRepos,
+  useAddProjects,
   useConfirmAllFacts,
   useConfirmFact,
   useCreateAddon,
   useDeleteAddon,
   useDeleteFact,
-  useGithubRepos,
   useKeepFact,
   usePasteCv,
+  usePrefillAddon,
   useProfile,
+  useProjectScan,
   useReadGithub,
   useRetrySplit,
   useUpdateAddon,
@@ -446,8 +451,8 @@ const ROLES_WORDS: OverCapWords = {
   noun: "This read",
   action: "Read anyway",
 };
-const ADD_REPOS_WORDS: OverCapWords = {
-  doing: "Splitting these repos into facts with AI",
+const ADD_PROJECTS_WORDS: OverCapWords = {
+  doing: "Splitting these projects into facts with AI",
   noun: "These splits",
   action: "Add anyway",
 };
@@ -576,12 +581,15 @@ function ItemRoles({ item, what, aiReady }: { item: ProfileItemDto; what: string
 
 // ---------- GitHub reads ----------
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** "1 file", "3 files"; `many` for words that don't just take an "s". */
+const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 
 /** What the last read did, in one line: what it read, as whom, and what changed. */
 function readSummary(read: GithubReadSummary): string {
   const as = `as ${read.user} (from ${read.userFrom})`;
-  const what = `Read ${plural(read.filesRead.length, "file")} and ${plural(read.commitsRead, "commit")} ${as}`;
+  const share = read.share ? ` (${read.share.mine} of ${read.share.total} are yours)` : "";
+  const features = read.features.length ? `, grouped into ${plural(read.features.length, "feature")},` : "";
+  const what = `Read ${plural(read.filesRead.length, "file")} and ${plural(read.commitsRead, "commit")}${share}${features} ${as}`;
   const changes = [
     read.added ? `${read.added} new` : null,
     read.unchanged ? `${read.unchanged} unchanged` : null,
@@ -594,13 +602,21 @@ function readSummary(read: GithubReadSummary): string {
   return `${what}: ${changes.length ? changes.join(", ") : "no facts"}.${dropped}`;
 }
 
-/** Read from GitHub / Re-read, the read task's progress, and what the last read did. */
+/**
+ * Read from GitHub / Read for facts / Re-read, the read task's progress, and what the last read
+ * did. A folder add-on is read with git on this machine (decision 81).
+ */
 function GithubRead({ item, aiReady }: { item: ProfileItemDto; aiReady: boolean }) {
   const read = useReadGithub();
   const retry = useRetrySplit();
   const overCap = useOverCap(READ_WORDS);
-  const github = item.github;
-  if (!github) return null;
+  const source = item.folder
+    ? { ...item.folder, label: item.title, first: "Read for facts", lock: "Private project" }
+    : item.github
+      ? { ...item.github, first: "Read from GitHub", lock: "Private repo" }
+      : null;
+  if (!source) return null;
+  const github = source;
   const task = github.readTask;
   const running = task?.status === "running" || read.isPending;
   const start = (confirmOverCap: boolean) =>
@@ -623,17 +639,22 @@ function GithubRead({ item, aiReady }: { item: ProfileItemDto; aiReady: boolean 
           disabled={!aiReady || running || retry.isPending}
           onClick={() => (failed ? again(false) : start(false))}
         >
-          {failed ? "Retry the read" : github.lastRead ? "Re-read" : "Read from GitHub"}
+          {failed ? "Retry the read" : github.lastRead ? "Re-read" : github.first}
         </Button>
         {github.private && (
           <Badge variant="outline" className="gap-1">
             <LockIcon aria-hidden className="size-3" />
-            Private repo
+            {github.lock}
           </Badge>
+        )}
+        {item.folder && (
+          <span className="min-w-0 truncate font-mono text-muted-foreground text-xs" title={item.folder.path}>
+            {item.folder.path}
+          </span>
         )}
         {!aiReady && (
           <span className="text-muted-foreground">
-            Reading a repo needs AI.{" "}
+            Reading a project needs AI.{" "}
             <Link to="/settings" className="underline underline-offset-4">
               Set it up in Settings
             </Link>
@@ -952,27 +973,40 @@ function FactRow({
   );
 }
 
-/** Where a GitHub fact came from: the file or commit it cites, and a lock when the repo is private. */
+/**
+ * Where a project fact came from (decisions 55, 81): the file or commit it cites, linked when the
+ * project is public. A private project's fact shows only the project's name.
+ */
 function Evidence({ evidence }: { evidence: NonNullable<FactDto["evidence"]> }) {
-  const label = evidence.kind === "file" ? evidence.path : `commit ${evidence.sha.slice(0, 7)}`;
-  return (
-    <>
-      <a
-        href={evidence.url}
-        target="_blank"
-        rel="noreferrer"
-        className="font-mono underline underline-offset-4"
-        aria-label={`Evidence: ${label} in ${evidence.repo}`}
-      >
-        {label}
-      </a>
-      {evidence.private && (
+  if (evidence.private) {
+    return (
+      <>
+        <span className="font-mono">{evidence.repo}</span>
         <Badge variant="outline" className="gap-1 px-1.5 py-0 text-[11px]">
           <LockIcon aria-hidden className="size-3" />
           Private
         </Badge>
-      )}
-    </>
+      </>
+    );
+  }
+  const label = evidence.kind === "file" ? evidence.path : `commit ${evidence.sha.slice(0, 7)}`;
+  if (!evidence.url) {
+    return (
+      <span className="font-mono" title={`Not on ${evidence.repo}'s remote`}>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={evidence.url}
+      target="_blank"
+      rel="noreferrer"
+      className="font-mono underline underline-offset-4"
+      aria-label={`Evidence: ${label} in ${evidence.repo}`}
+    >
+      {label}
+    </a>
   );
 }
 
@@ -1310,6 +1344,10 @@ function AddonDialog({
   const overCap = useOverCap();
   const [form, setForm] = useState<AddonForm>(item ? toForm(item) : EMPTY_ADDON);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The link a fill marked private or unknown; kept private only while the link field still holds it. */
+  const [privateLink, setPrivateLink] = useState<string | null>(null);
+  /** The folder the last fill read; saved with the add-on so it can be read for facts (decision 81). */
+  const [folder, setFolder] = useState<string | null>(null);
   const busy = create.isPending || update.isPending;
   const set = (field: keyof AddonForm) => (value: string) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -1325,6 +1363,8 @@ function AddonDialog({
         .map((s) => s.trim())
         .filter(Boolean),
       usage: form.usage,
+      ...(!item && privateLink !== null && form.link.trim() === privateLink ? { linkPrivate: true } : {}),
+      ...(!item && folder ? { folder } : {}),
       confirmOverCap,
     });
     if (!parsed.success) {
@@ -1360,6 +1400,23 @@ function AddonDialog({
             save(false);
           }}
         >
+          {!item && (
+            <FillFromSource
+              onFill={(p) => {
+                setForm((f) => ({
+                  ...f,
+                  kind: "open_source",
+                  title: p.title,
+                  body: p.body,
+                  link: p.link ?? "",
+                  skills: p.skills.join(", "),
+                }));
+                setPrivateLink(p.linkPrivate && p.link ? p.link : null);
+                setFolder(p.folder);
+                setProblem(null);
+              }}
+            />
+          )}
           <fieldset className="grid gap-2">
             <legend className="mb-2 font-medium text-sm">Kind</legend>
             <RadioGroup
@@ -1469,6 +1526,63 @@ function AddonDialog({
   );
 }
 
+/**
+ * One GitHub or GitLab link or folder path to fill the add-on form from (decision 80). Its own
+ * small form inside the add-on form would nest forms, so Enter is handled here.
+ */
+function FillFromSource({ onFill }: { onFill: (prefill: AddonPrefillDto) => void }) {
+  const id = useId();
+  const prefill = usePrefillAddon();
+  const [source, setSource] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+
+  function fill() {
+    if (!source.trim() || prefill.isPending) return;
+    setNote(null);
+    prefill.mutate(source, {
+      onSuccess: (p) => {
+        onFill(p);
+        setNote(p.note);
+      },
+    });
+  }
+
+  const error = prefill.error ? errorMessage(prefill.error) : null;
+  return (
+    <div className="grid gap-2 rounded-lg border border-dashed p-3">
+      <Label htmlFor={`${id}-source`}>Fill from a project (optional)</Label>
+      <div className="flex gap-2">
+        <Input
+          id={`${id}-source`}
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              fill();
+            }
+          }}
+          placeholder="github.com/you/repo or ~/projects/app"
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby={`${id}-source-help`}
+        />
+        <Button type="button" variant="outline" onClick={fill} disabled={!source.trim() || prefill.isPending}>
+          {prefill.isPending ? "Reading…" : "Fill"}
+        </Button>
+      </div>
+      <p id={`${id}-source-help`} className="text-muted-foreground text-xs">
+        A GitHub repo or pull request, a public GitLab project, or a folder on this machine. It fills the fields below
+        for you to edit; nothing is saved yet.
+      </p>
+      <div aria-live="polite">
+        {error && <p className="text-destructive text-sm">{error}</p>}
+        {!error && note && <p className="text-sm text-warning-foreground">{note}</p>}
+      </div>
+    </div>
+  );
+}
+
 /** The link's host as its visible text, so a screen reader hears where it goes. */
 function hostOf(link: string): string {
   try {
@@ -1546,98 +1660,196 @@ function AddonRow({
   );
 }
 
-// ---------- Find my GitHub repos (decision 78) ----------
+// ---------- Find my projects (decision 78) ----------
 
-const HIDE_REASON: Record<RepoHideReason, { label: string; count: (n: number) => string }> = {
+type HideWords = { label: string; count: (n: number) => string };
+
+const REPO_HIDE: Record<RepoHideReason, HideWords> = {
   fork: { label: "Fork", count: (n) => `${n} ${n === 1 ? "fork" : "forks"}` },
   profile: { label: "Profile README", count: () => "your profile README" },
   small: { label: "Nearly empty", count: (n) => `${n} nearly empty` },
 };
 
-/** "25 forks, 7 nearly empty, your profile README", in the order the repos are listed. */
-function hiddenSummary(repos: readonly ScannedRepoDto[]): string {
-  const counts = new Map<RepoHideReason, number>();
-  for (const r of repos) if (r.hiddenBy) counts.set(r.hiddenBy, (counts.get(r.hiddenBy) ?? 0) + 1);
-  return [...counts].map(([reason, n]) => HIDE_REASON[reason].count(n)).join(", ");
+const FOLDER_HIDE: Record<LocalHideReason, HideWords> = {
+  not_git: { label: "Not a git repo", count: (n) => `${n} not git` },
+  few_commits: { label: "Few of your commits", count: (n) => `${n} with few of your commits` },
+  others: { label: "Mostly others' commits", count: (n) => `${n} mostly by others` },
+  same_remote: { label: "Same repo as another folder", count: (n) => `${n} ${n === 1 ? "copy" : "copies"}` },
+};
+
+/** "25 forks, 7 nearly empty, your profile README", in the order the items are listed. */
+function hiddenSummary<R extends string>(reasons: readonly (R | null)[], words: Record<R, HideWords>): string {
+  const counts = new Map<R, number>();
+  for (const r of reasons) if (r) counts.set(r, (counts.get(r) ?? 0) + 1);
+  return [...counts].map(([reason, n]) => words[reason].count(n)).join(", ");
 }
 
-const pushedFormat = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+const monthFormat = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
 
-function RepoOption({
-  repo,
+/** One pickable project: a checkbox, its name and badges, a meta line and its text. */
+function ProjectOption({
+  name,
+  badges,
+  meta,
+  text,
+  added,
   checked,
   onCheckedChange,
 }: {
-  repo: ScannedRepoDto;
+  name: string;
+  badges: ReactNode;
+  meta: string;
+  text: string | null;
+  added: boolean;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   const id = useId();
-  const meta = [
-    repo.language,
-    repo.stars > 0 ? `${repo.stars} ${repo.stars === 1 ? "star" : "stars"}` : null,
-    repo.pushedAt ? `Pushed ${pushedFormat.format(new Date(repo.pushedAt))}` : "Never pushed",
-  ]
-    .filter(Boolean)
-    .join(" · ");
   return (
     <li className="flex items-start gap-3 py-2.5">
       <Checkbox
         id={id}
         className="mt-0.5"
-        checked={repo.added || checked}
-        disabled={repo.added}
+        checked={added || checked}
+        disabled={added}
         onCheckedChange={(value) => onCheckedChange(value === true)}
         aria-describedby={`${id}-meta`}
       />
       <div className="grid min-w-0 flex-1 gap-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Label htmlFor={id} className="min-w-0 break-all font-medium">
-            {repo.name}
+            {name}
           </Label>
-          {repo.private && (
-            <Badge variant="outline">
-              <LockIcon aria-hidden />
-              Private
-            </Badge>
-          )}
-          {repo.archived && <Badge variant="outline">Archived</Badge>}
-          {repo.hiddenBy && <Badge variant="secondary">{HIDE_REASON[repo.hiddenBy].label}</Badge>}
-          {repo.added && <Badge variant="secondary">Added</Badge>}
+          {badges}
+          {added && <Badge variant="secondary">Added</Badge>}
         </div>
         <p id={`${id}-meta`} className="text-muted-foreground text-xs tabular-nums">
           {meta}
         </p>
-        {repo.description && (
-          <p className="line-clamp-2 text-pretty text-muted-foreground text-sm">{repo.description}</p>
-        )}
+        {text && <p className="line-clamp-2 whitespace-pre-line text-pretty text-muted-foreground text-sm">{text}</p>}
       </div>
     </li>
   );
 }
 
-function GithubReposDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const scan = useGithubRepos({ enabled: open });
-  const add = useAddGithubRepos();
-  const overCap = useOverCap(ADD_REPOS_WORDS);
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (name: string) => (checked: boolean) =>
+function repoMeta(repo: ScannedRepoDto): string {
+  return [
+    repo.language,
+    repo.stars > 0 ? plural(repo.stars, "star") : null,
+    repo.pushedAt ? `Pushed ${monthFormat.format(new Date(repo.pushedAt))}` : "Never pushed",
+    repo.localCommits ? `${plural(repo.localCommits, "commit")} by you locally` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function folderMeta(folder: ScannedFolderDto): string {
+  const commits =
+    folder.totalCommits === 0
+      ? null
+      : folder.ownCommits === folder.totalCommits
+        ? `${plural(folder.ownCommits, "commit")} by you`
+        : `${folder.ownCommits} of ${plural(folder.totalCommits, "commit")} by you`;
+  return [
+    folder.languages.join(", ") || null,
+    commits,
+    folder.lastCommitAt ? `Last commit ${monthFormat.format(new Date(folder.lastCommitAt))}` : null,
+    folder.url?.replace(/^https:\/\//, ""),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** A source's shown items, then its hidden ones in a collapsed group. */
+function ScanGroup({
+  heading,
+  shownCount,
+  hiddenCount,
+  hiddenLabel,
+  emptyText,
+  shown,
+  hidden,
+}: {
+  heading: ReactNode;
+  shownCount: number;
+  hiddenCount: number;
+  hiddenLabel: string;
+  emptyText: string;
+  shown: ReactNode;
+  hidden: ReactNode;
+}) {
+  const headingId = useId();
+  return (
+    <section aria-labelledby={headingId} className="py-3">
+      <h3 id={headingId} className="min-w-0 break-all pb-1 font-medium text-sm">
+        {heading}
+      </h3>
+      {shownCount === 0 ? (
+        <p className="py-3 text-muted-foreground text-sm">{emptyText}</p>
+      ) : (
+        <ul className="divide-y" aria-label="Shown">
+          {shown}
+        </ul>
+      )}
+      {hiddenCount > 0 && (
+        <details className="group border-t pt-2">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-1.5 text-muted-foreground text-sm hover:text-foreground pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+            <ChevronRightIcon
+              aria-hidden
+              className="size-4 shrink-0 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none"
+            />
+            Hidden by rules: {hiddenLabel}
+          </summary>
+          <ul className="divide-y" aria-label="Hidden by rules">
+            {hidden}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function ScanFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="grid justify-items-start gap-2 py-3 text-sm">
+      <p>{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+/** Picks are keyed by source, so a repo and a folder with the same name stay apart. */
+type PickKey = `repo:${string}` | `folder:${string}`;
+
+function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const scan = useProjectScan({ enabled: open });
+  const add = useAddProjects();
+  const overCap = useOverCap(ADD_PROJECTS_WORDS);
+  const [picked, setPicked] = useState<ReadonlySet<PickKey>>(new Set());
+  const toggle = (key: PickKey) => (checked: boolean) =>
     setPicked((prev) => {
       const next = new Set(prev);
-      if (checked) next.add(name);
-      else next.delete(name);
+      if (checked) next.add(key);
+      else next.delete(key);
       return next;
     });
-  const tooMany = picked.size > MAX_REPOS_PER_ADD;
+  const tooMany = picked.size > MAX_PROJECTS_PER_ADD;
+  const count = plural(picked.size, "project");
 
   function submit(confirmOverCap: boolean) {
+    const repos: string[] = [];
+    const folders: string[] = [];
+    for (const key of picked) {
+      if (key.startsWith("repo:")) repos.push(key.slice(5));
+      else folders.push(key.slice(7));
+    }
     add.mutate(
-      { names: [...picked], confirmOverCap },
+      { repos, folders, confirmOverCap },
       {
         onSuccess: () => {
-          toast(
-            `Added ${picked.size === 1 ? "1 repo" : `${picked.size} repos`}. Their facts appear under Facts to review; read each from GitHub for more.`,
-          );
+          toast(`Added ${count}. Their facts appear under Facts to review.`);
           onOpenChange(false);
         },
         onError: overCap.onError(() => submit(true)),
@@ -1645,56 +1857,100 @@ function GithubReposDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     );
   }
 
-  const options = (repos: readonly ScannedRepoDto[], label: string) => (
-    <ul className="divide-y" aria-label={label}>
-      {repos.map((repo) => (
-        <RepoOption key={repo.name} repo={repo} checked={picked.has(repo.name)} onCheckedChange={toggle(repo.name)} />
-      ))}
-    </ul>
+  const repoOption = (repo: ScannedRepoDto) => (
+    <ProjectOption
+      key={repo.name}
+      name={repo.name}
+      badges={
+        <>
+          {repo.private && (
+            <Badge variant="outline">
+              <LockIcon aria-hidden />
+              Private
+            </Badge>
+          )}
+          {repo.archived && <Badge variant="outline">Archived</Badge>}
+          {repo.hiddenBy && <Badge variant="secondary">{REPO_HIDE[repo.hiddenBy].label}</Badge>}
+        </>
+      }
+      meta={repoMeta(repo)}
+      text={repo.description}
+      added={repo.added}
+      checked={picked.has(`repo:${repo.name}`)}
+      onCheckedChange={toggle(`repo:${repo.name}`)}
+    />
+  );
+  const folderOption = (folder: ScannedFolderDto) => (
+    <ProjectOption
+      key={folder.folder}
+      name={folder.folder}
+      badges={folder.hiddenBy && <Badge variant="secondary">{FOLDER_HIDE[folder.hiddenBy].label}</Badge>}
+      meta={folderMeta(folder)}
+      text={folder.summary}
+      added={folder.added}
+      checked={picked.has(`folder:${folder.folder}`)}
+      onCheckedChange={toggle(`folder:${folder.folder}`)}
+    />
   );
 
+  const github: ProjectScanDto["github"] = scan.data?.github ?? null;
+  const local: ProjectScanDto["local"] = scan.data?.local ?? null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Find my GitHub repos</DialogTitle>
+          <DialogTitle>Find my projects</DialogTitle>
           <DialogDescription>
-            {scan.data ? `Repos ${scan.data.user} owns, listed through gh.` : "Repos your GitHub account owns."} Each
-            one you add becomes an add-on; read it from GitHub afterwards for facts from its code.
+            Each project you add becomes an add-on, split into facts for you to confirm. A repo on GitHub can also be
+            read for facts from its code.
           </DialogDescription>
         </DialogHeader>
-        <div className="-mx-6 min-h-0 flex-1 overflow-y-auto overscroll-contain border-y px-6">
-          {scan.isPending && <p className="py-6 text-muted-foreground text-sm">Listing your repos…</p>}
-          {scan.isError && (
-            <div role="alert" className="grid justify-items-start gap-2 py-6 text-sm">
-              <p>{errorMessage(scan.error)}</p>
-              <Button size="sm" variant="outline" onClick={() => scan.refetch()}>
-                Try again
-              </Button>
-            </div>
+        <div className="-mx-6 min-h-0 flex-1 divide-y overflow-y-auto overscroll-contain border-y px-6">
+          {scan.isPending && <p className="py-6 text-muted-foreground text-sm">Looking for your projects…</p>}
+          {scan.isError && <ScanFailed message={errorMessage(scan.error)} onRetry={() => scan.refetch()} />}
+          {local?.status === "error" && <ScanFailed message={local.message} onRetry={() => scan.refetch()} />}
+          {local?.status === "ok" && (
+            <ScanGroup
+              heading={`In ${local.dir}`}
+              shownCount={local.shown.length}
+              hiddenCount={local.hidden.length}
+              hiddenLabel={hiddenSummary(
+                local.hidden.map((f) => f.hiddenBy),
+                FOLDER_HIDE,
+              )}
+              emptyText={
+                local.onGithub > 0
+                  ? `No other folders left after the rules. ${plural(local.onGithub, "folder is a clone", "folders are clones")} of a repo below.`
+                  : "No folders left after the rules. Check the hidden ones below."
+              }
+              shown={
+                <>
+                  {local.shown.map(folderOption)}
+                  {local.onGithub > 0 && local.shown.length > 0 && (
+                    <li className="py-2.5 text-muted-foreground text-xs">
+                      {plural(local.onGithub, "folder is a clone", "folders are clones")} of a repo below, so{" "}
+                      {local.onGithub === 1 ? "it shows" : "they show"} there.
+                    </li>
+                  )}
+                </>
+              }
+              hidden={local.hidden.map(folderOption)}
+            />
           )}
-          {scan.data && (
-            <>
-              {scan.data.shown.length === 0 ? (
-                <p className="py-6 text-muted-foreground text-sm">
-                  No repos left after the rules. Check the hidden ones below.
-                </p>
-              ) : (
-                options(scan.data.shown, "Your repos")
+          {github?.status === "error" && <ScanFailed message={github.message} onRetry={() => scan.refetch()} />}
+          {github?.status === "ok" && (
+            <ScanGroup
+              heading={`On GitHub · ${github.user}`}
+              shownCount={github.shown.length}
+              hiddenCount={github.hidden.length}
+              hiddenLabel={hiddenSummary(
+                github.hidden.map((r) => r.hiddenBy),
+                REPO_HIDE,
               )}
-              {scan.data.hidden.length > 0 && (
-                <details className="group border-t py-2">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 py-1.5 text-muted-foreground text-sm hover:text-foreground pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden">
-                    <ChevronRightIcon
-                      aria-hidden
-                      className="size-4 shrink-0 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none"
-                    />
-                    Hidden by rules: {hiddenSummary(scan.data.hidden)}
-                  </summary>
-                  {options(scan.data.hidden, "Hidden by rules")}
-                </details>
-              )}
-            </>
+              emptyText="No repos left after the rules. Check the hidden ones below."
+              shown={github.shown.map(repoOption)}
+              hidden={github.hidden.map(repoOption)}
+            />
           )}
         </div>
         <DialogFooter className="items-center">
@@ -1702,19 +1958,13 @@ function GithubReposDialog({ open, onOpenChange }: { open: boolean; onOpenChange
             className={cn("mr-auto text-sm tabular-nums", tooMany ? "text-destructive" : "text-muted-foreground")}
             aria-live="polite"
           >
-            {tooMany ? `Pick at most ${MAX_REPOS_PER_ADD} at a time.` : `${picked.size} picked`}
+            {tooMany ? `Pick at most ${MAX_PROJECTS_PER_ADD} at a time.` : `${picked.size} picked`}
           </p>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button type="button" disabled={picked.size === 0 || tooMany || add.isPending} onClick={() => submit(false)}>
-            {add.isPending
-              ? "Adding…"
-              : picked.size === 0
-                ? "Add repos"
-                : picked.size === 1
-                  ? "Add 1 repo"
-                  : `Add ${picked.size} repos`}
+            {add.isPending ? "Adding…" : picked.size === 0 ? "Add projects" : `Add ${count}`}
           </Button>
         </DialogFooter>
         {overCap.dialog}
@@ -1727,12 +1977,12 @@ function Addons({
   addons,
   facts,
   aiReady,
-  githubScan,
+  projectScan,
 }: {
   addons: ProfileItemDto[];
   facts: FactDto[];
   aiReady: boolean;
-  githubScan: boolean;
+  projectScan: ProfileDto["projectScan"];
 }) {
   // `key` remounts the dialog's form for each open, so it starts from the item being edited.
   const [dialog, setDialog] = useState<{ item: ProfileItemDto | null; key: number } | null>(null);
@@ -1746,10 +1996,10 @@ function Addons({
         description="Work, open source, challenges and anything else your CV leaves out."
         action={
           <div className="flex flex-wrap gap-2">
-            {githubScan && (
+            {(projectScan.github || projectScan.local) && (
               <Button variant="outline" onClick={() => setFinding(Date.now())}>
                 <FolderGit2Icon aria-hidden />
-                Find my GitHub repos
+                Find my projects
               </Button>
             )}
             <Button variant="outline" onClick={() => open(null)}>
@@ -1778,7 +2028,7 @@ function Addons({
         </ul>
       )}
       {finding > 0 && (
-        <GithubReposDialog
+        <ProjectsDialog
           key={finding}
           open
           onOpenChange={(isOpen) => {
@@ -1850,7 +2100,7 @@ export function ProfilePage() {
       id: "addons",
       label: "Add-ons",
       hint: addons.length > 0 ? String(addons.length) : undefined,
-      content: <Addons addons={addons} facts={facts} aiReady={aiReady} githubScan={profile.data.githubScan} />,
+      content: <Addons addons={addons} facts={facts} aiReady={aiReady} projectScan={profile.data.projectScan} />,
     },
     {
       id: "answers",

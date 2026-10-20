@@ -12,7 +12,8 @@ import {
   type AddLinkInput,
   AddLinkResult,
   type AddonInput,
-  type AddReposInput,
+  AddonPrefillDto,
+  type AddProjectsInput,
   BoardItemDto,
   BoardMetricsDto,
   type ChangeStatusInput,
@@ -35,8 +36,8 @@ import {
   OverrideResult,
   type PasteJobInput,
   ProfileDto,
+  ProjectScanDto,
   RefreshDto,
-  RepoScanDto,
   type SaveAiKeyInput,
   SavedJob,
   type SaveRolesInput,
@@ -74,7 +75,7 @@ export const keys = {
   matchList: (query: MatchQueryInput) => ["matches", "list", query] as const,
   match: (id: JobId) => ["matches", "detail", id] as const,
   refresh: ["refresh"] as const,
-  githubRepos: ["profile-github-repos"] as const,
+  projects: ["profile-projects"] as const,
   setup: ["setup"] as const,
   pairings: ["extension", "pairings"] as const,
 };
@@ -150,6 +151,13 @@ export const useUploadCv = () =>
 export const useCreateAddon = () =>
   useProfileMutation((json: AddonInput) => unwrap(client.api.profile.addons.$post({ json }), ProfileDto));
 
+/** Fill the add-on form from a GitHub or GitLab link or a folder path. Reads only; nothing is saved. */
+export const usePrefillAddon = () =>
+  useMutation({
+    mutationFn: (source: string) =>
+      unwrap(client.api.profile.addons.prefill.$post({ json: { source } }), AddonPrefillDto),
+  });
+
 export const useUpdateAddon = () =>
   useProfileMutation(({ id, ...json }: { id: ItemId } & AddonInput) =>
     unwrap(client.api.profile.addons[":id"].$put({ param: { id }, json }), ProfileDto),
@@ -168,13 +176,14 @@ export const useReadGithub = () =>
   );
 
 /**
- * The repos the user's GitHub account owns, through gh (decision 78). Listed only while the dialog
- * is open, and again on each open, since nothing about a scan is saved.
+ * The user's projects: repos their GitHub account owns, through gh, and the folders in
+ * `HB_PROJECTS_DIR` (decision 78). Scanned only while the dialog is open, and again on each open,
+ * since nothing about a scan is saved.
  */
-export function useGithubRepos({ enabled }: { enabled: boolean }) {
+export function useProjectScan({ enabled }: { enabled: boolean }) {
   return useQuery({
-    queryKey: keys.githubRepos,
-    queryFn: () => unwrap(client.api.profile.github.repos.$get(), RepoScanDto),
+    queryKey: keys.projects,
+    queryFn: () => unwrap(client.api.profile.projects.$get(), ProjectScanDto),
     enabled,
     staleTime: 0,
     gcTime: 0,
@@ -182,9 +191,9 @@ export function useGithubRepos({ enabled }: { enabled: boolean }) {
   });
 }
 
-/** Add picked repos as add-ons; each is split into facts like a typed add-on. */
-export const useAddGithubRepos = () =>
-  useProfileMutation((json: AddReposInput) => unwrap(client.api.profile.github.repos.$post({ json }), ProfileDto));
+/** Add picked repos and folders as add-ons; each is split into facts like a typed add-on. */
+export const useAddProjects = () =>
+  useProfileMutation((json: AddProjectsInput) => unwrap(client.api.profile.projects.$post({ json }), ProfileDto));
 
 /** "Read roles from your CV": a `roles_read` task the profile refetch polls (decision 71). */
 export const useReadRoles = () =>

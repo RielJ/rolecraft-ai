@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
 import { diffFacts } from "@/domain/facts-diff";
 import {
   type GithubLink,
@@ -7,34 +8,36 @@ import {
   githubProfileUser,
   parseGithubLink,
 } from "@/domain/github-link";
-import { type AcceptedGithubFact, GITHUB_SECTION_TOKENS, GITHUB_TOKEN_CAP } from "@/domain/github-read";
-import { GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
-import { type OwnedRepo, repoAddon, type ScannedRepo, scanRepos } from "@/domain/repo-scan";
-import { normalize } from "@/domain/text";
 import {
-  type AddReposInput,
-  type GithubReadSummary,
-  GithubReadTaskInput,
-  type ItemId,
-  type ProfileDto,
-  type RepoScanDto,
-  type ScannedRepoDto,
-  type TaskDto,
-} from "@/shared/api";
+  type AcceptedGithubFact,
+  GITHUB_SECTION_TOKENS,
+  GITHUB_TOKEN_CAP,
+  type ProjectBundle,
+} from "@/domain/github-read";
+import { isOwnEmail } from "@/domain/local-scan";
+import { FEATURE_LIST_TOKENS } from "@/domain/project-read";
+import { parseProjectSource } from "@/domain/project-source";
+import { FEATURE_MAX_TOKENS, GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
+import type { OwnedRepo } from "@/domain/repo-scan";
+import { normalize } from "@/domain/text";
+import { type GithubReadSummary, GithubReadTaskInput, type ItemId, type ProfileDto, type TaskDto } from "@/shared/api";
+import { FolderReadError, type PublicRemote } from "../adapters/folder-read";
 import { GithubError } from "../adapters/github";
 import { facts, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
-import { aiPick, extractGithubFacts, type LightComplete } from "./github-extract";
-import { createAddons, getProfile, loadContact } from "./profile";
+import { aiChoose, aiPick, extractGithubFacts, type LightComplete } from "./github-extract";
+import { getProfile, loadContact } from "./profile";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 
 /**
- * "Read from GitHub" on an add-on (decision 55). The read runs as a `github_read` task: the
- * reader fetches within the token cap, the light tier picks files and proposes facts, the code
- * drops facts whose evidence was not read, and the result is diffed against the item's earlier
- * GitHub facts like a CV re-import (decision 47): new ones pending, missing pending ones removed,
- * missing confirmed ones kept for the user to Keep or Delete.
+ * "Read from GitHub" on an add-on (decision 55), and "Read for facts" on an add-on added from a
+ * folder (decision 81). Either runs as a `github_read` task: the reader fetches within the token
+ * cap, the light tier groups the user's commits into features (folders), picks files and proposes
+ * facts, the code drops facts whose evidence was not read, and the result is diffed against the
+ * item's earlier read facts like a CV re-import (decision 47): new ones pending, missing pending
+ * ones removed, missing confirmed ones kept for the user to Keep or Delete. A folder wins over a
+ * GitHub link on the same add-on: it is the same repo, read locally.
  */
 
 // ---------- Errors ----------
@@ -60,6 +63,28 @@ export function githubAppError(err: GithubError): AppError {
 // ---------- Whose commits ----------
 
 export type GithubUser = { user: string; from: GithubReadSummary["userFrom"] };
+
+/** Whose commits a folder read counts: emails from git and HB_GIT_EMAILS, and the GitHub noreply. */
+type FolderUser = { user: string; from: GithubReadSummary["userFrom"]; emails: string[]; githubUser: string | null };
+
+async function requireFolderUser(deps: Deps): Promise<FolderUser> {
+  const { contact } = await loadContact(deps);
+  const github = githubUserFor({ configured: deps.github.user, links: contact.links });
+  const emails = await deps.folders.emails();
+  if (!github && emails.length === 0) {
+    throw new AppError({
+      code: "needs_input",
+      message:
+        "Set your email with git config --global user.email, or list your commit emails in HB_GIT_EMAILS, so the read knows which commits are yours.",
+    });
+  }
+  return {
+    user: github?.user ?? emails[0] ?? "you",
+    from: github && emails.length === 0 ? github.from : "git emails",
+    emails,
+    githubUser: github?.user ?? null,
+  };
+}
 
 /**
  * The account whose commits count as the user's: `HB_GITHUB_USER` when set (always with gh, which
@@ -95,13 +120,14 @@ async function requireGithubUser(deps: Deps): Promise<GithubUser> {
 
 // ---------- Cap ----------
 
-/** The worst case of one read: a full pick prompt and a facts prompt at the token cap. */
-function worstCasePrompts(): { prompt: Prompt; maxOutputTokens: number }[] {
+/** The worst case of one read: a feature grouping, a full pick prompt and a facts prompt at the token cap. */
+export function worstCasePrompts(): { prompt: Prompt; maxOutputTokens: number }[] {
   const sized = (tokens: number): Prompt => ({
     system: "",
     messages: [{ role: "user", content: "x".repeat(tokens * 4) }],
   });
   return [
+    { prompt: sized(FEATURE_LIST_TOKENS + 2_000), maxOutputTokens: FEATURE_MAX_TOKENS },
     { prompt: sized(GITHUB_SECTION_TOKENS.tree + 500), maxOutputTokens: GITHUB_PICK_MAX_TOKENS },
     { prompt: sized(GITHUB_TOKEN_CAP + 1000), maxOutputTokens: GITHUB_FACTS_MAX_TOKENS },
   ];
@@ -118,26 +144,36 @@ async function checkReadCap(deps: Deps, { confirmOverCap }: { confirmOverCap: bo
 
 type ItemRow = typeof profileItems.$inferSelect;
 
-async function loadReadable(deps: Deps, itemId: ItemId): Promise<{ row: ItemRow; link: GithubLink }> {
+/** What an add-on is read from: its folder when it has one, else its GitHub link. */
+type ReadSource = { kind: "folder"; path: string } | { kind: "github"; link: GithubLink };
+
+function readSourceOf(row: Pick<ItemRow, "link" | "folder">): ReadSource | null {
+  if (row.folder) return { kind: "folder", path: row.folder };
+  const link = row.link ? parseGithubLink(row.link) : null;
+  return link ? { kind: "github", link } : null;
+}
+
+async function loadReadable(deps: Deps, itemId: ItemId): Promise<{ row: ItemRow; source: ReadSource }> {
   const [row] = await deps.db
     .select()
     .from(profileItems)
     .where(and(eq(profileItems.id, itemId), eq(profileItems.userId, deps.userId)));
   if (!row || row.kind === "cv") throw notFound("That add-on");
-  const link = row.link ? parseGithubLink(row.link) : null;
-  if (!link) {
+  const source = readSourceOf(row);
+  if (!source) {
     throw new AppError({
       code: "invalid_input",
-      message: "Only a GitHub repo or pull request link can be read. Other links are kept as they are.",
+      message:
+        "Only a GitHub repo or pull request link, or a folder added from this machine, can be read. Other links are kept as they are.",
     });
   }
-  return { row, link };
+  return { row, source };
 }
 
 async function startRead(deps: Deps, { itemId, confirmOverCap }: { itemId: ItemId; confirmOverCap: boolean }) {
-  const { row } = await loadReadable(deps, itemId);
+  const { row, source } = await loadReadable(deps, itemId);
   await requireAiConfig(deps);
-  const who = await requireGithubUser(deps);
+  const who = source.kind === "folder" ? await requireFolderUser(deps) : await requireGithubUser(deps);
   const running = await latestTask(deps, { kind: "github_read", inputMatches: { itemId } });
   if (running?.task.status === "running") {
     throw new AppError({
@@ -185,24 +221,34 @@ type ReadOutcome =
 async function runRead(
   deps: Deps,
   ctx: TaskContext,
-  { itemId, who, confirmOverCap }: { itemId: ItemId; who: GithubUser; confirmOverCap: boolean },
+  { itemId, who, confirmOverCap }: { itemId: ItemId; who: GithubUser | FolderUser; confirmOverCap: boolean },
 ): Promise<ReadOutcome> {
   const [row] = await deps.db.select().from(profileItems).where(eq(profileItems.id, itemId));
-  const link = row?.link ? parseGithubLink(row.link) : null;
-  if (!row || !link) return { kind: "skipped", reason: "item_deleted" };
+  const source = row ? readSourceOf(row) : null;
+  if (!row || !source) return { kind: "skipped", reason: "item_deleted" };
   const config = await requireAiConfig(deps);
   const complete =
     (purpose: "github"): LightComplete =>
     async ({ prompt, maxOutputTokens }) =>
       (await runAi(deps, { tier: "light", purpose, taskId: ctx.taskId, prompt, maxOutputTokens, confirmOverCap })).text;
 
-  await ctx.step(`Reading github.com/${githubLabel(link)} as ${who.user}`);
-  let bundle: Awaited<ReturnType<Deps["github"]["read"]>>;
-  try {
-    bundle = await deps.github.read({ link, user: who.user, pick: aiPick(complete("github")), step: ctx.step });
-  } catch (err) {
-    if (err instanceof GithubError) throw githubAppError(err);
-    throw err;
+  let bundle: ProjectBundle;
+  if (source.kind === "folder") {
+    const folderUser = "emails" in who ? who : await requireFolderUser(deps);
+    bundle = await readFolder(deps, ctx, { path: source.path, who: folderUser, complete: complete("github") });
+  } else {
+    await ctx.step(`Reading github.com/${githubLabel(source.link)} as ${who.user}`);
+    try {
+      bundle = await deps.github.read({
+        link: source.link,
+        user: who.user,
+        pick: aiPick(complete("github")),
+        step: ctx.step,
+      });
+    } catch (err) {
+      if (err instanceof GithubError) throw githubAppError(err);
+      throw err;
+    }
   }
 
   await ctx.step("Finding facts with AI");
@@ -213,10 +259,10 @@ async function runRead(
     onRetry: () => ctx.step("Asking the AI again for a readable reply"),
   });
 
-  await ctx.step("Comparing with your current GitHub facts");
+  await ctx.step("Comparing with your current facts from this project");
   const applied = await applyRead(deps, {
     itemId,
-    link: row.link ?? "",
+    source: { link: row.link, folder: row.folder },
     isPrivate: bundle.private,
     kept: extraction.kept,
   });
@@ -225,34 +271,105 @@ async function runRead(
     kind: "applied",
     user: who.user,
     userFrom: who.from,
-    via: deps.github.mode,
+    via: bundle.kind === "folder" ? "folder" : deps.github.mode,
     private: bundle.private,
     tokens: bundle.tokens,
     cap: GITHUB_TOKEN_CAP,
-    filesRead: bundle.kind === "repo" ? bundle.files.map((f) => f.path) : [],
+    filesRead: bundle.kind === "pull" ? [] : bundle.files.map((f) => f.path),
     commitsRead: bundle.commits.length,
+    features: bundle.features.map((f) => f.name),
+    share: bundle.share,
     ...applied.counts,
     dropped: extraction.dropped,
   };
 }
 
+/** Read an add-on's folder with git (decision 81); a folder that can't be read fails the task. */
+async function readFolder(
+  deps: Deps,
+  ctx: TaskContext,
+  { path, who, complete }: { path: string; who: FolderUser; complete: LightComplete },
+): Promise<ProjectBundle> {
+  const emails = new Set(who.emails);
+  await ctx.step(`Reading ${path} with git`);
+  try {
+    const resolved = await deps.folders.resolve(path);
+    return await deps.folders.deep({
+      path: resolved,
+      user: who.user,
+      isMine: (email) => isOwnEmail({ email, emails, githubUser: who.githubUser }),
+      choose: aiChoose(complete),
+      pick: aiPick(complete),
+      publicRemote: publicRemote(deps),
+      step: ctx.step,
+    });
+  } catch (err) {
+    if (err instanceof FolderReadError) throw new AppError({ code: "needs_input", message: err.message });
+    if (err instanceof Error && /is not (a folder|an absolute path)/.test(err.message)) {
+      throw new AppError({
+        code: "needs_input",
+        message: `${err.message} Was it moved? Edit the add-on or add it again.`,
+      });
+    }
+    throw err;
+  }
+}
+
+const PublicRepo = z.object({ private: z.boolean(), full_name: z.string(), html_url: z.string() });
+
 /**
- * Diff the kept facts against the item's GitHub facts only, so a re-split of the add-on's text and
- * a GitHub re-read never remove each other's facts. The item row is locked; a link edited during
- * the read wins, and this read is skipped.
+ * Whether a folder's remote is public (decision 81): GitHub's API or an allowed GitLab answers
+ * for it without login. Anything else, an error included, is private.
+ */
+export function publicRemote(deps: Pick<Deps, "http" | "gitlab">): PublicRemote {
+  return async (remote) => {
+    const parsed = parseProjectSource({ raw: remote, gitlabHosts: deps.gitlab.hosts });
+    if (parsed.kind === "github" && parsed.link.kind === "repo") {
+      const { owner, repo } = parsed.link;
+      const res = await deps.http.getText(`https://api.github.com/repos/${owner}/${repo}`, {
+        accept: "application/vnd.github+json",
+      });
+      const info = PublicRepo.safeParse(JSON.parse(res.body));
+      if (!info.success || info.data.private) return null;
+      return { host: "github", web: info.data.html_url, name: info.data.full_name };
+    }
+    if (parsed.kind === "gitlab") {
+      const about = await deps.gitlab.about(parsed);
+      return { host: "gitlab", web: about.webUrl, name: parsed.path };
+    }
+    return null;
+  };
+}
+
+/**
+ * Diff the kept facts against the item's read facts only, so a re-split of the add-on's text and
+ * a re-read never remove each other's facts. The item row is locked; a link or folder edited
+ * during the read wins, and this read is skipped.
  */
 async function applyRead(
   deps: Deps,
-  { itemId, link, isPrivate, kept }: { itemId: ItemId; link: string; isPrivate: boolean; kept: AcceptedGithubFact[] },
+  {
+    itemId,
+    source,
+    isPrivate,
+    kept,
+  }: {
+    itemId: ItemId;
+    source: { link: string | null; folder: string | null };
+    isPrivate: boolean;
+    kept: AcceptedGithubFact[];
+  },
 ) {
   return deps.db.transaction(async (tx) => {
     const [locked] = await tx
-      .select({ githubRev: profileItems.githubRev, link: profileItems.link })
+      .select({ githubRev: profileItems.githubRev, link: profileItems.link, folder: profileItems.folder })
       .from(profileItems)
       .where(eq(profileItems.id, itemId))
       .for("update");
     if (!locked) return { kind: "skipped", reason: "item_deleted" } as const;
-    if (locked.link !== link) return { kind: "skipped", reason: "link_changed" } as const;
+    if (locked.link !== source.link || locked.folder !== source.folder) {
+      return { kind: "skipped", reason: "link_changed" } as const;
+    }
     const rev = locked.githubRev + 1;
     await tx.update(profileItems).set({ githubRev: rev, githubPrivate: isPrivate }).where(eq(profileItems.id, itemId));
 
@@ -299,7 +416,7 @@ async function applyRead(
 // ---------- Finding the user's repos (decision 78) ----------
 
 /** The reader's listing, or 409 when it can't list (anything but gh, or the fixture in tests). */
-async function listOwned(deps: Deps): Promise<{ user: string; repos: OwnedRepo[] }> {
+export async function listOwned(deps: Deps): Promise<{ user: string; repos: OwnedRepo[] }> {
   const list = deps.github.list;
   if (!list) {
     throw new AppError({
@@ -317,7 +434,7 @@ async function listOwned(deps: Deps): Promise<{ user: string; repos: OwnedRepo[]
 }
 
 /** Repos the user's add-ons already link (repo links only; a pull request link is a contribution). */
-async function linkedRepos(deps: Pick<Deps, "db" | "userId">): Promise<GithubRepoRef[]> {
+export async function linkedRepos(deps: Pick<Deps, "db" | "userId">): Promise<GithubRepoRef[]> {
   const rows = await deps.db
     .select({ link: profileItems.link })
     .from(profileItems)
@@ -325,54 +442,6 @@ async function linkedRepos(deps: Pick<Deps, "db" | "userId">): Promise<GithubRep
   return rows.flatMap(({ link }) => {
     const parsed = link ? parseGithubLink(link) : null;
     return parsed?.kind === "repo" ? [{ owner: parsed.owner, repo: parsed.repo }] : [];
-  });
-}
-
-function scannedDto(repo: ScannedRepo): ScannedRepoDto {
-  return {
-    name: repo.name,
-    url: repoAddon(repo).link,
-    private: repo.private,
-    archived: repo.archived,
-    language: repo.language,
-    stars: repo.stars,
-    pushedAt: repo.pushedAt,
-    description: repo.description,
-    added: repo.added,
-    hiddenBy: repo.hiddenBy,
-  };
-}
-
-/** List the repos the user owns: rules split them into shown and hidden; nothing is saved. */
-export async function scanGithubRepos(deps: Deps): Promise<RepoScanDto> {
-  const [{ user, repos }, linked] = await Promise.all([listOwned(deps), linkedRepos(deps)]);
-  const scan = scanRepos({ user, repos, linked });
-  return { user, shown: scan.shown.map(scannedDto), hidden: scan.hidden.map(scannedDto) };
-}
-
-/**
- * Add picked repos as `open_source` add-ons. The repos are listed again and only names found
- * there are added, so the text and link come from GitHub, never from the request. Names already
- * linked by an add-on are skipped.
- */
-export async function addGithubRepos(deps: Deps, input: AddReposInput): Promise<ProfileDto> {
-  const [{ user, repos }, linked] = await Promise.all([listOwned(deps), linkedRepos(deps)]);
-  const scan = scanRepos({ user, repos, linked });
-  const wanted = new Set(input.names.map((n) => n.toLowerCase()));
-  const picked = [...scan.shown, ...scan.hidden].filter((r) => wanted.has(r.name.toLowerCase()) && !r.added);
-  if (picked.length === 0) {
-    throw new AppError({
-      code: "needs_input",
-      message: "None of those repos can be added: they are already add-ons, or your GitHub account no longer has them.",
-    });
-  }
-  return createAddons(deps, {
-    addons: picked.map((repo) => ({
-      kind: "open_source",
-      ...repoAddon(repo),
-      githubPrivate: repo.private,
-    })),
-    confirmOverCap: input.confirmOverCap ?? false,
   });
 }
 

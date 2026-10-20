@@ -161,21 +161,23 @@ export const StandardAnswers = z.object({
 export type StandardAnswers = z.infer<typeof StandardAnswers>;
 
 /**
- * Where a fact read from GitHub came from (decision 55): a file or a commit that was actually read,
- * with its link. `private` facts show a lock badge, and their links never reach an exported file.
+ * Where a fact read from a project came from (decisions 55, 81): a file or a commit that was
+ * actually read, with its link. `private` facts show a lock badge, and their links never reach an
+ * exported file. `url` is null for a folder's private project, and for a folder's commit or file
+ * its public remote doesn't have: a private one shows only `repo`, its project name.
  */
 export const FactEvidence = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("file"),
     path: z.string(),
-    url: z.string(),
+    url: z.string().nullable(),
     repo: z.string(),
     private: z.boolean(),
   }),
   z.object({
     kind: z.literal("commit"),
     sha: z.string(),
-    url: z.string(),
+    url: z.string().nullable(),
     repo: z.string(),
     private: z.boolean(),
   }),
@@ -211,14 +213,19 @@ export type FactDto = z.infer<typeof FactDto>;
 export const GithubReadSummary = z.object({
   /** The account whose commits were read, and where that name came from. */
   user: z.string(),
-  userFrom: z.enum(["HB_GITHUB_USER", "profile link"]),
-  via: z.enum(["public", "gh", "fixture"]),
+  /** "git emails": a folder read, matched on the emails in git config and HB_GIT_EMAILS (decision 81). */
+  userFrom: z.enum(["HB_GITHUB_USER", "profile link", "git emails"]),
+  via: z.enum(["public", "gh", "fixture", "folder"]),
   private: z.boolean(),
   /** Repo text read, in estimated tokens, against the cap. */
   tokens: z.number().int(),
   cap: z.number().int(),
   filesRead: z.array(z.string()),
   commitsRead: z.number().int(),
+  /** The features the user's commits were grouped into; empty when the biggest commits were read. */
+  features: z.array(z.string()).default([]),
+  /** The user's commits against all commits, when counted (decision 81). */
+  share: z.object({ mine: z.number().int(), total: z.number().int() }).nullable().default(null),
   added: z.number().int(),
   unchanged: z.number().int(),
   removed: z.number().int(),
@@ -239,6 +246,19 @@ export const ItemGithubDto = z.object({
   lastRead: GithubReadSummary.nullable(),
 });
 export type ItemGithubDto = z.infer<typeof ItemGithubDto>;
+
+/**
+ * The folder an add-on was added from (decisions 79, 80, 81), when its link isn't on GitHub: it is
+ * read with git on this machine. The path is never exported.
+ */
+export const ItemFolderDto = z.object({
+  path: z.string(),
+  /** From the last read: false only when its remote answered without login; null until read. */
+  private: z.boolean().nullable(),
+  readTask: TaskDto.nullable(),
+  lastRead: GithubReadSummary.nullable(),
+});
+export type ItemFolderDto = z.infer<typeof ItemFolderDto>;
 
 /** A role read from a CV or experience add-on, or typed on Profile (decision 71). */
 export const RoleDto = z.object({
@@ -271,6 +291,7 @@ export const ProfileItemDto = z.object({
   fileName: z.string().nullable(),
   splitTask: TaskDto.nullable(),
   github: ItemGithubDto.nullable(),
+  folder: ItemFolderDto.nullable(),
   /** The CV's or an experience add-on's roles, most recent first. Empty for other kinds. */
   roles: z.array(RoleDto),
   /** The latest "Read roles" task (`roles_read`); a split reads roles in its own task. */
@@ -350,12 +371,12 @@ export const ProfileDto = z.object({
   cvFile: z.object({ fileName: z.string(), size: z.number().int(), uploadedAt: z.string() }).nullable(),
   /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
   aiReady: z.boolean(),
-  /** Whether "Find my GitHub repos" works: only with `HB_GITHUB=gh` (decision 78). */
-  githubScan: z.boolean(),
+  /** Where "Find my projects" looks (decision 78): GitHub with `HB_GITHUB=gh`, a folder with `HB_PROJECTS_DIR`. */
+  projectScan: z.object({ github: z.boolean(), local: z.boolean() }),
 });
 export type ProfileDto = z.infer<typeof ProfileDto>;
 
-// ---------- Finding GitHub repos (decision 78) ----------
+// ---------- Finding your projects (decision 78) ----------
 
 /** Why the rules put a repo in the collapsed "Hidden by rules" group. */
 export const RepoHideReason = z.enum(["fork", "profile", "small"]);
@@ -373,26 +394,79 @@ export const ScannedRepoDto = z.object({
   /** An add-on already links this repo. */
   added: z.boolean(),
   hiddenBy: RepoHideReason.nullable(),
+  /** Your commits in a local clone, or null without one. */
+  localCommits: z.number().int().nullable(),
 });
 export type ScannedRepoDto = z.infer<typeof ScannedRepoDto>;
 
-export const RepoScanDto = z.object({
-  /** The account listed. */
-  user: z.string(),
-  shown: z.array(ScannedRepoDto),
-  hidden: z.array(ScannedRepoDto),
-});
-export type RepoScanDto = z.infer<typeof RepoScanDto>;
+/** Why the rules put a local folder in the hidden group. */
+export const LocalHideReason = z.enum(["not_git", "few_commits", "others", "same_remote"]);
+export type LocalHideReason = z.infer<typeof LocalHideReason>;
 
-/** The most repos one Add creates, so the splits started at once stay few. */
-export const MAX_REPOS_PER_ADD = 20;
-
-/** Repo names to add; the server lists again and adds only names it finds. */
-export const AddReposInput = z.object({
-  names: z.array(z.string().trim().min(1).max(100)).min(1).max(MAX_REPOS_PER_ADD),
-  confirmOverCap: z.boolean().optional(),
+export const ScannedFolderDto = z.object({
+  folder: z.string(),
+  /** Its GitHub repo when the remote is yours, else null. */
+  url: z.string().nullable(),
+  languages: z.array(z.string()),
+  lastCommitAt: z.string().nullable(),
+  ownCommits: z.number().int(),
+  totalCommits: z.number().int(),
+  /** The README's first paragraph, which becomes the add-on's text. */
+  summary: z.string().nullable(),
+  /** An add-on already links this repo or has this title. */
+  added: z.boolean(),
+  hiddenBy: LocalHideReason.nullable(),
 });
-export type AddReposInput = z.infer<typeof AddReposInput>;
+export type ScannedFolderDto = z.infer<typeof ScannedFolderDto>;
+
+/** A source that could not be read says why; the other is still shown. */
+const ScanFailed = z.object({ status: z.literal("error"), message: z.string() });
+
+export const ProjectScanDto = z.object({
+  /** Null without `HB_GITHUB=gh`. */
+  github: z
+    .discriminatedUnion("status", [
+      z.object({
+        status: z.literal("ok"),
+        /** The account listed. */
+        user: z.string(),
+        shown: z.array(ScannedRepoDto),
+        hidden: z.array(ScannedRepoDto),
+      }),
+      ScanFailed,
+    ])
+    .nullable(),
+  /** Null without `HB_PROJECTS_DIR`. */
+  local: z
+    .discriminatedUnion("status", [
+      z.object({
+        status: z.literal("ok"),
+        /** The folder scanned. */
+        dir: z.string(),
+        shown: z.array(ScannedFolderDto),
+        hidden: z.array(ScannedFolderDto),
+        /** Folders left out because they are clones of a repo listed under GitHub. */
+        onGithub: z.number().int(),
+      }),
+      ScanFailed,
+    ])
+    .nullable(),
+});
+export type ProjectScanDto = z.infer<typeof ProjectScanDto>;
+
+/** The most projects one Add creates, so the splits started at once stay few. */
+export const MAX_PROJECTS_PER_ADD = 20;
+
+const names = z.array(z.string().trim().min(1).max(255)).max(MAX_PROJECTS_PER_ADD);
+
+/** Repo names and folder names to add; the server scans again and adds only names it finds. */
+export const AddProjectsInput = z
+  .object({ repos: names.default([]), folders: names.default([]), confirmOverCap: z.boolean().optional() })
+  .refine((v) => v.repos.length + v.folders.length > 0, { message: "Pick at least one project." })
+  .refine((v) => v.repos.length + v.folders.length <= MAX_PROJECTS_PER_ADD, {
+    message: `Add at most ${MAX_PROJECTS_PER_ADD} projects at once.`,
+  });
+export type AddProjectsInput = z.input<typeof AddProjectsInput>;
 
 export const UpdateProfileInput = z.object({
   contact: Contact.optional(),
@@ -438,9 +512,37 @@ export const AddonInput = z.object({
     .optional(),
   skills: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
   usage: ItemUsage.optional(),
+  /**
+   * Set when the form was filled from a private repo, or one whose visibility is unknown: the
+   * link is kept out of exports from the start (decision 80). Read on create only.
+   */
+  linkPrivate: z.boolean().optional(),
+  /**
+   * The folder the form was filled from (decision 80): read for facts with git (decision 81).
+   * Read on create only; the server resolves it again and refuses a path that isn't a folder.
+   */
+  folder: z.string().trim().min(1).max(2000).nullable().optional(),
   confirmOverCap: z.boolean().optional(),
 });
 export type AddonInput = z.infer<typeof AddonInput>;
+
+/** A GitHub or GitLab link, or a folder path, to fill the add-on form from (decision 80). */
+export const PrefillAddonInput = z.object({ source: z.string().trim().min(1).max(2000) });
+export type PrefillAddonInput = z.infer<typeof PrefillAddonInput>;
+
+/** What the add-on form is filled with; nothing is saved until the user saves the form. */
+export const AddonPrefillDto = z.object({
+  title: z.string(),
+  body: z.string(),
+  link: z.string().nullable(),
+  skills: z.array(z.string()),
+  linkPrivate: z.boolean(),
+  /** The resolved folder, when the source was a folder path; saved with the add-on. */
+  folder: z.string().nullable(),
+  /** Something to know before saving, such as a repo someone else owns. */
+  note: z.string().nullable(),
+});
+export type AddonPrefillDto = z.infer<typeof AddonPrefillDto>;
 
 /** What a split task needs to run again (stored in `tasks.input`). */
 export const SplitTaskInput = z.object({ itemId: ItemId });
