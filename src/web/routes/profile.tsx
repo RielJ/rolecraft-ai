@@ -6,6 +6,7 @@ import {
   AddonInput,
   type AddonPrefillDto,
   type Contact,
+  type ContributionDto,
   type FactDto,
   type GithubReadSummary,
   type LocalHideReason,
@@ -58,6 +59,7 @@ import {
   useAddProjects,
   useConfirmAllFacts,
   useConfirmFact,
+  useContributionSize,
   useCreateAddon,
   useDeleteAddon,
   useDeleteFact,
@@ -1819,6 +1821,8 @@ const REPO_HIDE: Record<RepoHideReason, HideWords> = {
   fork: { label: "Fork", count: (n) => `${n} ${n === 1 ? "fork" : "forks"}` },
   profile: { label: "Profile README", count: () => "your profile README" },
   small: { label: "Nearly empty", count: (n) => `${n} nearly empty` },
+  few_commits: { label: "Few of your commits", count: (n) => `${n} with few of your commits` },
+  others: { label: "Mostly others' commits", count: (n) => `${n} mostly by others` },
 };
 
 const FOLDER_HIDE: Record<LocalHideReason, HideWords> = {
@@ -1847,6 +1851,7 @@ function ProjectOption({
   added,
   checked,
   onCheckedChange,
+  note,
 }: {
   name: string;
   badges: ReactNode;
@@ -1855,6 +1860,8 @@ function ProjectOption({
   added: boolean;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  /** Shown under the text, such as a warning about a picked contribution. */
+  note?: ReactNode;
 }) {
   const id = useId();
   return (
@@ -1879,13 +1886,26 @@ function ProjectOption({
           {meta}
         </p>
         {text && <p className="line-clamp-2 whitespace-pre-line text-pretty text-muted-foreground text-sm">{text}</p>}
+        {note}
       </div>
     </li>
   );
 }
 
+const sizeText = (kb: number) => (kb < 1024 ? `${kb} KB` : `${(kb / 1024).toFixed(1)} MB`);
+
+function repoCommits(repo: ScannedRepoDto): string {
+  if (repo.ownCommits === null || repo.totalCommits === null) return "Not counted";
+  if (repo.totalCommits === 0) return "No commits";
+  return repo.ownCommits === repo.totalCommits
+    ? `${plural(repo.ownCommits, "commit")} by you`
+    : `${repo.ownCommits} of ${plural(repo.totalCommits, "commit")} by you`;
+}
+
 function repoMeta(repo: ScannedRepoDto): string {
   return [
+    repoCommits(repo),
+    sizeText(repo.sizeKb),
     repo.language,
     repo.stars > 0 ? plural(repo.stars, "star") : null,
     repo.pushedAt ? `Pushed ${monthFormat.format(new Date(repo.pushedAt))}` : "Never pushed",
@@ -1973,10 +1993,94 @@ function ScanFailed({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 /** Picks are keyed by source, so a repo and a folder with the same name stay apart. */
-type PickKey = `repo:${string}` | `folder:${string}`;
+type PickKey = `repo:${string}` | `folder:${string}` | `contrib:${string}`;
+
+/** "Your GitHub profile", asked for when no account is known and gh isn't set up (decision 86). */
+function ProfileField({ onScan, initial }: { onScan: (profile: string) => void; initial: string }) {
+  const id = useId();
+  const [value, setValue] = useState(initial);
+  return (
+    <form
+      className="grid gap-2 py-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (value.trim()) onScan(value.trim());
+      }}
+    >
+      <Label htmlFor={id}>Your GitHub profile</Label>
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="https://github.com/you"
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby={`${id}-hint`}
+        />
+        <Button type="submit" variant="outline" disabled={!value.trim()}>
+          Scan
+        </Button>
+      </div>
+      <p id={`${id}-hint`} className="text-muted-foreground text-xs">
+        Your public repos, and your merged pull requests in other people's public repos. It's saved to your contact
+        links when you add a project. Set HB_GITHUB=gh to include private repos.
+      </p>
+    </form>
+  );
+}
+
+const TINY_NOTE = "These pull requests are small (a typo or one-line fix). A recruiter may see them as padding.";
+
+/** A contribution row; once ticked, its pull requests' size is checked (decision 86). */
+function ContributionOption({
+  row,
+  profile,
+  checked,
+  onCheckedChange,
+}: {
+  row: ContributionDto;
+  profile: string | null;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const size = useContributionSize({ repo: checked ? row.repo : null, profile });
+  const last = row.pulls[0];
+  const meta = [
+    plural(row.pulls.length, "merged pull request"),
+    last ? `Last merged ${monthFormat.format(new Date(last.mergedAt))}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <ProjectOption
+      name={row.repo}
+      badges={null}
+      meta={meta}
+      text={row.pulls
+        .slice(0, 3)
+        .map((p) => p.title)
+        .join("\n")}
+      added={row.added}
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      note={
+        checked &&
+        (size.isPending ? (
+          <p className="text-muted-foreground text-xs">Checking its size…</p>
+        ) : size.data?.tiny ? (
+          <p role="status" className="text-pretty text-amber-700 text-xs dark:text-amber-400">
+            {TINY_NOTE}
+          </p>
+        ) : null)
+      }
+    />
+  );
+}
 
 function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const scan = useProjectScan({ enabled: open });
+  const [profile, setProfile] = useState<string | null>(null);
+  const scan = useProjectScan({ enabled: open, profile });
   const add = useAddProjects();
   const readId = useId();
   const [read, setRead] = useState(false);
@@ -1997,19 +2101,21 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       .filter((f) => f.hiddenBy === "not_git")
       .map((f) => f.folder),
   );
-  /** Repos, and folders that are git repos: the picks a read can cover. */
-  const readable = [...picked].filter((key) => key.startsWith("repo:") || !notGit.has(key.slice(7))).length;
+  /** Repos, contributions, and folders that are git repos: the picks a read can cover. */
+  const readable = [...picked].filter((key) => !key.startsWith("folder:") || !notGit.has(key.slice(7))).length;
 
   function submit(confirmOverCap: boolean) {
     const repos: string[] = [];
     const folders: string[] = [];
+    const contributions: string[] = [];
     for (const key of picked) {
       if (key.startsWith("repo:")) repos.push(key.slice(5));
+      else if (key.startsWith("contrib:")) contributions.push(key.slice(8));
       else folders.push(key.slice(7));
     }
     const reading = read && readable > 0;
     add.mutate(
-      { repos, folders, read: reading, confirmOverCap },
+      { repos, folders, contributions, read: reading, confirmOverCap, ...(profile ? { profile } : {}) },
       {
         onSuccess: () => {
           toast(
@@ -2036,7 +2142,10 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               Private
             </Badge>
           )}
-          {repo.archived && <Badge variant="outline">Archived</Badge>}
+          {repo.stale === "archived" && <Badge variant="outline">Archived</Badge>}
+          {repo.stale === "old" && repo.pushedAt && (
+            <Badge variant="outline">No push since {monthFormat.format(new Date(repo.pushedAt))}</Badge>
+          )}
           {repo.hiddenBy && <Badge variant="secondary">{REPO_HIDE[repo.hiddenBy].label}</Badge>}
         </>
       }
@@ -2070,6 +2179,11 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   const github: ProjectScanDto["github"] = scan.data?.github ?? null;
   const local: ProjectScanDto["local"] = scan.data?.local ?? null;
+  // Without gh, ask for a profile when none is known, or when the pasted one was refused.
+  const askProfile =
+    scan.data !== undefined &&
+    scan.data.githubMode !== "gh" &&
+    (github === null || (github.status === "error" && profile !== null));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-xl">
@@ -2112,10 +2226,18 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               hidden={local.hidden.map(folderOption)}
             />
           )}
+          {askProfile && <ProfileField key={profile ?? ""} initial={profile ?? ""} onScan={setProfile} />}
           {github?.status === "error" && <ScanFailed message={github.message} onRetry={() => scan.refetch()} />}
           {github?.status === "ok" && (
             <ScanGroup
-              heading={`On GitHub · ${github.user}`}
+              heading={
+                <>
+                  On GitHub · {github.user}
+                  {github.countNote && (
+                    <span className="block font-normal text-muted-foreground text-xs">{github.countNote}</span>
+                  )}
+                </>
+              }
               shownCount={github.shown.length}
               hiddenCount={github.hidden.length}
               hiddenLabel={hiddenSummary(
@@ -2125,6 +2247,28 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               emptyText="No repos left after the rules. Check the hidden ones below."
               shown={github.shown.map(repoOption)}
               hidden={github.hidden.map(repoOption)}
+            />
+          )}
+          {github?.status === "ok" && github.contributions.status === "error" && (
+            <ScanFailed message={github.contributions.message} onRetry={() => scan.refetch()} />
+          )}
+          {github?.status === "ok" && github.contributions.status === "ok" && github.contributions.rows.length > 0 && (
+            <ScanGroup
+              heading="Contributions · merged pull requests in other people's public repos"
+              shownCount={github.contributions.rows.length}
+              hiddenCount={0}
+              hiddenLabel=""
+              emptyText=""
+              shown={github.contributions.rows.map((row) => (
+                <ContributionOption
+                  key={row.repo}
+                  row={row}
+                  profile={profile}
+                  checked={picked.has(`contrib:${row.repo}`)}
+                  onCheckedChange={toggle(`contrib:${row.repo}`)}
+                />
+              ))}
+              hidden={null}
             />
           )}
         </div>

@@ -542,18 +542,10 @@ async function applyRead(
 
 // ---------- Finding the user's repos (decision 78) ----------
 
-/** The reader's listing, or 409 when it can't list (anything but gh, or the fixture in tests). */
-export async function listOwned(deps: Deps): Promise<{ user: string; repos: OwnedRepo[] }> {
-  const list = deps.github.list;
-  if (!list) {
-    throw new AppError({
-      code: "needs_input",
-      message: "Finding your repos needs the gh CLI. Set HB_GITHUB=gh and HB_GITHUB_USER, then restart the app.",
-    });
-  }
-  const { user } = await requireGithubUser(deps);
+/** `user`'s repos: through gh, private ones too; without it, public ones (decision 86). */
+export async function listOwned(deps: Deps, user: string): Promise<OwnedRepo[]> {
   try {
-    return { user, repos: await list({ user }) };
+    return await deps.github.list({ user });
   } catch (err) {
     if (err instanceof GithubError) throw githubAppError(err);
     throw err;

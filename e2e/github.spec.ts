@@ -205,6 +205,82 @@ test("find my projects → pick a repo, a hidden repo and a folder → all becom
   await expect(shown.getByRole("listitem").filter({ hasText: "jeep-route" })).toContainText("Added");
 });
 
+test("find my projects from a pasted profile → counts, a tiny contribution is questioned, then added", async ({
+  page,
+}) => {
+  const pull = (number: number, title: string, lines: number) => ({
+    number,
+    title,
+    author: "juandc",
+    headSha: "b".repeat(40),
+    files: [{ path: "README.md", additions: lines, deletions: 0 }],
+  });
+  await writeFile(
+    join(E2E_GITHUB_DIR, "hono.json"),
+    JSON.stringify({ owner: "honojs", repo: "hono", files: {}, pulls: [pull(7, "Fix typo in README", 2)] }),
+  );
+  await writeFile(
+    join(E2E_GITHUB_DIR, "viem.json"),
+    JSON.stringify({
+      owner: "wevm",
+      repo: "viem",
+      files: {},
+      pulls: [pull(10, "Add batching of JSON-RPC requests", 400)],
+    }),
+  );
+  // No contact link and no gh: the dialog asks whose profile to scan.
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Find my projects" }).click();
+  const dialog = page.getByRole("dialog", { name: "Find my projects" });
+  await dialog.getByLabel("Your GitHub profile").fill("https://github.com/juandc");
+  await dialog.getByRole("button", { name: "Scan" }).click();
+
+  const onGithub = dialog.getByRole("region", { name: /^On GitHub · juandc/ });
+  await expect(onGithub.getByRole("list", { name: "Shown" }).getByRole("listitem").first()).toContainText(
+    /commits? by you/,
+  );
+  const contributions = dialog.getByRole("region", { name: /^Contributions/ });
+  await expect(contributions.getByRole("listitem")).toHaveCount(2);
+  await expect(contributions.getByRole("listitem").filter({ hasText: "wevm/viem" })).toContainText(
+    "1 merged pull request",
+  );
+
+  // Ticking a contribution checks its size; a typo fix is questioned, a real change isn't.
+  await dialog.getByRole("checkbox", { name: "honojs/hono" }).check();
+  await expect(contributions.getByRole("status")).toHaveText(
+    "These pull requests are small (a typo or one-line fix). A recruiter may see them as padding.",
+  );
+  await dialog.getByRole("checkbox", { name: "honojs/hono" }).uncheck();
+  await dialog.getByRole("checkbox", { name: "wevm/viem" }).check();
+  await expect(contributions.getByRole("status")).toHaveCount(0);
+
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await dialog.getByRole("checkbox", { name: "honojs/hono" }).check();
+    await expect(contributions.getByRole("status")).toBeVisible();
+    const result = await new AxeBuilder({ page })
+      .include('[role="dialog"]')
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    const problems = result.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
+    expect(problems, scheme).toEqual([]);
+    await dialog.getByRole("checkbox", { name: "honojs/hono" }).uncheck();
+  }
+
+  await dialog.getByRole("button", { name: "Add 1 project" }).click();
+  await expect(dialog).toBeHidden();
+  const addons = page.getByRole("list", { name: "Add-ons" });
+  await expect(addons.getByRole("listitem").filter({ hasText: "viem" })).toContainText("Contribution");
+  const saved = await api(page, "GET", "/profile");
+  expect(saved.addons.map((a) => a.body)).toEqual([
+    "Merged pull request in wevm/viem: Add batching of JSON-RPC requests.",
+  ]);
+  // The pasted profile was saved, so the next scan needs no paste.
+  await page.getByRole("button", { name: "Find my projects" }).click();
+  await expect(dialog.getByLabel("Your GitHub profile")).toHaveCount(0);
+  await expect(dialog.getByRole("checkbox", { name: "wevm/viem" })).toBeDisabled();
+});
+
 test("fill the add-on form from a private repo link and a folder path; save keeps the link out of exports", async ({
   page,
 }) => {

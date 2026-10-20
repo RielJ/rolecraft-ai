@@ -17,6 +17,7 @@ import {
   BoardItemDto,
   BoardMetricsDto,
   type ChangeStatusInput,
+  ContributionSizeDto,
   type DecideChangesInput,
   type DraftInput,
   type FactId,
@@ -176,17 +177,34 @@ export const useReadGithub = () =>
   );
 
 /**
- * The user's projects: repos their GitHub account owns, through gh, and the folders in
- * `HB_PROJECTS_DIR` (decision 78). Scanned only while the dialog is open, and again on each open,
- * since nothing about a scan is saved.
+ * The user's projects: repos their GitHub account owns (through gh, or a pasted public profile),
+ * their merged pull requests elsewhere, and the folders in `HB_PROJECTS_DIR` (decisions 78, 86).
+ * Scanned only while the dialog is open, and again on each open, since nothing about a scan is saved.
  */
-export function useProjectScan({ enabled }: { enabled: boolean }) {
+export function useProjectScan({ enabled, profile }: { enabled: boolean; profile: string | null }) {
   return useQuery({
-    queryKey: keys.projects,
-    queryFn: () => unwrap(client.api.profile.projects.$get(), ProjectScanDto),
+    queryKey: [...keys.projects, profile ?? ""],
+    queryFn: () => unwrap(client.api.profile.projects.$get({ query: profile ? { profile } : {} }), ProjectScanDto),
     enabled,
     staleTime: 0,
     gcTime: 0,
+    retry: false,
+  });
+}
+
+/** A picked contribution's changed lines; fetched only once it is ticked (decision 86). */
+export function useContributionSize({ repo, profile }: { repo: string | null; profile: string | null }) {
+  return useQuery({
+    queryKey: [...keys.projects, "size", repo ?? "", profile ?? ""],
+    queryFn: () =>
+      unwrap(
+        client.api.profile.projects["contribution-size"].$get({
+          query: { repo: repo ?? "", ...(profile ? { profile } : {}) },
+        }),
+        ContributionSizeDto,
+      ),
+    enabled: repo !== null,
+    staleTime: Number.POSITIVE_INFINITY,
     retry: false,
   });
 }

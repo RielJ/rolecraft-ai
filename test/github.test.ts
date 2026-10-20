@@ -31,6 +31,7 @@ import { waitForTask } from "@/server/services/tasks";
 import {
   AddJobResult,
   ApiErrorBody,
+  ContributionSizeDto,
   ProfileDto,
   ProjectScanDto,
   TaskDto,
@@ -226,8 +227,23 @@ describe("listing owned repos", () => {
     expect(gh.argvs).toHaveLength(1);
   });
 
-  test("the public reader can't list", () => {
-    expect(createPublicReader({ http: createHttpClient({}), user: "juandc" }).list).toBeNull();
+  test("the public reader lists users/<login>/repos, public ones only (decision 86)", async () => {
+    const asked: string[] = [];
+    const reader = createReader({
+      mode: "public",
+      user: null,
+      transport: {
+        async get(path) {
+          asked.push(path);
+          return JSON.stringify(
+            path.endsWith("page=1") ? [listed("open"), listed("org-repo", { owner: { login: "acme" } })] : [],
+          );
+        },
+      },
+    });
+    const repos = await reader.list({ user: "JuanDC" });
+    expect(asked).toEqual(["users/JuanDC/repos?type=owner&sort=pushed&per_page=100&page=1"]);
+    expect(repos.map((r) => r.name)).toEqual(["open"]);
   });
 
   test("the fixture reader lists the snapshots the user owns", async () => {
@@ -875,11 +891,14 @@ describe("Find my projects: GitHub", () => {
       ["sari-ledger", true, "Go", false],
     ]);
     expect(result.shown[0]?.url).toBe("https://github.com/juandc/jeep-route");
-    expect(result.hidden.map((r) => [r.name, r.hiddenBy])).toEqual([
-      ["forked-lib", "fork"],
-      ["empty", "small"],
-      ["juandc", "profile"],
+    // Ordered by the user's commits, then size (decision 86).
+    expect(result.hidden.map((r) => [r.name, r.hiddenBy, r.sizeKb])).toEqual([
+      ["forked-lib", "fork", 100],
+      ["juandc", "profile", 3],
+      ["empty", "small", 1],
     ]);
+    // The fixture has no small rate limit, so every repo was counted.
+    expect([result.counted, result.countNote]).toEqual([5, null]);
     // Another owner's repo is never listed.
     expect([...result.shown, ...result.hidden].map((r) => r.name)).not.toContain("org-thing");
   });
@@ -933,14 +952,140 @@ describe("Find my projects: GitHub", () => {
     expect((await call("POST", "/profile/projects", {})).status).toBe(400);
   });
 
-  test("without gh or a projects folder, the option is off and the routes answer 409", async () => {
-    await setup(createPublicReader({ http: createHttpClient({}), user: null }));
+  test("without gh or a known profile, the scan asks for one and Add refuses", async () => {
+    await setup(createPublicReader({ http: createHttpClient({}), user: null }), { links: [] });
     expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({
-      github: false,
+      github: true,
       local: false,
     });
-    expect((await call("GET", "/profile/projects")).status).toBe(409);
+    const asked = await scanBoth();
+    expect([asked.githubMode, asked.github, asked.local]).toEqual(["public", null, null]);
     expect((await call("POST", "/profile/projects", { repos: ["jeep-route"] })).status).toBe(409);
+  });
+});
+
+describe("Find my projects: a public profile (decision 86)", () => {
+  const ME = "juandc";
+  const commits = (author: string, n: number, salt: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      sha: `${salt}${i}`.padEnd(40, "0").replace(/[^0-9a-f]/g, "a"),
+      message: `Change ${i}`,
+      author,
+    }));
+  const pull = (number: number, title: string, lines: number, over: Record<string, unknown> = {}) => ({
+    number,
+    title,
+    author: ME,
+    headSha: "b".repeat(40),
+    files: [{ path: "a.ts", additions: lines, deletions: 0 }],
+    ...over,
+  });
+  const SNAPSHOTS: GithubSnapshotInput[] = [
+    listedOnly("big", { sizeKb: 900, commits: commits(ME, 30, "a"), pushedAt: "2026-09-01T00:00:00Z" }),
+    listedOnly("theirs", { sizeKb: 400, commits: [...commits(ME, 6, "b"), ...commits("maria", 20, "c")] }),
+    listedOnly("few", { sizeKb: 400, commits: commits(ME, 2, "d") }),
+    listedOnly("old", { sizeKb: 400, commits: commits(ME, 9, "e"), pushedAt: "2023-01-01T00:00:00Z", stars: 40 }),
+    listedOnly("hidden-private", { private: true }),
+    {
+      owner: "wevm",
+      repo: "viem",
+      files: {},
+      pulls: [
+        pull(10, "Add batching of JSON-RPC requests", 400, { mergedAt: "2026-08-01T00:00:00Z" }),
+        pull(11, "Fix typo", 1, { mergedAt: "2026-09-01T00:00:00Z" }),
+        pull(12, "Still open", 50, { status: "open" }),
+      ],
+    },
+    { owner: "honojs", repo: "hono", files: {}, pulls: [pull(7, "Fix typo in README", 2)] },
+    { owner: "acme", repo: "payroll", private: true, files: {}, pulls: [pull(3, "Employer work", 900)] },
+  ];
+
+  const publicReader = (remaining = 5000) =>
+    createReader({
+      mode: "public",
+      user: null,
+      transport: createFixtureTransport({ snapshots: SNAPSHOTS, remaining }),
+    });
+  const scanAs = async (profile?: string) =>
+    json(
+      await call("GET", `/profile/projects${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`),
+      ProjectScanDto,
+    );
+
+  test("a pasted profile lists public repos with your commits; rules hide few and others'; stale is flagged", async () => {
+    await setup(publicReader(), { links: [] });
+    const result = await scanAs("https://github.com/JuanDC");
+    if (result.github?.status !== "ok") throw new Error(JSON.stringify(result.github));
+    expect(result.githubMode).toBe("public");
+    expect(result.github.shown.map((r) => [r.name, r.ownCommits, r.totalCommits, r.stale])).toEqual([
+      ["big", 30, 30, null],
+      ["old", 9, 9, "old"],
+    ]);
+    expect(result.github.hidden.map((r) => [r.name, r.hiddenBy])).toEqual([
+      ["theirs", "others"],
+      ["few", "few_commits"],
+    ]);
+    // GitHub answers the public listing with public repos only.
+    expect([...result.github.shown, ...result.github.hidden].map((r) => r.name)).not.toContain("hidden-private");
+    // Merged pulls in public repos you don't own; an open pull and a private repo never show.
+    if (result.github.contributions.status !== "ok") throw new Error("no contributions");
+    expect(result.github.contributions.rows.map((c) => [c.repo, c.pulls.map((p) => p.number)])).toEqual([
+      ["wevm/viem", [11, 10]],
+      ["honojs/hono", [7]],
+    ]);
+  });
+
+  test("without gh, at most 30 repos minus a reserve of 10 calls are counted, and the scan says so", async () => {
+    await setup(publicReader(12), { links: [] });
+    const result = await scanAs(ME);
+    if (result.github?.status !== "ok") throw new Error(JSON.stringify(result.github));
+    expect(result.github.counted).toBe(2);
+    expect(result.github.countNote).toBe(
+      "Counted commits for 2 of 4 repos. GitHub allows 60 calls an hour without sign-in; set HB_GITHUB=gh to count every repo.",
+    );
+    const uncounted = result.github.shown.filter((r) => r.ownCommits === null).map((r) => r.name);
+    expect(uncounted).toHaveLength(2);
+  });
+
+  test("a profile that isn't yours is refused, naming both accounts", async () => {
+    await setup(publicReader());
+    const result = await scanAs("maria");
+    expect(result.github).toEqual({
+      status: "error",
+      message:
+        'Find my projects lists only your own repos: your contact links name "juandc", not "maria". Change the GitHub link in your contact links to scan another account.',
+    });
+    expect((await scanAs("not a login!")).github).toMatchObject({ status: "error" });
+  });
+
+  test("a picked contribution becomes a contribution add-on, and the pasted profile is saved", async () => {
+    await setup(publicReader(), { links: [] });
+    const profile = await settle(
+      await call("POST", "/profile/projects", { contributions: ["WEVM/viem", "acme/payroll"], profile: ME }),
+    );
+    expect(profile.addons.map((a) => [a.title, a.body, a.link, a.project?.role])).toEqual([
+      [
+        "viem",
+        "Merged pull requests in wevm/viem: Fix typo; Add batching of JSON-RPC requests.",
+        "https://github.com/wevm/viem",
+        "contribution",
+      ],
+    ]);
+    expect(profile.contact.links).toEqual(["https://github.com/juandc"]);
+    const again = await scanAs();
+    if (again.github?.status !== "ok" || again.github.contributions.status !== "ok") throw new Error("no scan");
+    expect(again.github.contributions.rows.find((c) => c.repo === "wevm/viem")?.added).toBe(true);
+  });
+
+  test("a picked contribution's size is checked: tiny when every pull changed under 10 lines", async () => {
+    await setup(publicReader());
+    const size = async (repo: string) =>
+      json(
+        await call("GET", `/profile/projects/contribution-size?repo=${encodeURIComponent(repo)}`),
+        ContributionSizeDto,
+      );
+    expect(await size("honojs/hono")).toEqual({ lines: [2], tiny: true });
+    expect(await size("wevm/viem")).toEqual({ lines: [1, 400], tiny: false });
   });
 });
 
@@ -1008,13 +1153,19 @@ describe("Find my projects: a local folder", () => {
     expect((await call("POST", "/profile/projects", { folders: ["kain-tayo"] })).status).toBe(409);
   });
 
-  test("a projects folder alone works without gh; a missing folder is reported, not fatal", async () => {
-    await setup(createPublicReader({ http: createHttpClient({}), user: null }), {
-      projects: createProjectsReader({ dir, extraEmails: [ME], readConfigEmail: false }),
+  test("a projects folder works when GitHub can't be reached; a missing folder is reported, not fatal", async () => {
+    const offline = createReader({
+      mode: "public",
+      user: null,
+      transport: {
+        get: () =>
+          Promise.reject(new GithubError({ kind: "unavailable", message: "GitHub could not be read: offline" })),
+      },
     });
-    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({ github: false, local: true });
+    await setup(offline, { projects: createProjectsReader({ dir, extraEmails: [ME], readConfigEmail: false }) });
+    expect((await json(await call("GET", "/profile"), ProfileDto)).projectScan).toEqual({ github: true, local: true });
     const result = await scanBoth();
-    expect(result.github).toBeNull();
+    expect(result.github).toEqual({ status: "error", message: "GitHub could not be read: offline" });
     // Without a listing, your own remote is linked and treated as private until read.
     if (result.local?.status !== "ok") throw new Error("no local scan");
     expect(result.local.shown.map((f) => [f.folder, f.url])).toEqual([

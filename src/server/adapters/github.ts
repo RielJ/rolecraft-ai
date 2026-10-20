@@ -30,7 +30,7 @@ import {
 } from "@/domain/project-read";
 import type { GithubAbout } from "@/domain/project-source";
 import { estimateTokens } from "@/domain/prompts";
-import type { OwnedRepo } from "@/domain/repo-scan";
+import type { CommitCounts, MergedPull, OwnedRepo } from "@/domain/repo-scan";
 import { type GithubLink, githubLabel } from "@/shared/github-link";
 import { readCommitEvidence } from "./commit-evidence";
 import { type HttpClient, HttpError, MAX_BYTES } from "./http";
@@ -316,8 +316,19 @@ export type GithubReader = {
   read(input: GithubReadInput): Promise<GithubBundle>;
   /** A repo's or pull request's name, visibility, description, language and README, to fill the add-on form (decision 80). */
   about(link: GithubLink): Promise<GithubAbout>;
-  /** The repos `user` owns, organizations' excluded (decision 78). Null when this reader can't list. */
-  readonly list: ((input: { user: string }) => Promise<OwnedRepo[]>) | null;
+  /**
+   * The repos `user` owns, organizations' excluded (decision 78). gh lists private repos too; the
+   * public reader lists `users/<login>/repos`, public only (decision 86).
+   */
+  list(input: { user: string }): Promise<OwnedRepo[]>;
+  /** `user`'s commits and everyone's on the default branch, one call; null when GitHub gives no list. */
+  commitCounts(input: { owner: string; repo: string; user: string }): Promise<CommitCounts | null>;
+  /** Core API calls left this hour, or null when no small limit applies (gh). Costs no call. */
+  rateBudget(): Promise<number | null>;
+  /** `user`'s merged pull requests in other people's public repos: one search call. */
+  mergedPulls(input: { user: string }): Promise<MergedPull[]>;
+  /** A pull request's changed lines, additions plus deletions: one call. */
+  pullLines(input: { owner: string; repo: string; number: number }): Promise<number>;
 };
 
 // ---------- Listing owned repos ----------
@@ -339,19 +350,24 @@ const ListedRepo = z.object({
 });
 
 /**
- * The signed-in account's own repos: `user/repos?affiliation=owner`, newest push first, 100 a page,
- * up to `MAX_REPO_PAGES` pages. Repos owned by anyone but `user` are dropped as a second guard.
+ * An account's own repos, newest push first, 100 a page, up to `MAX_REPO_PAGES` pages. Signed in
+ * (`signedIn`, gh): `user/repos?affiliation=owner`, private ones included. Otherwise
+ * `users/<login>/repos?type=owner`, which GitHub answers with public repos only. Repos owned by
+ * anyone but `user` are dropped as a second guard.
  */
 export async function listOwnedRepos({
   get,
   user,
+  signedIn = true,
 }: {
   get: GithubTransport["get"];
   user: string;
+  signedIn?: boolean;
 }): Promise<OwnedRepo[]> {
   const repos: OwnedRepo[] = [];
+  const listing = signedIn ? "user/repos?affiliation=owner" : `users/${encodeURIComponent(user)}/repos?type=owner`;
   for (let page = 1; page <= MAX_REPO_PAGES; page++) {
-    const body = await get(`user/repos?affiliation=owner&sort=pushed&per_page=100&page=${page}`);
+    const body = await get(`${listing}&sort=pushed&per_page=100&page=${page}`);
     const listed = parse(z.array(ListedRepo), body, "your repos");
     for (const r of listed) {
       if (r.owner.login.toLowerCase() !== user.toLowerCase()) continue;
@@ -372,6 +388,52 @@ export async function listOwnedRepos({
   }
   return repos;
 }
+
+/**
+ * `user`'s commits and everyone's, from `contributors?anon=1` (one page of 100). Emails no account
+ * claims count as `user`'s when `isMine` says so. An empty repo (204, no body) is 0 of 0.
+ */
+async function contributorCounts({
+  get,
+  base,
+  user,
+  isMine = () => false,
+}: {
+  get: GithubTransport["get"];
+  base: string;
+  user: string;
+  isMine?: (email: string) => boolean;
+}): Promise<CommitCounts | null> {
+  const body = await get(`${base}/contributors?anon=1&per_page=100`);
+  if (body.trim() === "") return { own: 0, total: 0 };
+  // GitHub sends `{}` while it is still computing a list; that repo is not counted.
+  const people = parse(z.union([z.array(Contributor), z.object({})]), body, "contributors");
+  if (!Array.isArray(people)) return null;
+  const me = user.toLowerCase();
+  const own = people
+    .filter((p) => p.login?.toLowerCase() === me || (p.login === undefined && p.email && isMine(p.email)))
+    .reduce((n, p) => n + p.contributions, 0);
+  const total = people.reduce((n, p) => n + p.contributions, 0);
+  return { own: Math.min(own, total), total };
+}
+
+const RateLimit = z.object({ resources: z.object({ core: z.object({ remaining: z.number().int() }) }) });
+
+const SearchedPull = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  repository_url: z.string(),
+  closed_at: z.string().nullable().default(null),
+  pull_request: z.object({ merged_at: z.string().nullable().default(null) }).optional(),
+});
+const PullSearch = z.object({ items: z.array(SearchedPull) });
+const PullSize = z.object({ additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative() });
+
+/**
+ * The search query for `user`'s merged pull requests in repos they don't own. `is:public` is always
+ * in it, through gh too, so an employer's private repo never shows up (decision 86).
+ */
+export const mergedPullsQuery = (user: string) => `type:pr is:merged is:public author:${user} -user:${user}`;
 
 const repoPath = ({ owner, repo }: { owner: string; repo: string }) =>
   `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -601,18 +663,8 @@ export function createReader({
           files: [],
           sized: false,
         }));
-        const people = await soft(
-          async () =>
-            parse(z.array(Contributor), await get(`${base}/contributors?anon=1&per_page=100`), "contributors"),
-          null,
-        );
-        if (!people) return { mine, share: null };
-        const me = user.toLowerCase();
-        const ofMine = people
-          .filter((p) => p.login?.toLowerCase() === me || (p.login === undefined && p.email && isMine(p.email)))
-          .reduce((n, p) => n + p.contributions, 0);
-        const total = people.reduce((n, p) => n + p.contributions, 0);
-        return { mine, share: { mine: Math.min(ofMine, total), total } };
+        const counts = await soft(() => contributorCounts({ get, base, user, isMine }), null);
+        return { mine, share: counts && { mine: counts.own, total: counts.total } };
       },
       async patches(commits, step) {
         const out: RawPatch[] = [];
@@ -782,7 +834,30 @@ export function createReader({
       await beforeRead();
       return about(link);
     },
-    list: null,
+    async list({ user: owner }) {
+      return listOwnedRepos({ get, user: owner, signedIn: mode !== "public" });
+    },
+    commitCounts({ owner, repo, user: who }) {
+      return contributorCounts({ get, base: repoPath({ owner, repo }), user: who });
+    },
+    async rateBudget() {
+      if (mode === "gh") return null;
+      return parse(RateLimit, await get("rate_limit"), "the rate limit").resources.core.remaining;
+    },
+    async mergedPulls({ user: who }) {
+      const q = encodeURIComponent(mergedPullsQuery(who));
+      const found = parse(PullSearch, await get(`search/issues?q=${q}&per_page=100`), "the pull request search");
+      return found.items.flatMap((item): MergedPull[] => {
+        const match = /\/repos\/([^/]+)\/([^/]+)$/.exec(item.repository_url);
+        const mergedAt = item.pull_request?.merged_at ?? item.closed_at;
+        if (!match?.[1] || !match[2] || !mergedAt) return [];
+        return [{ owner: match[1], repo: match[2], number: item.number, title: item.title, mergedAt }];
+      });
+    },
+    async pullLines({ owner, repo, number }) {
+      const size = parse(PullSize, await get(`${repoPath({ owner, repo })}/pulls/${number}`), "a pull request");
+      return size.additions + size.deletions;
+    },
   };
 }
 
@@ -812,12 +887,17 @@ export function createGhReader({ user, ...options }: GhOptions & { user: string 
       });
     }
   }
+  const reader = createReader({ mode: "gh", user, transport, beforeRead: checkAccount });
   return {
-    ...createReader({ mode: "gh", user, transport, beforeRead: checkAccount }),
-    // gh lists only as HB_GITHUB_USER, whatever account the caller names.
+    ...reader,
+    // gh lists and searches only as HB_GITHUB_USER, whatever account the caller names.
     async list() {
       await checkAccount();
       return listOwnedRepos({ get: transport.get, user });
+    },
+    async mergedPulls() {
+      await checkAccount();
+      return reader.mergedPulls({ user });
     },
   };
 }

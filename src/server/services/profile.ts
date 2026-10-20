@@ -246,7 +246,8 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     skillCatalog: SKILLS.map((s) => s.name),
     cvFile,
     aiReady: aiConfig !== null,
-    projectScan: { github: deps.github.list !== null, local: deps.projects !== null },
+    // GitHub is always a source: gh, or a public profile (decision 86).
+    projectScan: { github: true, local: deps.projects !== null },
   };
 }
 

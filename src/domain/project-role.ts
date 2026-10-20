@@ -24,6 +24,35 @@ export function githubUserFor({
   return null;
 }
 
+/**
+ * Whose repos a scan lists (decision 86). gh lists only as `HB_GITHUB_USER`, so `asked` is ignored.
+ * Otherwise `asked` (a pasted profile) must match `HB_GITHUB_USER` and the contact links' profile,
+ * when they are set; without `asked`, those decide. Null when nothing names an account.
+ */
+export function scanAccount({
+  gh,
+  configured,
+  links,
+  asked,
+}: {
+  gh: boolean;
+  configured: string | null;
+  links: readonly string[];
+  asked: string | null;
+}): { status: "ok"; user: string; known: boolean } | { status: "refused"; message: string } | null {
+  const found = githubUserFor({ configured, links });
+  if (gh || !asked) return found && { status: "ok", user: found.user, known: true };
+  if (!found) return { status: "ok", user: asked, known: false };
+  if (found.user.toLowerCase() === asked.toLowerCase()) return { status: "ok", user: found.user, known: true };
+  const where = found.from === "HB_GITHUB_USER" ? "HB_GITHUB_USER is" : "your contact links name";
+  return {
+    status: "refused",
+    message: `Find my projects lists only your own repos: ${where} "${found.user}", not "${asked}". ${
+      found.from === "HB_GITHUB_USER" ? "Change HB_GITHUB_USER" : "Change the GitHub link in your contact links"
+    } to scan another account.`,
+  };
+}
+
 /** Who decided a project's role: the user in the add-on form, the last read, or its link's owner. */
 export type ProjectRoleFrom = "you" | "read" | "link";
 

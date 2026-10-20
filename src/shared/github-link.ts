@@ -75,6 +75,13 @@ export function githubProfileUser(raw: string): string | null {
   return user !== undefined && OWNER.test(user) && !RESERVED.has(user.toLowerCase()) ? user : null;
 }
 
+/** A login from a bare login, `@login`, or a `github.com/<login>` profile link; null otherwise. */
+export function profileLogin(raw: string): string | null {
+  const bare = raw.trim().replace(/^@/, "");
+  if (OWNER.test(bare)) return RESERVED.has(bare.toLowerCase()) ? null : bare;
+  return githubProfileUser(raw.trim());
+}
+
 /** `owner/repo`, or `owner/repo#N` for a pull request. */
 export function githubLabel(link: GithubLink): string {
   return link.kind === "pull" ? `${link.owner}/${link.repo}#${link.number}` : `${link.owner}/${link.repo}`;

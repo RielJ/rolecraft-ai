@@ -381,7 +381,7 @@ export const ProfileDto = z.object({
   cvFile: z.object({ fileName: z.string(), size: z.number().int(), uploadedAt: z.string() }).nullable(),
   /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
   aiReady: z.boolean(),
-  /** Where "Find my projects" looks (decision 78): GitHub with `HB_GITHUB=gh`, a folder with `HB_PROJECTS_DIR`. */
+  /** Where "Find my projects" looks: GitHub always (decisions 78, 86), a folder with `HB_PROJECTS_DIR`. */
   projectScan: z.object({ github: z.boolean(), local: z.boolean() }),
 });
 export type ProfileDto = z.infer<typeof ProfileDto>;
@@ -389,7 +389,7 @@ export type ProfileDto = z.infer<typeof ProfileDto>;
 // ---------- Finding your projects (decision 78) ----------
 
 /** Why the rules put a repo in the collapsed "Hidden by rules" group. */
-export const RepoHideReason = z.enum(["fork", "profile", "small"]);
+export const RepoHideReason = z.enum(["fork", "profile", "small", "few_commits", "others"]);
 export type RepoHideReason = z.infer<typeof RepoHideReason>;
 
 export const ScannedRepoDto = z.object({
@@ -406,6 +406,14 @@ export const ScannedRepoDto = z.object({
   hiddenBy: RepoHideReason.nullable(),
   /** Your commits in a local clone, or null without one. */
   localCommits: z.number().int().nullable(),
+  /** Size on GitHub, in KB. */
+  sizeKb: z.number().int().nonnegative(),
+  /** Your commits on GitHub's default branch, or null when not counted. */
+  ownCommits: z.number().int().nullable(),
+  /** Everyone's commits on GitHub's default branch, or null when not counted. */
+  totalCommits: z.number().int().nullable(),
+  /** "archived", or "old" after 18 months without a push; null otherwise. */
+  stale: z.enum(["archived", "old"]).nullable(),
 });
 export type ScannedRepoDto = z.infer<typeof ScannedRepoDto>;
 
@@ -434,8 +442,20 @@ export type ScannedFolderDto = z.infer<typeof ScannedFolderDto>;
 /** A source that could not be read says why; the other is still shown. */
 const ScanFailed = z.object({ status: z.literal("error"), message: z.string() });
 
+/** Merged pull requests of yours in one public repo you don't own (decision 86). */
+export const ContributionDto = z.object({
+  /** `owner/name`, what Add takes. */
+  repo: z.string(),
+  url: z.string(),
+  pulls: z.array(z.object({ number: z.number().int(), title: z.string(), mergedAt: z.string() })),
+  added: z.boolean(),
+});
+export type ContributionDto = z.infer<typeof ContributionDto>;
+
 export const ProjectScanDto = z.object({
-  /** Null without `HB_GITHUB=gh`. */
+  /** "gh" lists private repos too; "public" needs a pasted profile when none is known. */
+  githubMode: z.enum(["public", "gh", "fixture"]),
+  /** Null when no account is known yet: the dialog asks for your profile. */
   github: z
     .discriminatedUnion("status", [
       z.object({
@@ -444,6 +464,14 @@ export const ProjectScanDto = z.object({
         user: z.string(),
         shown: z.array(ScannedRepoDto),
         hidden: z.array(ScannedRepoDto),
+        /** Repos whose commits were counted, of all listed. */
+        counted: z.number().int(),
+        /** Why some weren't counted, when some weren't. */
+        countNote: z.string().nullable(),
+        contributions: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("ok"), rows: z.array(ContributionDto) }),
+          ScanFailed,
+        ]),
       }),
       ScanFailed,
     ])
@@ -473,17 +501,41 @@ export const MAX_PROJECTS_PER_ADD = 20;
 
 const names = z.array(z.string().trim().min(1).max(255)).max(MAX_PROJECTS_PER_ADD);
 
+/** A pasted GitHub profile: a login or `https://github.com/<login>`. */
+const ProfileField = z.string().trim().min(1).max(255);
+
+/** A contribution's size, checked when it is picked (decision 86). */
+export const ContributionSizeDto = z.object({
+  /** The changed lines of its newest merged pull requests, at most 3. */
+  lines: z.array(z.number().int()),
+  /** Every one changed fewer than 10 lines. */
+  tiny: z.boolean(),
+});
+export type ContributionSizeDto = z.infer<typeof ContributionSizeDto>;
+
+export const ProjectScanQuery = z.object({ profile: ProfileField.optional() });
+export const ContributionSizeQuery = z.object({
+  repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "Expected owner/name."),
+  profile: ProfileField.optional(),
+});
+
 /** Repo names and folder names to add; the server scans again and adds only names it finds. */
 export const AddProjectsInput = z
   .object({
     repos: names.default([]),
     folders: names.default([]),
+    /** `owner/name` of picked contributions. */
+    contributions: names.default([]),
+    /** The profile the scan used, when no account was known before. */
+    profile: ProfileField.optional(),
     /** Read each repo and git folder for facts, one at a time, once added (decision 81). */
     read: z.boolean().default(false),
     confirmOverCap: z.boolean().optional(),
   })
-  .refine((v) => v.repos.length + v.folders.length > 0, { message: "Pick at least one project." })
-  .refine((v) => v.repos.length + v.folders.length <= MAX_PROJECTS_PER_ADD, {
+  .refine((v) => v.repos.length + v.folders.length + v.contributions.length > 0, {
+    message: "Pick at least one project.",
+  })
+  .refine((v) => v.repos.length + v.folders.length + v.contributions.length <= MAX_PROJECTS_PER_ADD, {
     message: `Add at most ${MAX_PROJECTS_PER_ADD} projects at once.`,
   });
 export type AddProjectsInput = z.input<typeof AddProjectsInput>;

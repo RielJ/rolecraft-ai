@@ -6,11 +6,13 @@ import {
   AddProjectsInput,
   type ApiErrorBody,
   ConfirmOverCapInput,
+  ContributionSizeQuery,
   FactId,
   ItemId,
   MAX_CV_BYTES,
   PasteCvInput,
   PrefillAddonInput,
+  ProjectScanQuery,
   SaveRolesInput,
   SetSkillInput,
   UpdateFactInput,
@@ -37,7 +39,7 @@ import {
   updateProfile,
   uploadCv,
 } from "../../services/profile";
-import { addProjects, scanProjects } from "../../services/projects";
+import { addProjects, contributionSize, scanProjects } from "../../services/projects";
 import { inlineDisposition } from "../disposition";
 import { validate } from "../validate";
 
@@ -94,7 +96,13 @@ export function profileRoutes(deps: Deps) {
         c.json(await prefillAddon(deps, c.req.valid("json"))),
       )
       // Finding the user's projects on GitHub and in a local folder (decision 78).
-      .get("/profile/projects", async (c) => c.json(await scanProjects(deps)))
+      .get("/profile/projects", validate("query", ProjectScanQuery), async (c) =>
+        c.json(await scanProjects(deps, c.req.valid("query"))),
+      )
+      // A picked contribution's size, so a typo fix is questioned before it is added (decision 86).
+      .get("/profile/projects/contribution-size", validate("query", ContributionSizeQuery), async (c) =>
+        c.json(await contributionSize(deps, c.req.valid("query"))),
+      )
       .post("/profile/projects", validate("json", AddProjectsInput), async (c) =>
         c.json(await addProjects(deps, c.req.valid("json"))),
       )

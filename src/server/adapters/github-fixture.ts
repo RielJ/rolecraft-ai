@@ -48,6 +48,7 @@ export const GithubSnapshot = z.object({
         author: z.string(),
         headSha: z.string(),
         status: z.enum(["merged", "open", "closed"]).default("merged"),
+        mergedAt: z.string().default("2026-01-01T00:00:00Z"),
         files: z.array(z.object({ path: z.string(), additions: z.number(), deletions: z.number() })),
         commits: z.array(FixtureCommit).default([]),
         comments: z.array(FixtureComment).default([]),
@@ -142,7 +143,9 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
         head: { sha: pull.headSha },
         changed_files: pull.files.length,
         state: pull.status === "open" ? "open" : "closed",
-        merged_at: pull.status === "merged" ? "2026-01-01T00:00:00Z" : null,
+        merged_at: pull.status === "merged" ? pull.mergedAt : null,
+        additions: pull.files.reduce((n, f) => n + f.additions, 0),
+        deletions: pull.files.reduce((n, f) => n + f.deletions, 0),
       };
     case "files":
       return pull.files.map((f) => ({ filename: f.path, additions: f.additions, deletions: f.deletions }));
@@ -157,16 +160,76 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
   }
 }
 
+const listedJson = (s: GithubSnapshot): Json => ({
+  name: s.repo,
+  owner: { login: s.owner },
+  private: s.private,
+  fork: s.fork,
+  archived: s.archived,
+  size: s.sizeKb,
+  language: s.language,
+  stargazers_count: s.stars,
+  pushed_at: s.pushedAt,
+  description: s.description,
+});
+
+/** The calls that aren't about one repo: listings, the rate limit, the pull request search. */
+function answerAccount({
+  parsed,
+  url,
+  remaining,
+}: {
+  parsed: readonly GithubSnapshot[];
+  url: URL;
+  remaining: number;
+}): Json | undefined {
+  const page = Number(url.searchParams.get("page") ?? "1");
+  const owns = (login: string) => parsed.filter((s) => s.owner.toLowerCase() === login.toLowerCase());
+  if (url.pathname === "/rate_limit") return { resources: { core: { remaining } } };
+  // The signed-in account: every repo the snapshots give the first owner listed in `user/repos`.
+  if (url.pathname === "/user/repos") return page === 1 ? owns(parsed[0]?.owner ?? "").map(listedJson) : [];
+  const users = /^\/users\/([^/]+)\/repos$/.exec(url.pathname);
+  if (users?.[1]) {
+    return page === 1
+      ? owns(decodeURIComponent(users[1]))
+          .filter((s) => !s.private)
+          .map(listedJson)
+      : [];
+  }
+  if (url.pathname === "/search/issues") {
+    const q = url.searchParams.get("q") ?? "";
+    const author = /author:(\S+)/.exec(q)?.[1]?.toLowerCase() ?? "";
+    return {
+      items: parsed
+        .filter((s) => !s.private && s.owner.toLowerCase() !== author)
+        .flatMap((s) =>
+          s.pulls
+            .filter((p) => p.status === "merged" && p.author.toLowerCase() === author)
+            .map((p) => ({
+              number: p.number,
+              title: p.title,
+              repository_url: `https://api.github.com/repos/${s.owner}/${s.repo}`,
+              closed_at: p.mergedAt,
+              pull_request: { merged_at: p.mergedAt },
+            })),
+        ),
+    };
+  }
+  return undefined;
+}
+
 /**
  * A transport over snapshots. `log`, when given, gets every path asked for, so tests can prove
- * what was (and was not) read.
+ * what was (and was not) read. `remaining` is what `rate_limit` reports.
  */
 export function createFixtureTransport({
   snapshots,
   log,
+  remaining = 5000,
 }: {
   snapshots: readonly GithubSnapshotInput[];
   log?: string[];
+  remaining?: number;
 }): GithubTransport {
   const parsed = snapshots.map((s) => GithubSnapshot.parse(s));
   return {
@@ -174,6 +237,8 @@ export function createFixtureTransport({
       await Promise.resolve();
       log?.push(path);
       const url = new URL(path, "https://api.github.invalid/");
+      const account = answerAccount({ parsed, url, remaining });
+      if (account !== undefined) return JSON.stringify(account);
       const match = /^\/repos\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
       if (!match) throw notFound();
       const [, owner = "", repo = "", rest = ""] = match;
@@ -218,21 +283,21 @@ export function ownedSnapshots({
     }));
 }
 
-/** The reader over the snapshots in `dir`, loaded on each read so edits show up without a restart. */
+/** The reader over the snapshots in `dir`, loaded on each call so edits show up without a restart. */
 export function createFixtureReader({ dir, user }: { dir: string; user: string | null }): GithubReader {
+  const fresh = async () =>
+    createReader({ mode: "fixture", user, transport: createFixtureTransport({ snapshots: await loadSnapshots(dir) }) });
   return {
     mode: "fixture",
     user,
-    async read(input) {
-      const transport = createFixtureTransport({ snapshots: await loadSnapshots(dir) });
-      return createReader({ mode: "fixture", user, transport }).read(input);
-    },
-    async about(link) {
-      const transport = createFixtureTransport({ snapshots: await loadSnapshots(dir) });
-      return createReader({ mode: "fixture", user, transport }).about(link);
-    },
+    read: async (input) => (await fresh()).read(input),
+    about: async (link) => (await fresh()).about(link),
     async list({ user: owner }) {
       return ownedSnapshots({ snapshots: await loadSnapshots(dir), user: owner });
     },
+    commitCounts: async (input) => (await fresh()).commitCounts(input),
+    rateBudget: async () => (await fresh()).rateBudget(),
+    mergedPulls: async (input) => (await fresh()).mergedPulls(input),
+    pullLines: async (input) => (await fresh()).pullLines(input),
   };
 }

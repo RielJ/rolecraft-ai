@@ -207,6 +207,7 @@ describe("scanLocal", () => {
       description: null,
     });
     const github = scanRepos({
+      now: new Date("2026-10-20T00:00:00Z"),
       user: "juandc",
       repos: [repo("akashic"), repo("tiny")],
       linked: [],
