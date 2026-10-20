@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "bun --watch src/server/main.ts",
     "dev:web": "vite",
-    "check": "biome check . && tsc --noEmit && tsc -p extension/tsconfig.json --noEmit && bun run test && bun run test:budget && bun run test:extension",
-    "check:changed": "biome check . && tsc --noEmit && tsc -p extension/tsconfig.json --noEmit && bun run test --changed && bun run build && bun scripts/e2e-changed.ts",
+    "check": "biome check --error-on-warnings . && tsc --noEmit && tsc -p extension/tsconfig.json --noEmit && bun run test && bun run test:budget && bun run test:extension",
+    "check:changed": "biome check --error-on-warnings . && tsc --noEmit && tsc -p extension/tsconfig.json --noEmit && bun run test --changed && bun run build && bun scripts/e2e-changed.ts",
     "db:up": "docker compose up -d --wait db",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/server/db/migrate.ts",

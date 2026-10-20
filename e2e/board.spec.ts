@@ -55,7 +55,10 @@ test("contract terms, caution and notes in the workspace; moves on the board fre
   // Notes save on blur, with no save button.
   await page.getByLabel("Notes").fill("Spoke to Maria. Send the proposal by Friday.");
   await page.getByLabel("Notes").blur();
-  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  // Scoped to the side panel: the header's status badge also reads "Saved".
+  await expect(
+    page.getByRole("complementary", { name: "Apply and track" }).getByText("Saved", { exact: true }),
+  ).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Notes")).toHaveValue("Spoke to Maria. Send the proposal by Friday.");
   await expect(page.getByLabel("Rate", { exact: true })).toHaveValue("35.5");
