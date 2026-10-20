@@ -40,7 +40,7 @@ async function json<T>(res: Response, schema: { parse(v: unknown): T }, status =
 const CV = [
   "- Built a payments API in Go serving 2M requests a day",
   "- Led a team of 4 engineers at Acme Corp",
-  "- Moved our job queue to Postgres in 2022",
+  "- Moved the job queue to Postgres in 2022",
 ].join("\n");
 
 const JOB = {
@@ -214,7 +214,7 @@ describe("drafting with citations", () => {
 });
 
 describe("style pass", () => {
-  const TELL = "I am passionate about leveraging Go — I built a payments API [FACT-1].";
+  const TELL = "Passionate about leveraging Go — built a payments API [FACT-1].";
 
   async function onlyResume(ws: WorkspaceDto) {
     await call("PATCH", `/outputs/${file(ws, "letter").id}`, { included: false });
@@ -224,33 +224,57 @@ describe("style pass", () => {
   test("tells trigger one rewrite; a leftover tell is saved as a style hit and export still succeeds", async () => {
     const { ws } = await setup();
     await onlyResume(ws);
-    deps.fake.queue(TELL, JSON.stringify({ rewrites: ["I leverage Go to build payment APIs [FACT-1]."] }));
+    deps.fake.queue(TELL, JSON.stringify({ rewrites: ["Leveraged Go to build payment APIs [FACT-1]."] }));
     const { ws: after } = await draft(ws, { kinds: ["resume"] });
 
     expect(deps.fake.calls).toHaveLength(2);
     const rewritePrompt = deps.fake.calls[1]?.messages.at(-1)?.content ?? "";
     expect(rewritePrompt).toContain(`1. ${TELL}`);
-    expect(rewritePrompt).toContain('"passionate about"');
+    expect(rewritePrompt).toContain('"Passionate about"');
     expect(rewritePrompt).toContain("Dash used as punctuation");
 
     const resume = file(after, "resume");
-    expect(resume.body).toBe("I leverage Go to build payment APIs [FACT-1].");
+    expect(resume.body).toBe("Leveraged Go to build payment APIs [FACT-1].");
     expect(resume.styleHits).toEqual([
-      { sentence: "I leverage Go to build payment APIs [FACT-1].", phrase: "leverage", rule: "banned_phrase" },
+      { sentence: "Leveraged Go to build payment APIs [FACT-1].", phrase: "Leveraged", rule: "banned_phrase" },
     ]);
     expect(after.gate).toEqual({ ok: true });
 
     const text = await json(await call("GET", `/outputs/${resume.id}/text`), TextExport);
-    expect(text.text).toBe("I leverage Go to build payment APIs.");
+    expect(text.text).toBe("Leveraged Go to build payment APIs.");
+  });
+
+  test("a resume whose bullets start with I comes back rewritten without pronouns (decision 72)", async () => {
+    const { ws } = await setup();
+    await onlyResume(ws);
+    const first = [
+      "## Experience",
+      "- I built a payments API in Go [FACT-1].",
+      "- I led a team of 4 engineers [FACT-2].",
+    ];
+    deps.fake.queue(
+      first.join("\n"),
+      JSON.stringify({ rewrites: ["Built a payments API in Go [FACT-1].", "Led a team of 4 engineers [FACT-2]."] }),
+    );
+    const { ws: after } = await draft(ws, { kinds: ["resume"] });
+
+    expect(deps.fake.calls).toHaveLength(2);
+    const rewritePrompt = deps.fake.calls[1]?.messages.at(-1)?.content ?? "";
+    expect(rewritePrompt).toContain('"I" in a resume');
+    const resume = file(after, "resume");
+    expect(resume.body).toBe(
+      ["## Experience", "- Built a payments API in Go [FACT-1].", "- Led a team of 4 engineers [FACT-2]."].join("\n"),
+    );
+    expect(resume.styleHits).toEqual([]);
   });
 
   test("a rewrite that adds an unbacked number is discarded and the original sentence kept", async () => {
     const { ws } = await setup();
-    deps.fake.queue(TELL, JSON.stringify({ rewrites: ["I built 5 payment APIs in Go [FACT-1]."] }));
+    deps.fake.queue(TELL, JSON.stringify({ rewrites: ["Built 5 payment APIs in Go [FACT-1]."] }));
     const { ws: after } = await draft(ws, { kinds: ["resume"] });
     const resume = file(after, "resume");
     expect(resume.body).toBe(TELL);
-    expect(resume.styleHits.map((h) => h.phrase)).toEqual(["—", "passionate about", "leveraging"]);
+    expect(resume.styleHits.map((h) => h.phrase)).toEqual(["—", "Passionate about", "leveraging"]);
   });
 
   test("an unreadable rewrite reply keeps the draft", async () => {
@@ -415,11 +439,11 @@ describe("spend and the cap", () => {
         task_id: string | null;
       }[]
     >`SELECT tier, purpose, provider, model, input_tokens, output_tokens, cost_usd, task_id FROM ai_calls`;
-    expect(rows).toHaveLength(3);
+    // One requirement map for the job (decision 73), then one draft per file.
+    expect(rows.map((r) => r.purpose).sort()).toEqual(["draft", "draft", "draft", "requirements"]);
     for (const row of rows) {
       expect(row).toMatchObject({
         tier: "writing",
-        purpose: "draft",
         provider: "anthropic",
         model: "claude-sonnet-5-5",
       });
@@ -436,7 +460,10 @@ describe("spend and the cap", () => {
     await call("PATCH", "/settings", { modelWriting: "claude-experimental-x" });
     await draft(ws, { kinds: ["resume"] });
     const rows = await testSql()<{ model: string; cost_usd: string | null }[]>`SELECT model, cost_usd FROM ai_calls`;
-    expect([...rows]).toEqual([{ model: "claude-experimental-x", cost_usd: null }]);
+    expect([...rows]).toEqual([
+      { model: "claude-experimental-x", cost_usd: null },
+      { model: "claude-experimental-x", cost_usd: null },
+    ]);
   });
 
   test("with a cap below the estimate, drafting returns 402 over_cap until confirmOverCap", async () => {

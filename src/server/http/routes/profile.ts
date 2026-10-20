@@ -9,6 +9,7 @@ import {
   ItemId,
   MAX_CV_BYTES,
   PasteCvInput,
+  SaveRolesInput,
   SetSkillInput,
   UpdateFactInput,
   UpdateProfileInput,
@@ -25,7 +26,9 @@ import {
   getProfile,
   keepFact,
   readCvFile,
+  readItemRoles,
   saveCv,
+  saveItemRoles,
   setSkill,
   updateAddon,
   updateFact,
@@ -100,6 +103,22 @@ export function profileRoutes(deps: Deps) {
               confirmOverCap: c.req.valid("json").confirmOverCap,
             }),
           ),
+      )
+      // Roles of the CV or an experience add-on (decision 71).
+      .post(
+        "/profile/items/:id/roles/read",
+        validate("param", ItemParam),
+        validate("json", ConfirmOverCapInput),
+        async (c) =>
+          c.json(
+            await readItemRoles(deps, {
+              itemId: c.req.valid("param").id,
+              confirmOverCap: c.req.valid("json").confirmOverCap,
+            }),
+          ),
+      )
+      .put("/profile/items/:id/roles", validate("param", ItemParam), validate("json", SaveRolesInput), async (c) =>
+        c.json(await saveItemRoles(deps, { itemId: c.req.valid("param").id, ...c.req.valid("json") })),
       )
       .delete("/profile/addons/:id", validate("param", ItemParam), async (c) =>
         c.json(await deleteAddon(deps, { itemId: c.req.valid("param").id })),

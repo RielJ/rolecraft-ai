@@ -7,6 +7,10 @@ export const PROFILE_ITEM_KINDS = ["cv", "experience", "open_source", "challenge
 export const ProfileItemKind = z.enum(PROFILE_ITEM_KINDS);
 export type ProfileItemKind = z.infer<typeof ProfileItemKind>;
 
+/** Item kinds that list jobs, so roles are read from them (decision 71). */
+export const ROLE_ITEM_KINDS = ["cv", "experience"] as const satisfies readonly ProfileItemKind[];
+export const hasRoles = (kind: ProfileItemKind): boolean => ROLE_ITEM_KINDS.some((k) => k === kind);
+
 /** Add-on kinds (decision 2): every item kind except the single CV. */
 export const ADDON_KINDS = [
   "experience",
@@ -128,11 +132,11 @@ export const AI_TIERS = ["light", "writing"] as const;
 export const AiTier = z.enum(AI_TIERS);
 export type AiTier = z.infer<typeof AiTier>;
 
-export const AI_PURPOSES = ["split", "eligibility", "questions", "draft", "github"] as const;
+export const AI_PURPOSES = ["split", "eligibility", "questions", "draft", "github", "roles", "requirements"] as const;
 export const AiPurpose = z.enum(AI_PURPOSES);
 export type AiPurpose = z.infer<typeof AiPurpose>;
 
-export const TASK_KINDS = ["refresh", "split", "draft", "suggest_questions", "github_read"] as const;
+export const TASK_KINDS = ["refresh", "split", "draft", "suggest_questions", "github_read", "roles_read"] as const;
 export const TaskKind = z.enum(TASK_KINDS);
 export type TaskKind = z.infer<typeof TaskKind>;
 
@@ -141,7 +145,20 @@ export const TaskStatus = z.enum(TASK_STATUSES);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
 /** What `checkStyle` flags (section 3.4, step 4a). */
-export const STYLE_RULES = ["dash", "banned_phrase", "adjective_triplet", "long_sentence"] as const;
+/** How much a posting's requirement weighs: asked for outright, a main duty, or a plus (decision 73). */
+export const REQUIREMENT_WEIGHTS = ["must", "duty", "nice"] as const;
+export const RequirementWeight = z.enum(REQUIREMENT_WEIGHTS);
+export type RequirementWeight = z.infer<typeof RequirementWeight>;
+
+export const STYLE_RULES = [
+  "dash",
+  "banned_phrase",
+  "adjective_triplet",
+  "long_sentence",
+  "pronoun",
+  "repeated_opener",
+  "same_shape",
+] as const;
 export const StyleRule = z.enum(STYLE_RULES);
 export type StyleRule = z.infer<typeof StyleRule>;
 

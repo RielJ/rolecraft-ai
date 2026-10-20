@@ -82,13 +82,17 @@ async function stored(): Promise<Stored[]> {
 const skillsOf = async (title: string) => (await stored()).find((j) => j.title === title)?.skills;
 const stamp = (...customNames: string[]) => skillsStamp({ version: BUILTIN_SKILLS_VERSION, customNames });
 
-/** Every open job's skills are what a full read with the user's current list gives. */
+const niceOf = async (title: string) =>
+  (await testSql()<{ nice: string[] }[]>`SELECT nice_skills AS nice FROM jobs WHERE title = ${title}`)[0]?.nice;
+
+/** Every open job's skills and nice skills are what a full read with the user's current list gives. */
 async function expectFreshRead(custom: string[]): Promise<void> {
   const dict = compileSkills(custom);
   for (const job of (await stored()).filter((j) => !j.closed)) {
-    expect({ title: job.title, skills: job.skills, stamp: job.stamp }).toEqual({
+    expect({ title: job.title, ...jobSkills(job, dict), stamp: job.stamp }).toEqual({
       title: job.title,
-      skills: jobSkills(job, dict),
+      skills: job.skills,
+      niceSkills: (await niceOf(job.title)) ?? [],
       stamp: dictionaryStamp(dict),
     });
   }
@@ -131,6 +135,25 @@ describe("adding and removing a skill of your own (decision 68)", () => {
     expect(await asked("Backend Engineer")).toBe(1);
     expect(await skillsOf("Backend Engineer")).toEqual(["Go"]);
     await expectFreshRead([]);
+  });
+
+  test("a skill named only in the nice-to-have text joins the nice skills too, and leaves both", async () => {
+    await addJob({ title: "Backend Engineer", description: "Requirements\n- Go\n\nNice to have\n- Hasura\n- Payroll" });
+    await addJob({
+      title: "Platform Engineer",
+      description: "Requirements\n- Payroll\n\nNice to have\n- Payroll exports",
+    });
+    await setSkill("Hasura", "added");
+    await setSkill("Payroll", "added");
+    expect(await skillsOf("Backend Engineer")).toEqual(["Go", "Hasura", "Payroll"]);
+    expect(await niceOf("Backend Engineer")).toEqual(["Hasura", "Payroll"]);
+    // Named under Requirements as well: required.
+    expect(await niceOf("Platform Engineer")).toEqual([]);
+    await expectFreshRead(["Hasura", "Payroll"]);
+
+    await setSkill("hasura", "none");
+    expect(await niceOf("Backend Engineer")).toEqual(["Payroll"]);
+    await expectFreshRead(["Payroll"]);
   });
 
   test("a second skill goes after the first, as a full read orders them", async () => {

@@ -16,6 +16,7 @@ import {
 import { checkCandidates, type FactCandidate, sectionIn, splitSections } from "@/domain/split";
 import { normalize } from "@/domain/text";
 import { MAX_ADDED_SKILLS, normalizeSkillName, profileSkills } from "@/domain/user-skills";
+import { isRoleHeader, type RoleFields } from "@/domain/work-roles";
 import {
   type AddonInput,
   type Contact,
@@ -26,6 +27,9 @@ import {
   MAX_STORED_CV_BYTES,
   type ProfileDto,
   type ProfileItemDto,
+  type RoleDto,
+  RolesReadTaskInput,
+  type SaveRolesInput,
   type SetSkillInput,
   SplitTaskInput,
   type StandardAnswers,
@@ -35,14 +39,15 @@ import {
   type UpdateProfileInput,
   type UserId,
 } from "@/shared/api";
-import type { FactOrigin } from "@/shared/enums";
+import { type FactOrigin, hasRoles, type ProfileItemKind } from "@/shared/enums";
 import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
 import type { Db, Tx } from "../db/client";
 import { MERGE_SYNC_LOCK } from "../db/locks";
 import { cvFiles, facts, profileItems, userSkills, users } from "../db/schema";
-import { type AiConfig, checkCap, estimateUsd, loadAiConfig, runAi } from "./ai";
+import { type AiConfig, checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
+import { linkFacts, loadRolesByItem, readRolesWithAi, replaceRoles, rolesEstimateUsd, writeRoles } from "./roles";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 import { applySkillChange, loadSkillDictionary, loadUserSkillRows } from "./user-skills";
 
@@ -99,10 +104,12 @@ async function githubOf(deps: Deps, row: ItemRow): Promise<ItemGithubDto | null>
   };
 }
 
-async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
-  const [split, github] = await Promise.all([
+async function toItemDto(deps: Deps, row: ItemRow, itemRoles: readonly RoleDto[]): Promise<ProfileItemDto> {
+  const withRoles = hasRoles(row.kind);
+  const [split, github, rolesRead] = await Promise.all([
     latestTask(deps, { kind: "split", inputMatches: { itemId: row.id } }),
     githubOf(deps, row),
+    withRoles ? latestTask(deps, { kind: "roles_read", inputMatches: { itemId: row.id } }) : null,
   ]);
   return {
     id: row.id,
@@ -117,6 +124,8 @@ async function toItemDto(deps: Deps, row: ItemRow): Promise<ProfileItemDto> {
     fileName: row.fileName,
     splitTask: split?.task ?? null,
     github,
+    roles: withRoles ? [...itemRoles] : [],
+    rolesTask: rolesRead?.task ?? null,
   };
 }
 
@@ -145,39 +154,42 @@ export async function readCvFile(deps: Pick<Deps, "db" | "userId">): Promise<{ f
 }
 
 export async function getProfile(deps: Deps): Promise<ProfileDto> {
-  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig, skillRows, cvFile] = await Promise.all([
-    loadContact(deps),
-    deps.db
-      .select()
-      .from(profileItems)
-      .where(eq(profileItems.userId, deps.userId))
-      .orderBy(asc(profileItems.createdAt), asc(profileItems.id)),
-    deps.db
-      .select({
-        id: facts.id,
-        no: facts.no,
-        text: facts.text,
-        section: facts.section,
-        status: facts.status,
-        seenRev: facts.seenRev,
-        origin: facts.origin,
-        evidence: facts.evidence,
-        itemId: profileItems.id,
-        itemKind: profileItems.kind,
-        itemTitle: profileItems.title,
-        itemRev: profileItems.rev,
-        itemGithubRev: profileItems.githubRev,
-        usage: profileItems.usage,
-      })
-      .from(facts)
-      .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
-      .where(eq(facts.userId, deps.userId))
-      .orderBy(asc(facts.no)),
-    loadAiConfig(deps),
-    loadUserSkillRows(deps),
-    loadCvFile(deps),
-  ]);
-  const dtos = await Promise.all(items.map((row) => toItemDto(deps, row)));
+  const [{ contact, standardAnswers, targeting }, items, rows, aiConfig, skillRows, cvFile, rolesByItem] =
+    await Promise.all([
+      loadContact(deps),
+      deps.db
+        .select()
+        .from(profileItems)
+        .where(eq(profileItems.userId, deps.userId))
+        .orderBy(asc(profileItems.createdAt), asc(profileItems.id)),
+      deps.db
+        .select({
+          id: facts.id,
+          no: facts.no,
+          text: facts.text,
+          section: facts.section,
+          roleId: facts.roleId,
+          status: facts.status,
+          seenRev: facts.seenRev,
+          origin: facts.origin,
+          evidence: facts.evidence,
+          itemId: profileItems.id,
+          itemKind: profileItems.kind,
+          itemTitle: profileItems.title,
+          itemRev: profileItems.rev,
+          itemGithubRev: profileItems.githubRev,
+          usage: profileItems.usage,
+        })
+        .from(facts)
+        .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
+        .where(eq(facts.userId, deps.userId))
+        .orderBy(asc(facts.no)),
+      loadAiConfig(deps),
+      loadUserSkillRows(deps),
+      loadCvFile(deps),
+      loadRolesByItem(deps),
+    ]);
+  const dtos = await Promise.all(items.map((row) => toItemDto(deps, row, rolesByItem.get(row.id) ?? [])));
   const skillsFound = skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) });
   return {
     contact,
@@ -339,14 +351,16 @@ function evidenceOf(row: Pick<ItemRow, "kind" | "title" | "body">): string {
  */
 async function checkSplitCap(
   deps: Deps,
-  { item, confirmOverCap }: { item: SplitItem; confirmOverCap: boolean },
+  { item, kind, confirmOverCap }: { item: SplitItem; kind: ProfileItemKind; confirmOverCap: boolean },
 ): Promise<void> {
   const config = await loadAiConfig(deps);
   if (!config) return;
   const prompt = buildSplitPrompt({ item });
+  // A CV or experience add-on also has its roles read in the same task (decision 71).
+  const roles = hasRoles(kind) ? rolesEstimateUsd({ config, item }) : 0;
   await checkCap(deps, {
     capUsd: config.capUsd,
-    estimateUsd: estimateUsd({ model: config.models.light, prompt, maxOutputTokens: SPLIT_MAX_TOKENS }),
+    estimateUsd: estimateUsd({ model: config.models.light, prompt, maxOutputTokens: SPLIT_MAX_TOKENS }) + roles,
     confirmOverCap,
   });
 }
@@ -405,6 +419,11 @@ type SplitOutcome =
       removed: number;
       vanished: number;
       dropped: string[];
+      /**
+       * The roles read (decision 71): how many were kept, or why the read failed. A failed read
+       * keeps the facts and the item's saved roles. Absent when roles were not read.
+       */
+      roles?: { kind: "read"; count: number } | { kind: "failed"; error: string };
     }
   | { kind: "skipped"; reason: "item_deleted" | "newer_version" };
 
@@ -414,7 +433,18 @@ type SplitOutcome =
  */
 async function applySplit(
   deps: Deps,
-  { itemId, rev, candidates }: { itemId: ItemId; rev: number; candidates: readonly FactCandidate[] },
+  {
+    itemId,
+    rev,
+    candidates,
+    roles,
+  }: {
+    itemId: ItemId;
+    rev: number;
+    candidates: readonly FactCandidate[];
+    /** A fresh roles read replaces the item's roles; null keeps them and links new facts to them. */
+    roles: readonly RoleFields[] | null;
+  },
 ) {
   return deps.db.transaction(async (tx) => {
     const [locked] = await tx
@@ -454,6 +484,8 @@ async function applySplit(
         })),
       );
     }
+    if (roles) await replaceRoles(tx, { userId: deps.userId, itemId, read: roles });
+    else await linkFacts(tx, { itemId, onlyUnlinked: true });
     return {
       kind: "applied",
       added: diff.added.length,
@@ -479,18 +511,41 @@ async function runSplit(
   const candidates = config
     ? await aiCandidates(deps, ctx, { item, config, confirmOverCap })
     : splitSections({ text: row.body });
+  const evidence = evidenceOf(row);
+  // Roles need AI; without it the saved roles stay and new facts link to them by section.
+  let roles: RoleFields[] | null = null;
+  let rolesError: string | null = null;
+  if (config && hasRoles(row.kind)) {
+    await ctx.step(`Reading the roles in ${what}`);
+    try {
+      roles = await readRolesWithAi(deps, ctx, { item, evidence, config, confirmOverCap });
+    } catch (error) {
+      // The facts are the split's job; "Read roles from your CV" can try the roles again.
+      if (!(error instanceof AppError)) throw error;
+      rolesError = error.message;
+    }
+  }
 
   await ctx.step("Checking each fact against your text");
-  const evidence = evidenceOf(row);
-  const { kept, dropped } = checkCandidates({ candidates: candidates.map((c) => c.text), evidence });
+  // A candidate that is only a role's header repeats the role, so it is not a fact (decision 71).
+  // Without a fresh read, the item's saved roles decide.
+  const headerRoles = roles ?? (hasRoles(row.kind) ? ((await loadRolesByItem(deps)).get(row.id) ?? []) : []);
+  const claims = candidates.filter((c) => !isRoleHeader({ text: c.text, roles: headerRoles }));
+  const { kept, dropped } = checkCandidates({ candidates: claims.map((c) => c.text), evidence });
   // A section must be in the text too; one that isn't is dropped and the fact shows ungrouped.
-  const sectionOf = new Map(candidates.map((c) => [normalize(c.text), sectionIn({ section: c.section, evidence })]));
+  const sectionOf = new Map(claims.map((c) => [normalize(c.text), sectionIn({ section: c.section, evidence })]));
   const checked = kept.map((text) => ({ text, section: sectionOf.get(normalize(text)) ?? null }));
 
   await ctx.step("Comparing with your current facts");
-  const applied = await applySplit(deps, { itemId, rev: row.rev, candidates: checked });
+  const applied = await applySplit(deps, { itemId, rev: row.rev, candidates: checked, roles });
   if (applied.kind === "skipped") return applied;
-  return { ...applied, method: config ? "ai" : "rules", dropped: dropped.map((d) => d.text) };
+  return {
+    ...applied,
+    method: config ? "ai" : "rules",
+    dropped: dropped.map((d) => d.text),
+    ...(roles ? { roles: { kind: "read" as const, count: roles.length } } : {}),
+    ...(rolesError !== null ? { roles: { kind: "failed" as const, error: rolesError } } : {}),
+  };
 }
 
 async function startSplit(
@@ -508,8 +563,117 @@ export async function retrySplit(deps: Deps, input: unknown, { confirmOverCap }:
     throw new AppError({ code: "invalid_input", message: "This task's input is unreadable. Save the item again." });
   }
   const row = await loadItem(deps, parsed.data.itemId);
-  await checkSplitCap(deps, { item: splitItem(row, await savedTexts(deps, row.id)), confirmOverCap });
+  await checkSplitCap(deps, { item: splitItem(row, await savedTexts(deps, row.id)), kind: row.kind, confirmOverCap });
   return startSplit(deps, { itemId: row.id, confirmOverCap });
+}
+
+// ---------- Roles (decision 71) ----------
+
+/** The CV or an experience add-on: the only items roles are read from or saved on. */
+async function loadRoleItem(deps: Pick<Deps, "db" | "userId">, itemId: ItemId): Promise<ItemRow> {
+  const row = await loadItem(deps, itemId);
+  if (!hasRoles(row.kind)) {
+    throw new AppError({
+      code: "invalid_input",
+      message: `Roles belong to your CV and experience add-ons. "${row.title}" is ${itemKindLabel(row.kind).toLowerCase()}; change its kind to Experience to give it roles.`,
+    });
+  }
+  return row;
+}
+
+type RolesReadOutcome =
+  | { kind: "applied"; roles: number }
+  | { kind: "skipped"; reason: "item_deleted" | "newer_version" };
+
+async function runRolesRead(
+  deps: Deps,
+  ctx: TaskContext,
+  { itemId, confirmOverCap }: { itemId: ItemId; confirmOverCap: boolean },
+): Promise<RolesReadOutcome> {
+  const [row] = await deps.db.select().from(profileItems).where(eq(profileItems.id, itemId));
+  if (!row) return { kind: "skipped", reason: "item_deleted" };
+  const config = await requireAiConfig(deps);
+  const what = row.kind === "cv" ? "your CV" : `"${row.title}"`;
+  await ctx.step(`Reading the roles in ${what} with AI`);
+  const read = await readRolesWithAi(deps, ctx, {
+    item: splitItem(row, []),
+    evidence: evidenceOf(row),
+    config,
+    confirmOverCap,
+  });
+  return deps.db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ rev: profileItems.rev })
+      .from(profileItems)
+      .where(eq(profileItems.id, itemId))
+      .for("update");
+    if (!locked) return { kind: "skipped", reason: "item_deleted" } as const;
+    // A newer save started its own split, which reads the roles again.
+    if (locked.rev !== row.rev) return { kind: "skipped", reason: "newer_version" } as const;
+    await replaceRoles(tx, { userId: deps.userId, itemId, read });
+    return { kind: "applied", roles: read.length } as const;
+  });
+}
+
+async function startRolesRead(
+  deps: Deps,
+  { itemId, confirmOverCap }: { itemId: ItemId; confirmOverCap: boolean },
+): Promise<TaskDto> {
+  const row = await loadRoleItem(deps, itemId);
+  const config = await requireAiConfig(deps);
+  const running = await latestTask(deps, { kind: "roles_read", inputMatches: { itemId } });
+  if (running?.task.status === "running") {
+    throw new AppError({ code: "invalid_input", message: "Your roles are being read already. Wait for it to finish." });
+  }
+  await checkCap(deps, {
+    capUsd: config.capUsd,
+    estimateUsd: rolesEstimateUsd({ config, item: splitItem(row, []) }),
+    confirmOverCap,
+  });
+  const input: RolesReadTaskInput = { itemId };
+  return startTask(deps, {
+    kind: "roles_read",
+    input,
+    run: (ctx) => runRolesRead(deps, ctx, { itemId, confirmOverCap }),
+  });
+}
+
+/**
+ * "Read roles from your CV": read an item's roles with AI, replacing the ones it has. Its facts
+ * are not split again; only their links to roles are recomputed.
+ */
+export async function readItemRoles(
+  deps: Deps,
+  { itemId, confirmOverCap = false }: { itemId: ItemId; confirmOverCap?: boolean | undefined },
+): Promise<ProfileDto> {
+  await startRolesRead(deps, { itemId, confirmOverCap });
+  return getProfile(deps);
+}
+
+/** Retry handler for `roles_read` tasks. */
+export async function retryRolesRead(
+  deps: Deps,
+  input: unknown,
+  { confirmOverCap }: { confirmOverCap: boolean },
+): Promise<TaskDto> {
+  const parsed = RolesReadTaskInput.safeParse(input);
+  if (!parsed.success) {
+    throw new AppError({ code: "invalid_input", message: "This task's input is unreadable. Read the roles again." });
+  }
+  return startRolesRead(deps, { itemId: parsed.data.itemId, confirmOverCap });
+}
+
+/** Save the Roles list as Profile shows it, in order. Facts keep their text and status. */
+export async function saveItemRoles(
+  deps: Deps,
+  { itemId, roles }: { itemId: ItemId } & SaveRolesInput,
+): Promise<ProfileDto> {
+  await loadRoleItem(deps, itemId);
+  await deps.db.transaction(async (tx) => {
+    await tx.select({ id: profileItems.id }).from(profileItems).where(eq(profileItems.id, itemId)).for("update");
+    await writeRoles(tx, { userId: deps.userId, itemId, list: roles });
+  });
+  return getProfile(deps);
 }
 
 // ---------- CV (section 3.3, step 1) ----------
@@ -555,7 +719,11 @@ export async function saveCv(
     .from(profileItems)
     .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")));
   const saved = await savedTexts(deps, cv?.id ?? null);
-  await checkSplitCap(deps, { item: { kindLabel: "CV", title: "CV", body: text, skills: [], saved }, confirmOverCap });
+  await checkSplitCap(deps, {
+    item: { kindLabel: "CV", title: "CV", body: text, skills: [], saved },
+    kind: "cv",
+    confirmOverCap,
+  });
   const now = deps.clock.now();
   const itemId = await deps.db.transaction(async (tx) => {
     const [existing] = await tx
@@ -655,7 +823,7 @@ function addonValues(input: AddonInput) {
 export async function createAddon(deps: Deps, input: AddonInput): Promise<ProfileDto> {
   const values = addonValues(input);
   const confirmOverCap = input.confirmOverCap ?? false;
-  await checkSplitCap(deps, { item: splitItem(values, []), confirmOverCap });
+  await checkSplitCap(deps, { item: splitItem(values, []), kind: values.kind, confirmOverCap });
   const [created] = await deps.db
     .insert(profileItems)
     .values({ userId: deps.userId, ...values })
@@ -681,13 +849,77 @@ export async function updateAddon(
     row.title !== values.title ||
     row.body !== values.body ||
     row.skills.join("\n") !== values.skills.join("\n");
-  if (resplit) await checkSplitCap(deps, { item: splitItem(values, await savedTexts(deps, itemId)), confirmOverCap });
+  if (resplit) {
+    await checkSplitCap(deps, {
+      item: splitItem(values, await savedTexts(deps, itemId)),
+      kind: values.kind,
+      confirmOverCap,
+    });
+  }
   await deps.db
     .update(profileItems)
     .set({ ...values, updatedAt: deps.clock.now(), ...(resplit ? { rev: row.rev + 1 } : {}) })
     .where(eq(profileItems.id, itemId));
   if (resplit) await startSplit(deps, { itemId, confirmOverCap });
   return getProfile(deps);
+}
+
+/** The `other` add-on that keeps answers typed into a draft's blanks (docs/plans/clean-files.md). */
+export const DRAFTING_ADDON_TITLE = "Filled in while drafting";
+
+/**
+ * Keep answers typed into a draft's blanks: each line goes into the "Filled in while drafting"
+ * add-on (created on first use) and becomes one confirmed fact, with no split. The user wrote them,
+ * so there is nothing to review. The add-on's `rev` stays, so its earlier facts stay current; a
+ * later edit in Profile re-splits it like any add-on. A line the add-on already has is skipped.
+ */
+export async function saveDraftingFacts(
+  tx: Tx,
+  deps: Pick<Deps, "userId" | "clock">,
+  { lines }: { lines: readonly string[] },
+): Promise<void> {
+  const [found] = await tx
+    .select({ id: profileItems.id, body: profileItems.body, rev: profileItems.rev })
+    .from(profileItems)
+    .where(
+      and(
+        eq(profileItems.userId, deps.userId),
+        eq(profileItems.kind, "other"),
+        eq(profileItems.title, DRAFTING_ADDON_TITLE),
+      ),
+    )
+    .orderBy(asc(profileItems.createdAt))
+    .limit(1)
+    .for("update");
+  const have = new Set(found?.body.split("\n").map((l) => l.trim()) ?? []);
+  const fresh = [...new Set(lines.map((l) => l.trim()))].filter((l) => l !== "" && !have.has(l));
+  if (fresh.length === 0) return;
+
+  let item: { id: ItemId; rev: number };
+  if (found) {
+    await tx
+      .update(profileItems)
+      .set({ body: [found.body.trimEnd(), ...fresh].join("\n"), updatedAt: deps.clock.now() })
+      .where(eq(profileItems.id, found.id));
+    item = found;
+  } else {
+    const [created] = await tx
+      .insert(profileItems)
+      .values({ userId: deps.userId, kind: "other", title: DRAFTING_ADDON_TITLE, body: fresh.join("\n") })
+      .returning({ id: profileItems.id, rev: profileItems.rev });
+    if (!created) throw new Error("Could not save the add-on.");
+    item = created;
+  }
+  await tx.insert(facts).values(
+    fresh.map((text) => ({
+      userId: deps.userId,
+      itemId: item.id,
+      text,
+      section: null,
+      status: "confirmed" as const,
+      seenRev: item.rev,
+    })),
+  );
 }
 
 /** Delete an add-on and its facts. Citations keep their snapshot (FK SET NULL). */

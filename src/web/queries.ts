@@ -15,8 +15,10 @@ import {
   BoardItemDto,
   BoardMetricsDto,
   type ChangeStatusInput,
+  type DecideChangesInput,
   type DraftInput,
   type FactId,
+  type FillBlanksInput,
   FillRatesResponse,
   FilteredList,
   HiddenCompanies,
@@ -35,6 +37,7 @@ import {
   RefreshDto,
   type SaveAiKeyInput,
   SavedJob,
+  type SaveRolesInput,
   type SetSkillInput,
   SettingsDto,
   SetupDto,
@@ -84,10 +87,16 @@ const TASK_POLL_MS = 1000;
 
 // ---------- Profile ----------
 
-/** True while the CV or an add-on is being split into facts, or an add-on is being read from GitHub. */
+/**
+ * True while the CV or an add-on is being split into facts, read from GitHub, or read for roles
+ * (decision 71).
+ */
 export const splitRunning = (profile: ProfileDto | undefined): boolean =>
   [profile?.cv, ...(profile?.addons ?? [])].some(
-    (item) => item?.splitTask?.status === "running" || item?.github?.readTask?.status === "running",
+    (item) =>
+      item?.splitTask?.status === "running" ||
+      item?.github?.readTask?.status === "running" ||
+      item?.rolesTask?.status === "running",
   );
 
 export function useProfile() {
@@ -153,6 +162,18 @@ export const useReadGithub = () =>
       client.api.profile.addons[":id"]["github-read"].$post({ param: { id }, json: { confirmOverCap } }),
       ProfileDto,
     ),
+  );
+
+/** "Read roles from your CV": a `roles_read` task the profile refetch polls (decision 71). */
+export const useReadRoles = () =>
+  useProfileMutation(({ id, confirmOverCap }: { id: ItemId; confirmOverCap?: boolean }) =>
+    unwrap(client.api.profile.items[":id"].roles.read.$post({ param: { id }, json: { confirmOverCap } }), ProfileDto),
+  );
+
+/** Save the Roles list of the CV or an experience add-on, in order. */
+export const useSaveRoles = () =>
+  useProfileMutation(({ id, roles }: { id: ItemId } & SaveRolesInput) =>
+    unwrap(client.api.profile.items[":id"].roles.$put({ param: { id }, json: { roles } }), ProfileDto),
   );
 
 /** Keep a fact that is not in the latest version of its CV or add-on. */
@@ -298,6 +319,12 @@ export const useUpdateOutput = (opportunityId: OpportunityId) =>
     unwrap(client.api.outputs[":id"].$patch({ param: { id }, json }), WorkspaceDto),
   );
 
+/** The "Needs your input" form under a file: fill blanks, drop Check this sentences. */
+export const useFillBlanks = (opportunityId: OpportunityId) =>
+  useWorkspaceMutation(opportunityId, ({ id, ...json }: { id: OutputId } & FillBlanksInput) =>
+    unwrap(client.api.outputs[":id"].fill.$post({ param: { id }, json }), WorkspaceDto),
+  );
+
 export const useAddQuestion = (opportunityId: OpportunityId) =>
   useWorkspaceMutation(opportunityId, (question: string) =>
     unwrap(
@@ -379,6 +406,27 @@ export function useMarkReviewed(opportunityId: OpportunityId) {
   return useMutation({
     mutationFn: ({ id, ...json }: { id: OutputId } & MarkReviewedInput) =>
       unwrap(client.api.outputs[":id"].reviewed.$post({ param: { id }, json }), WorkspaceDto),
+    onSuccess: (ws) => {
+      qc.setQueryData(keys.workspace(opportunityId), ws);
+      void qc.invalidateQueries({ queryKey: keys.board });
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "output_changed") {
+        void qc.invalidateQueries({ queryKey: keys.workspace(opportunityId) });
+      }
+    },
+  });
+}
+
+/**
+ * Keep or undo changes of a tailored resume (decision 75). A 409 `output_changed` means the resume
+ * was redrafted or edited since it was shown, so the workspace is fetched again.
+ */
+export function useDecideChanges(opportunityId: OpportunityId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...json }: { id: OutputId } & DecideChangesInput) =>
+      unwrap(client.api.outputs[":id"].changes.$post({ param: { id }, json }), WorkspaceDto),
     onSuccess: (ws) => {
       qc.setQueryData(keys.workspace(opportunityId), ws);
       void qc.invalidateQueries({ queryKey: keys.board });

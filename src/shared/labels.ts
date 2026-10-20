@@ -1,4 +1,13 @@
-import type { BoardMetricsDto, FillRatesResult, FxRateBy, GateBlocker, OutdatedChange, StyleHit } from "./api";
+import type {
+  BoardMetricsDto,
+  FillRatesResult,
+  FxRateBy,
+  GateBlocker,
+  MatchSkills,
+  OutdatedChange,
+  StyleHit,
+} from "./api";
+import { parseBlank } from "./blanks";
 import type {
   BuiltinSourceKind,
   DismissReason,
@@ -147,12 +156,16 @@ export function blockerLabel(blocker: GateBlocker): string {
   switch (blocker.kind) {
     case "must_answer":
       return `${mustAnswerLabel(blocker.category)}: "${blocker.question}" has no answer. Add one here or in your profile.`;
-    case "placeholder":
-      return `Fill in the placeholder: [[${blocker.text}]]`;
+    case "placeholder": {
+      const blank = parseBlank(blocker.text);
+      return blank.kind === "check"
+        ? `Check a sentence your facts don't back: "${blank.sentence}"`
+        : `Fill in: ${blank.label}`;
+    }
     case "not_drafted":
       return `${outputKindLabel(blocker.outputKind)} is empty. Write it, or untick it.`;
     case "deleted_fact":
-      return `This cites ${blocker.factKey}, which you deleted. Remove the claim or cite another fact.`;
+      return "This uses a fact you deleted. Regenerate it, or edit the claim out.";
     default: {
       const _exhaustive: never = blocker;
       return _exhaustive;
@@ -174,6 +187,12 @@ export function styleHitLabel(hit: Pick<StyleHit, "rule" | "phrase">): string {
       return `Three adjectives in a row ("${hit.phrase}"). Keep the one that matters.`;
     case "long_sentence":
       return `Sentence over ${MAX_SENTENCE_WORDS} words. Split it.`;
+    case "pronoun":
+      return `"${hit.phrase}" in a resume. Drop the pronoun and start with the verb.`;
+    case "repeated_opener":
+      return `Starts with "${hit.phrase}", like other bullets near it. Start with a different verb that fits.`;
+    case "same_shape":
+      return `Ends with a ", ${hit.phrase} …" clause, like most bullets. Put the result first, or drop the clause.`;
     default: {
       const _exhaustive: never = hit.rule;
       return _exhaustive;
@@ -182,18 +201,18 @@ export function styleHitLabel(hit: Pick<StyleHit, "rule" | "phrase">): string {
 }
 
 /** One line per changed fact in the outdated notice. */
-export function outdatedLabel(change: Pick<OutdatedChange, "factKey" | "reason">): string {
-  switch (change.reason) {
+export function outdatedLabel(reason: OutdatedChange["reason"]): string {
+  switch (reason) {
     case "edited":
-      return `${change.factKey} changed`;
+      return "A fact this used changed";
     case "deleted":
-      return `${change.factKey} was deleted`;
+      return "A fact this used was deleted";
     case "unconfirmed":
-      return `${change.factKey} is no longer confirmed`;
+      return "A fact this used is no longer confirmed";
     case "letters_only":
-      return `${change.factKey} is now for letters only, so it cannot stay on a resume`;
+      return "A fact this used is now for letters only, so it cannot stay on a resume";
     default: {
-      const _exhaustive: never = change.reason;
+      const _exhaustive: never = reason;
       return _exhaustive;
     }
   }
@@ -402,6 +421,41 @@ export function refreshedLabel({ at, now }: { at: Date | null; now: Date }): str
   return at === null ? "Not refreshed yet" : `Refreshed ${agoLabel({ at, now })}`;
 }
 
+/**
+ * Words past which a resume likely runs to a second page. Measured on the PDF template: a
+ * bullet-heavy draft fit 343 words on page one, and the user's own two-page CV averages about 400
+ * a page. A word count only estimates, so it warns and Preview PDF shows the real length.
+ */
+export const RESUME_ONE_PAGE_WORDS = 400;
+
+/** Whether a resume of `words` words likely runs past one page. */
+export const resumeLikelyLong = (words: number): boolean => words > RESUME_ONE_PAGE_WORDS;
+
+/**
+ * A file card's status line: "Drafted 2 hours ago · 290 words · 2 blanks". The newer of the
+ * draft and the last edit names the time.
+ */
+export function fileStatusLabel({
+  generatedAt,
+  editedAt,
+  words,
+  blanks,
+  now,
+}: {
+  generatedAt: string | null;
+  editedAt: string | null;
+  words: number;
+  blanks: number;
+  now: Date;
+}): string {
+  const edited = editedAt !== null && (generatedAt === null || editedAt >= generatedAt);
+  const at = edited ? editedAt : generatedAt;
+  const parts = [at === null ? "Written" : `${edited ? "Edited" : "Drafted"} ${agoLabel({ at: new Date(at), now })}`];
+  parts.push(count(words, "word"));
+  if (blanks > 0) parts.push(count(blanks, "blank"));
+  return parts.join(" · ");
+}
+
 // ---------- exchange rates (decision 67) ----------
 
 const FX_SOURCE_NAMES: Readonly<Record<FxRateBy, string>> = {
@@ -599,4 +653,23 @@ export function fillRatesSummary(fill: FillRatesResult): string {
   if (fill.unsupported.length > 0) parts.push(`No source publishes ${listOf(fill.unsupported)}.`);
   if (fill.unavailable.length > 0) parts.push(`Could not get ${listOf(fill.unavailable)}; try again later.`);
   return parts.length > 0 ? parts.join(" ") : "Every rate is already set.";
+}
+
+/** A percentage needs at least this many skills; below it the count says more (decision 76). */
+export const SKILL_PERCENT_MIN = 3;
+
+/**
+ * How a job's skills read on Matches (decision 76). `short` is the list row: a percentage of the
+ * required skills once there are enough of them, else the count. `full` is the exact count for the
+ * reading pane, a tooltip and screen readers. Null when the posting names no skills we know.
+ */
+export function matchSkillsLabel(skills: MatchSkills): { short: string; full: string } | null {
+  if (skills.asked === 0) return null;
+  const { nice } = skills;
+  const noun = nice.asked > 0 ? "required skills" : "skills";
+  const count = `${skills.matched} of ${skills.asked} ${noun}`;
+  const short =
+    skills.asked >= SKILL_PERCENT_MIN ? `${Math.round((skills.matched / skills.asked) * 100)}% ${noun}` : count;
+  const full = nice.asked > 0 ? `${count} · ${nice.matched} of ${nice.asked} nice-to-have` : count;
+  return { short, full };
 }

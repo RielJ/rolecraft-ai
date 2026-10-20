@@ -4,6 +4,8 @@ import {
   allowedFacts,
   buildDraftPrompt,
   buildRetryPrompt,
+  buildRolesPrompt,
+  buildRolesRetryPrompt,
   buildSplitPrompt,
   buildStyleRewritePrompt,
   cleanModelText,
@@ -80,6 +82,130 @@ describe("buildDraftPrompt", () => {
   });
 });
 
+describe("buildDraftPrompt voice and guide (decision 72)", () => {
+  test("a resume carries the guide's Resume and shared sections, and no first-person rule", () => {
+    const { system } = draft("resume");
+    for (const heading of ["Facts and limits", "Tailoring to the posting", "Sounds like a person", "Resume"]) {
+      expect(system).toContain(`## ${heading}`);
+    }
+    expect(system).not.toContain("## Cover letter");
+    expect(system).not.toContain("first person");
+    expect(system).toContain("Built the payments API in Go [FACT-3].");
+    expect(system).not.toContain("I built the payments API");
+  });
+
+  test("the resume task never asks for the candidate's name as a heading", () => {
+    const text = promptText(draft("resume"));
+    expect(text).not.toMatch(/Start with # and the candidate's name/);
+    expect(text).toContain("Do not write the candidate's name");
+  });
+
+  test("a letter keeps first person and gets the Cover letter section", () => {
+    const { system } = draft("letter");
+    expect(system).toContain("plain first person");
+    expect(system).toContain("## Cover letter");
+    expect(system).not.toContain("## Resume");
+  });
+
+  test("the style rewrite speaks with the kind's voice", () => {
+    const sentences = [{ sentence: "I built it [FACT-1].", hits: [{ rule: "pronoun" as const, phrase: "I" }] }];
+    const resume = buildStyleRewritePrompt({ kind: "resume", opportunityType: "job", sentences, facts });
+    expect(resume.system).toContain("without pronouns");
+    expect(promptText(resume)).toContain('"I" in a resume');
+  });
+});
+
+describe("buildDraftPrompt with roles (decision 71)", () => {
+  const role = {
+    key: "ROLE-1",
+    title: "Full-stack Software Engineer",
+    company: "CASHFLOWY",
+    location: "REMOTE",
+    start: "January 2026",
+    end: "June 2026",
+  };
+  const withRole = (kind: "resume" | "letter") =>
+    promptText(
+      buildDraftPrompt({
+        kind,
+        opportunityType: "job",
+        posting,
+        candidateName: "Juan",
+        facts: [
+          {
+            key: k(1),
+            text: "Built a payments API in Go",
+            link: "https://github.com/juan/pay",
+            usage: "everywhere",
+            roleKey: "ROLE-1",
+          },
+        ],
+        roles: [role],
+      }),
+    );
+
+  test("a resume lists the roles and marks each fact with its role", () => {
+    const text = withRole("resume");
+    expect(text).toContain(
+      "ROLES\nROLE-1: Full-stack Software Engineer, CASHFLOWY, REMOTE, January 2026 – June 2026\n",
+    );
+    expect(text).toContain("FACT-1: Built a payments API in Go (https://github.com/juan/pay) (ROLE-1)");
+    expect(text).toContain("write [ROLE-n] alone on its own line");
+    // Roles may overlap in time, so "most recent first" is ambiguous: keep the list's order.
+    expect(text).toContain("in the order of the ROLES list");
+    expect(text).not.toContain("most recent role first");
+    expect(text).toContain("Facts with no (ROLE-n) go in Summary, Skills, Projects or Education");
+  });
+
+  test("a letter gets no roles block and no role marks", () => {
+    const text = withRole("letter");
+    expect(text).not.toContain("ROLE-1");
+    expect(text).not.toContain("[ROLE-n]");
+  });
+});
+
+describe("buildRolesPrompt", () => {
+  test("carries the text and asks for the roles JSON with fields copied exactly", () => {
+    const prompt = buildRolesPrompt({
+      item: { kindLabel: "CV", title: "CV", body: "Engineer Jan, 2026\nAcme (Remote)" },
+    });
+    const text = promptText(prompt);
+    expect(text).toContain("<<<\nEngineer Jan, 2026\nAcme (Remote)\n>>>");
+    expect(text).toContain('{"roles"');
+    expect(text).toContain("exactly");
+    expect(buildRolesRetryPrompt({ prompt, reply: "no" }).messages).toHaveLength(3);
+  });
+});
+
+describe("describeViolation for an unknown role", () => {
+  test("the retry names the key and the rule", () => {
+    const retry = buildRetryPrompt({
+      prompt: draft("resume"),
+      draft: "[ROLE-9]",
+      violations: [{ kind: "unknown_role", roleKey: "ROLE-9", sentence: "[ROLE-9]", start: 0, end: 8 }],
+    });
+    expect(retry.messages[2]?.content).toContain("writes [ROLE-9]");
+  });
+});
+
+describe("describeViolation for a wrong role", () => {
+  test("the retry says where the line belongs", () => {
+    const sentence = "- Built the Zapier integration [FACT-2]";
+    const under = buildRetryPrompt({
+      prompt: draft("resume"),
+      draft: sentence,
+      violations: [{ kind: "wrong_role", roleKey: "ROLE-1", factKeys: ["FACT-2"], sentence, start: 0, end: 10 }],
+    });
+    expect(under.messages[2]?.content).toContain("is under [ROLE-1] but cites FACT-2, which is not marked (ROLE-1)");
+    const before = buildRetryPrompt({
+      prompt: draft("resume"),
+      draft: sentence,
+      violations: [{ kind: "wrong_role", roleKey: null, factKeys: ["FACT-2"], sentence, start: 0, end: 10 }],
+    });
+    expect(before.messages[2]?.content).toContain("before any [ROLE-n] line");
+  });
+});
+
 describe("buildRetryPrompt", () => {
   test("adds the failed draft and each violation", () => {
     const first = draft("resume");
@@ -99,6 +225,8 @@ describe("buildRetryPrompt", () => {
 describe("buildStyleRewritePrompt", () => {
   test("numbers each flagged sentence and names the problem", () => {
     const prompt = buildStyleRewritePrompt({
+      kind: "letter",
+      opportunityType: "job",
       sentences: [{ sentence: "I leverage Go [FACT-1].", hits: [{ rule: "banned_phrase", phrase: "leverage" }] }],
       facts,
     });
@@ -122,6 +250,10 @@ describe("buildSplitPrompt", () => {
   test("asks for skills lines as facts, since matching reads skills only from facts", () => {
     const { system } = buildSplitPrompt({ item });
     expect(system).toContain("Keep every line that lists skills, tools or technologies as one fact");
+  });
+
+  test("skips job header lines, which are read as roles", () => {
+    expect(buildSplitPrompt({ item }).system).toContain("Skip job header lines");
   });
 
   test("sends saved facts only when there are some", () => {

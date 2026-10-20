@@ -4,8 +4,8 @@ import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { rereadSkills } from "@/server/services/sync";
 import { loadSkillDictionary } from "@/server/services/user-skills";
-import { CUSTOM_SKILLS, variedTexts } from "./fixtures/skill-texts";
-import { resetDb, testDeps, testSql } from "./setup";
+import { CUSTOM_SKILLS, variedTexts } from "../fixtures/skill-texts";
+import { resetDb, testDeps, testSql } from "../setup";
 
 /*
  * The budgets of decision 68, over 2,000 open jobs of about 8 KB and the 20 fixture skills of the
@@ -41,7 +41,9 @@ beforeAll(async () => {
     INSERT INTO user_skills (user_id, key, name, kind, created_at)
     SELECT ${deps.userId}, lower(name), name, 'added', now() + n * interval '1 second'
     FROM unnest(${CUSTOM_SKILLS}::text[]) WITH ORDINALITY AS s(name, n)`;
-});
+  // Seeding 16 MB is setup, not a budget: it takes about 4 s, and over 5 s (Bun's default hook
+  // timeout) on a busy machine. The budgets below are timed inside the tests and stay strict.
+}, 60_000);
 
 const timed = async <T>(run: () => Promise<T>): Promise<{ value: T; ms: number }> => {
   const started = performance.now();

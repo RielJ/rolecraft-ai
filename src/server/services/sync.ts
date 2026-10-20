@@ -527,7 +527,13 @@ export async function rereadSkills({
   for (;;) {
     const batch: { last: JobId | null; read: number } = await asSync(deps.db, async (tx) => {
       const rows = await tx
-        .select({ id: jobs.id, title: jobs.title, description: jobs.description, skills: jobs.skills })
+        .select({
+          id: jobs.id,
+          title: jobs.title,
+          description: jobs.description,
+          skills: jobs.skills,
+          niceSkills: jobs.niceSkills,
+        })
         .from(jobs)
         .where(
           and(
@@ -545,17 +551,19 @@ export async function rereadSkills({
         const values = sql.join(
           rows.map((row) => {
             const next = jobSkills(row, skills);
-            const changed = sameList(next, row.skills) ? null : JSON.stringify(next);
-            return sql`(${row.id}::uuid, ${changed}::jsonb)`;
+            const list = (fresh: string[], stored: string[]) =>
+              sameList(fresh, stored) ? null : JSON.stringify(fresh);
+            return sql`(${row.id}::uuid, ${list(next.skills, row.skills)}::jsonb, ${list(next.niceSkills, row.niceSkills)}::jsonb)`;
           }),
           sql`, `,
         );
+        const array = (column: string) =>
+          sql.raw(`CASE WHEN v.${column} IS NULL THEN j.${column}
+              ELSE ARRAY(SELECT e.value FROM jsonb_array_elements_text(v.${column}) WITH ORDINALITY e(value, n) ORDER BY e.n) END`);
         await tx.execute(sql`
           UPDATE jobs j
-          SET skills_stamp = ${stamp},
-            skills = CASE WHEN v.skills IS NULL THEN j.skills
-              ELSE ARRAY(SELECT e.value FROM jsonb_array_elements_text(v.skills) WITH ORDINALITY e(value, n) ORDER BY e.n) END
-          FROM (VALUES ${values}) AS v(id, skills)
+          SET skills_stamp = ${stamp}, skills = ${array("skills")}, nice_skills = ${array("nice_skills")}
+          FROM (VALUES ${values}) AS v(id, skills, nice_skills)
           WHERE j.id = v.id`);
       }
       return { last: rows.length < REREAD_BATCH ? null : (rows.at(-1)?.id ?? null), read: rows.length };

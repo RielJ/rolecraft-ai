@@ -14,8 +14,13 @@ export type Reason = { sign: ReasonSign; text: string };
 export type Match = {
   level: MatchLevel;
   reasons: Reason[];
-  /** How many of the posting's known skills your confirmed facts name. Orders jobs within a level. */
-  skills: { matched: number; asked: number };
+  /**
+   * How many of the posting's required skills your confirmed facts name (decision 76), and of its
+   * nice-to-have skills. The required ones decide the level and order jobs within it. A posting
+   * with no nice-to-have text, or none outside it, counts all its skills as one list:
+   * `nice.asked` is 0.
+   */
+  skills: { matched: number; asked: number; nice: { matched: number; asked: number } };
 };
 
 /** What the user brings: target titles, skills found in confirmed fact text, seniority and years. */
@@ -30,6 +35,8 @@ export type MatchProfile = {
 export type MatchJob = {
   title: string;
   skills: readonly string[];
+  /** The `skills` named only in the posting's nice-to-have text (decision 76). */
+  niceSkills: readonly string[];
   seniority: JobSeniority | null;
   minYears: number | null;
   eligibility: Eligibility;
@@ -255,12 +262,26 @@ function score(p: Prepared, job: MatchJob): Match {
   const title = titleFit(p, job.title);
   reasons.push(title.reason);
 
-  const matched = job.skills.filter((s) => p.skills.has(s.toLowerCase()));
-  const missing = job.skills.filter((s) => !p.skills.has(s.toLowerCase()));
-  const coverage = matched.length / Math.max(1, job.skills.length);
+  // Required skills decide; nice-to-have ones only inform. With no required skill left, all count.
+  const isNice = new Set(job.niceSkills);
+  const split = job.skills.some((s) => !isNice.has(s));
+  const required = split ? job.skills.filter((s) => !isNice.has(s)) : job.skills;
+  const nice = split ? job.skills.filter((s) => isNice.has(s)) : [];
+  const have = (s: string) => p.skills.has(s.toLowerCase());
+  const matched = required.filter(have);
+  const missing = required.filter((s) => !have(s));
+  const niceMatched = nice.filter(have);
+  const niceMissing = nice.filter((s) => !have(s));
+  const coverage = matched.length / Math.max(1, required.length);
   if (job.skills.length === 0) reasons.push({ sign: "neutral", text: "The posting names no skills we know" });
   if (matched.length > 0) reasons.push({ sign: "positive", text: `In your facts: ${named(matched)}` });
   if (missing.length > 0) reasons.push({ sign: "negative", text: `Not in your facts: ${named(missing)}` });
+  if (niceMatched.length > 0) {
+    reasons.push({ sign: "positive", text: `Nice to have, in your facts: ${named(niceMatched)}` });
+  }
+  if (niceMissing.length > 0) {
+    reasons.push({ sign: "neutral", text: `Nice to have, not in your facts: ${named(niceMissing)}` });
+  }
 
   const seniority = seniorityReason(p, job);
   if (seniority) reasons.push(seniority);
@@ -274,7 +295,7 @@ function score(p: Prepared, job: MatchJob): Match {
   }
 
   const weak =
-    title.fit === "none" || (coverage < WEAK_COVERAGE && job.skills.length >= WEAK_MIN_JOB_SKILLS) || eligibility.weak;
+    title.fit === "none" || (coverage < WEAK_COVERAGE && required.length >= WEAK_MIN_JOB_SKILLS) || eligibility.weak;
   const strong =
     (title.fit === "fit" || title.fit === "partial") &&
     coverage >= STRONG_COVERAGE &&
@@ -285,7 +306,11 @@ function score(p: Prepared, job: MatchJob): Match {
   return {
     level: weak ? "weak" : strong ? "strong" : "possible",
     reasons,
-    skills: { matched: matched.length, asked: job.skills.length },
+    skills: {
+      matched: matched.length,
+      asked: required.length,
+      nice: { matched: niceMatched.length, asked: nice.length },
+    },
   };
 }
 

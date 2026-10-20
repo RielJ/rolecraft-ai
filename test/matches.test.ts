@@ -148,6 +148,26 @@ describe("levels are computed on read", () => {
     ]);
   });
 
+  test("nice-to-have skills do not decide the level or the order; the list shows them apart", async () => {
+    await targeting({ targetTitles: ["Backend Engineer"] });
+    // Same six skills. One posting asks for Rust, Elixir and Kafka; the other lists them as nice to have.
+    await addJob({
+      title: "Backend Engineer, Asks for all",
+      description: `Requirements\n- Go\n- PostgreSQL\n- Docker\n- Rust\n- Elixir\n- Kafka\n\n${WORLDWIDE}`,
+    });
+    await addJob({
+      title: "Backend Engineer, Some nice to have",
+      description: `Requirements\n- Go\n- PostgreSQL\n- Docker\n\nNice to have\n- Rust\n- Elixir\n- Kafka\n\n${WORLDWIDE}`,
+    });
+    const profile = await pasteCv("- Ran Go, Postgres and Docker services in production");
+    await confirm(profile, "Go, Postgres");
+    const shown = await list();
+    expect(shown.jobs.map((j) => [j.title, j.level, j.skills])).toEqual([
+      ["Backend Engineer, Some nice to have", "strong", { matched: 3, asked: 3, nice: { matched: 0, asked: 3 } }],
+      ["Backend Engineer, Asks for all", "possible", { matched: 3, asked: 6, nice: { matched: 0, asked: 0 } }],
+    ]);
+  });
+
   test("a pending fact's skill does not count; Flutter in a confirmed fact matches a Flutter job", async () => {
     await targeting({ targetTitles: ["Mobile Developer"] });
     const id = await addJob({ title: "Mobile Developer", description: `Flutter, Dart and Firebase. ${WORLDWIDE}` });

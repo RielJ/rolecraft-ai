@@ -1,8 +1,17 @@
 import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
 import { z } from "zod";
-import { checkDraft, factKey, parseCitations, quarantineViolations, stripMarkers } from "@/domain/citations";
+import { baseHash, isUsableBase, mapFactsToLines, parseBaseCv } from "@/domain/base-cv";
+import {
+  checkDraft,
+  factKey,
+  findPlaceholders,
+  parseCitations,
+  quarantineViolations,
+  stripMarkers,
+} from "@/domain/citations";
+import { cleanForEdit, fillBlanks, restoreMarkers, stripLeadingName, toPlainText } from "@/domain/file-text";
 import { checkGate, type GateOutput } from "@/domain/gate";
-import { isPrivateGithubUrl, stripPrivateGithubUrls } from "@/domain/github-link";
+import { type GithubRepoRef, isPrivateGithubUrl, stripPrivateGithubUrls } from "@/domain/github-link";
 import { classifyQuestion } from "@/domain/must-answer";
 import {
   allowedFacts,
@@ -10,25 +19,50 @@ import {
   buildQuestionsPrompt,
   buildRetryPrompt,
   buildStyleRewritePrompt,
+  buildTailorPrompt,
+  buildTailorRetryPrompt,
   cleanModelText,
   DRAFT_MAX_TOKENS,
   type PromptFact,
   QUESTIONS_MAX_TOKENS,
+  TAILOR_MAX_TOKENS,
 } from "@/domain/prompts";
+import {
+  buildRequirementsPrompt,
+  REQUIREMENTS_MAX_TOKENS,
+  requiredResumeFacts,
+  requirementMapSource,
+  restrictRequirementMap,
+  selectResumeFacts,
+} from "@/domain/requirements";
 import { checkStyle } from "@/domain/style";
-import { sentenceSpans } from "@/domain/text";
+import {
+  applyEdits,
+  changedText,
+  type Tailoring,
+  type TailorOp,
+  tailoringView,
+  validateEdits,
+  worthRetry,
+} from "@/domain/tailor";
+import { sentenceSpans, wordCount } from "@/domain/text";
+import { type DraftRole, expandRoles, roleHeader } from "@/domain/work-roles";
 import {
   type AddQuestionInput,
+  type Contact,
   type ContractTerms,
+  type DecideChangesInput,
   type DraftInput,
   DraftTaskInput,
   type FactId,
   type FactKey,
+  type FillBlanksInput,
   type GateResult,
   type OpportunityId,
   type OutdatedChange,
   type OutputDto,
   type OutputId,
+  type RoleId,
   type StandardAnswers,
   SuggestQuestionsResult,
   SuggestQuestionsTaskInput,
@@ -36,6 +70,7 @@ import {
   type UpdateOutputInput,
   type WorkspaceDto,
 } from "@/shared/api";
+import { parseBlank } from "@/shared/blanks";
 import {
   type FactStatus,
   FILE_KINDS,
@@ -46,14 +81,17 @@ import {
   PDF_KINDS,
 } from "@/shared/enums";
 import { outputKindLabel } from "@/shared/labels";
+import type { PdfDocument } from "../adapters/pdf";
 import type { DbOrTx } from "../db/client";
 import { facts, jobs, opportunities, outputFacts, outputs, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
-import { parseQuestionsReply } from "./ai-replies";
+import { parseQuestionsReply, parseTailorReply } from "./ai-replies";
 import { AppError, type Deps, notFound } from "./context";
 import { privateGithubRepos } from "./github";
 import { jobFacts } from "./jobs";
-import { loadContact } from "./profile";
+import { loadContact, saveDraftingFacts } from "./profile";
+import { buildRequirementMap, requirementMapKey } from "./requirements";
+import { loadDraftRoles } from "./roles";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 
 type OutputRow = typeof outputs.$inferSelect;
@@ -159,11 +197,45 @@ function toGateOutput({ row, citations }: { row: OutputRow; citations: Citation[
   };
 }
 
+/** What leaving the app removes, for every outgoing form of a body (decision 55, clean-files). */
+type Outgoing = { name: string; repos: readonly GithubRepoRef[] };
+
+/**
+ * A body as it leaves the app, still in the Markdown subset the PDF reads: no markers, no first
+ * `# name` line (the PDF header prints the name), and no private repo links (decision 55). Blanks
+ * stay; the gate keeps them out of exports, and the preview shows them as boxes.
+ */
+function outgoingText(body: string, { name, repos }: Outgoing): string {
+  return stripPrivateGithubUrls({ text: stripLeadingName({ body: stripMarkers(body), name }), repos }).trim();
+}
+
+/** The contact header of a PDF: a private repo's link never leaves the app (decision 55). */
+function pdfContact(contact: Contact, repos: readonly GithubRepoRef[]): Contact {
+  return { ...contact, links: contact.links.filter((link) => !isPrivateGithubUrl({ link, repos })) };
+}
+
+type DtoContext = {
+  standardAnswers: StandardAnswers;
+  frozen: boolean;
+  /** Hash of the CV as it is now, for "Your CV changed" (decision 75). */
+  cvHash: string | null;
+} & Outgoing;
+
+/** The current CV's hash, read only when an output was tailored from one (decision 75). */
+async function cvHashFor(deps: Deps, loaded: readonly { row: OutputRow }[]): Promise<string | null> {
+  if (!loaded.some((o) => o.row.tailoring !== null)) return null;
+  const [cv] = await deps.db
+    .select({ body: profileItems.body })
+    .from(profileItems)
+    .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")));
+  return cv ? baseHash(cv.body) : null;
+}
+
 function toOutputDto(
   { row, citations }: { row: OutputRow; citations: Citation[] },
-  standardAnswers: StandardAnswers,
-  frozen: boolean,
+  { standardAnswers, frozen, cvHash, ...outgoing }: DtoContext,
 ): OutputDto {
+  const plain = row.body === null ? null : toPlainText(outgoingText(row.body, outgoing));
   return {
     id: row.id,
     kind: row.kind,
@@ -177,8 +249,12 @@ function toOutputDto(
     editedAt: row.editedAt?.toISOString() ?? null,
     reviewedAt: row.reviewedAt?.toISOString() ?? null,
     citations: citations.map((c) => ({ key: c.factKey, text: c.factText, deleted: c.deleted })),
+    text: row.body === null ? null : cleanForEdit(row.body),
+    plain,
+    words: plain === null ? 0 : wordCount(plain),
     styleHits: row.styleHits,
     outdated: frozen ? [] : outdatedChanges(row.kind, citations),
+    tailoring: row.tailoring ? tailoringView({ tailoring: row.tailoring, currentBaseHash: cvHash }) : null,
   };
 }
 
@@ -200,21 +276,31 @@ export async function getWorkspace(
 ): Promise<WorkspaceDto> {
   const { opportunity, job } = await loadOpportunity(deps, opportunityId);
   const frozen = isFrozen(opportunity.status);
-  const [{ standardAnswers }, loaded, confirmed, aiConfig, draftTask, suggestTask, jobView] = await Promise.all([
-    loadContact(deps),
-    loadOutputs(deps.db, opportunityId),
-    deps.db
-      .select({ no: facts.no, text: facts.text })
-      .from(facts)
-      .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")))
-      .orderBy(asc(facts.no)),
-    loadAiConfig(deps),
-    latestTask(deps, { kind: "draft", inputMatches: { opportunityId } }),
-    latestTask(deps, { kind: "suggest_questions", inputMatches: { opportunityId } }),
-    jobFacts(deps, job),
-  ]);
+  const [{ contact, standardAnswers }, loaded, confirmed, aiConfig, draftTask, suggestTask, jobView, repos] =
+    await Promise.all([
+      loadContact(deps),
+      loadOutputs(deps.db, opportunityId),
+      deps.db
+        .select({
+          no: facts.no,
+          text: facts.text,
+          section: facts.section,
+          itemKind: profileItems.kind,
+          itemTitle: profileItems.title,
+        })
+        .from(facts)
+        .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
+        .where(and(eq(facts.userId, deps.userId), eq(facts.status, "confirmed")))
+        .orderBy(asc(facts.no)),
+      loadAiConfig(deps),
+      latestTask(deps, { kind: "draft", inputMatches: { opportunityId } }),
+      latestTask(deps, { kind: "suggest_questions", inputMatches: { opportunityId } }),
+      jobFacts(deps, job),
+      privateGithubRepos(deps),
+    ]);
   const gate = checkGate({ outputs: loaded.map(toGateOutput), standardAnswers });
-  const dtos = loaded.map((o) => toOutputDto(o, standardAnswers, frozen));
+  const cvHash = await cvHashFor(deps, loaded);
+  const dtos = loaded.map((o) => toOutputDto(o, { standardAnswers, frozen, cvHash, name: contact.fullName, repos }));
   const draftInput = DraftTaskInput.safeParse(draftTask?.input);
   return {
     opportunity: {
@@ -238,7 +324,12 @@ export async function getWorkspace(
     files: dtos.filter((o) => o.kind !== "answer"),
     answers: dtos.filter((o) => o.kind === "answer"),
     gate,
-    facts: confirmed.map((f) => ({ key: factKey(f.no), text: f.text })),
+    // Grouped like Profile's confirmed facts: the section, else the add-on; CV facts with neither are "Other".
+    facts: confirmed.map((f) => ({
+      key: factKey(f.no),
+      text: f.text,
+      group: f.section ?? (f.itemKind === "cv" ? null : f.itemTitle),
+    })),
     aiReady: aiConfig !== null,
     draftTask: draftTask && draftInput.success ? { ...draftTask.task, outputIds: draftInput.data.outputIds } : null,
     suggestTask: suggestTask
@@ -313,18 +404,134 @@ export async function updateOutput(
   await deps.db.transaction(async (tx) => {
     const patch: Partial<typeof outputs.$inferInsert> = {};
     if (input.included !== undefined) patch.included = input.included;
-    if (input.body !== undefined) {
-      patch.body = input.body;
+    let next: string | null | undefined = input.body;
+    if (input.text !== undefined) {
+      // A clean edit: sentences the user left as they were get their markers back (clean-files).
+      const [locked] = await tx
+        .select({ body: outputs.body })
+        .from(outputs)
+        .where(eq(outputs.id, outputId))
+        .for("update");
+      next = input.text.trim() === "" ? null : restoreMarkers({ before: locked?.body ?? "", edited: input.text });
+    }
+    if (next !== undefined) {
+      patch.body = next;
       patch.editedAt = deps.clock.now();
       // A new body has not been reviewed (Task 6, docs/plans/chrome-extension.md).
       patch.reviewedAt = null;
       // Edits re-run the style check without AI so the warnings stay current (section 3.4, step 4a).
-      patch.styleHits = input.body === null ? [] : checkStyle(input.body);
+      patch.styleHits = next === null ? [] : checkStyle({ body: next, kind: output.kind });
+      // The body is the user's own now, so there are no changes left to keep or undo (decision 75).
+      patch.tailoring = null;
     }
     await tx.update(outputs).set(patch).where(eq(outputs.id, outputId));
-    if (input.body !== undefined) await syncCitations(tx, deps, outputId, input.body);
+    if (next !== undefined) await syncCitations(tx, deps, outputId, next);
   });
   return getWorkspace(deps, { opportunityId: output.opportunityId });
+}
+
+/**
+ * `POST /api/outputs/:id/changes`: keep or undo changes of a tailored resume (decision 75). The
+ * body is derived again from the CV and every kept change, in one transaction with its citations
+ * and style hits; review is cleared. Every id must be a change of this output's current tailoring.
+ */
+export async function decideChanges(
+  deps: Deps,
+  { outputId, ids, status }: { outputId: OutputId } & DecideChangesInput,
+): Promise<WorkspaceDto> {
+  const { output, status: opportunityStatus } = await loadOutput(deps, outputId);
+  assertEditable(opportunityStatus);
+  await deps.db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ tailoring: outputs.tailoring })
+      .from(outputs)
+      .where(eq(outputs.id, outputId))
+      .for("update");
+    const tailoring = locked?.tailoring;
+    const known = new Set((tailoring?.changes ?? []).map((c) => c.id));
+    if (!tailoring || ids.some((id) => !known.has(id))) {
+      throw new AppError({
+        code: "output_changed",
+        message: "This resume changed since you opened it, and a change you picked is gone. Check the new version.",
+      });
+    }
+    const picked = new Set(ids);
+    const changes = tailoring.changes.map((c) => (picked.has(c.id) ? { ...c, status } : c));
+    await saveTailoring(tx, deps, { outputId, tailoring: { ...tailoring, changes } });
+  });
+  return getWorkspace(deps, { opportunityId: output.opportunityId });
+}
+
+/**
+ * `POST /api/outputs/:id/fill`: the "Needs your input" form. Answers replace their blanks, removed
+ * Check this sentences go, and the result saves like an edit (edited, review cleared, style
+ * re-checked). Answers to missing-info blanks with `saveAsFact` are also kept as confirmed facts,
+ * "blank: answer", in the same transaction. Every blank named must still be in the body.
+ */
+export async function fillOutputBlanks(
+  deps: Deps,
+  { outputId, answers, remove }: { outputId: OutputId } & FillBlanksInput,
+): Promise<WorkspaceDto> {
+  const { output, status } = await loadOutput(deps, outputId);
+  assertEditable(status);
+  await deps.db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ body: outputs.body })
+      .from(outputs)
+      .where(eq(outputs.id, outputId))
+      .for("update");
+    const body = locked?.body ?? "";
+    const present = new Set(findPlaceholders(body));
+    if ([...answers.map((a) => a.blank), ...remove].some((blank) => !present.has(blank))) {
+      throw new AppError({
+        code: "output_changed",
+        message: "This text changed since you opened it, and a blank you filled is gone. Check the new version.",
+      });
+    }
+    const next = fillBlanks({ body, answers, remove });
+    await tx
+      .update(outputs)
+      .set({
+        body: next,
+        editedAt: deps.clock.now(),
+        reviewedAt: null,
+        styleHits: checkStyle({ body: next, kind: output.kind }),
+        tailoring: null,
+      })
+      .where(eq(outputs.id, outputId));
+    await syncCitations(tx, deps, outputId, next);
+    const lines = answers.flatMap((a) => {
+      const blank = parseBlank(a.blank);
+      return a.saveAsFact && blank.kind === "missing" ? [`${blank.label}: ${a.value.replace(/\s+/g, " ").trim()}`] : [];
+    });
+    if (lines.length) await saveDraftingFacts(tx, deps, { lines });
+  });
+  return getWorkspace(deps, { opportunityId: output.opportunityId });
+}
+
+/** One output's PDF document, as the preview, the export and the page count render it. */
+async function pdfDocument(
+  deps: Deps,
+  { output, body }: { output: OutputRow; body: string },
+): Promise<{ doc: PdfDocument; filename: string }> {
+  const [{ contact }, repos, { job }] = await Promise.all([
+    loadContact(deps),
+    privateGithubRepos(deps),
+    loadOpportunity(deps, output.opportunityId),
+  ]);
+  const label = outputKindLabel(output.kind);
+  const name = [contact.fullName || "Application", job.company, label]
+    .join(" - ")
+    .replace(/[^\p{L}\p{N} ._-]+/gu, "")
+    .trim();
+  return {
+    doc: {
+      contact: pdfContact(contact, repos),
+      title: `${label} · ${job.company}`,
+      body: outgoingText(body, { name: contact.fullName, repos }),
+    },
+    filename: `${name}.pdf`,
+  };
 }
 
 export async function addQuestion(
@@ -529,9 +736,14 @@ export async function listOutputs(
   { opportunityId }: { opportunityId: OpportunityId },
 ): Promise<OutputDto[]> {
   const { opportunity } = await loadOpportunity(deps, opportunityId);
-  const [{ standardAnswers }, loaded] = await Promise.all([loadContact(deps), loadOutputs(deps.db, opportunityId)]);
+  const [{ contact, standardAnswers }, loaded, repos] = await Promise.all([
+    loadContact(deps),
+    loadOutputs(deps.db, opportunityId),
+    privateGithubRepos(deps),
+  ]);
   const frozen = isFrozen(opportunity.status);
-  return loaded.map((o) => toOutputDto(o, standardAnswers, frozen));
+  const cvHash = await cvHashFor(deps, loaded);
+  return loaded.map((o) => toOutputDto(o, { standardAnswers, frozen, cvHash, name: contact.fullName, repos }));
 }
 
 /** The opportunity an output of this user belongs to; 404 when there is no such output. */
@@ -550,58 +762,74 @@ export async function markReady(
   return { ready: true };
 }
 
-/** Gate, then the marker-free text of one included output. Shared by PDF and Copy as text. */
-async function exportableText(deps: Deps, outputId: OutputId) {
-  const { output } = await loadOutput(deps, outputId);
-  if (!output.included) {
-    throw new AppError({
-      code: "not_exportable",
-      message: `${outputKindLabel(output.kind)} is unticked. Tick it to include it, then export.`,
-    });
-  }
-  const gate = await gateFor(deps, output.opportunityId);
-  if (!gate.ok) throw needsInput(gate);
-  const [{ contact, standardAnswers }, repos] = await Promise.all([loadContact(deps), privateGithubRepos(deps)]);
-  const body = output.body ?? (output.mustAnswer ? standardAnswers[output.mustAnswer] : undefined) ?? "";
-  // A private repo's facts may be drafted from, but its repo and commit URLs never leave the app
-  // (decision 55): not in the text, and not in the contact line of a PDF.
-  return {
-    output,
-    contact: { ...contact, links: contact.links.filter((link) => !isPrivateGithubUrl({ link, repos })) },
-    text: stripPrivateGithubUrls({ text: stripMarkers(body), repos }).trim(),
-  };
+function refuseUnticked(output: OutputRow, then: string): void {
+  if (output.included) return;
+  throw new AppError({
+    code: "not_exportable",
+    message: `${outputKindLabel(output.kind)} is unticked. Tick it to include it, then ${then}.`,
+  });
 }
 
+function refuseTextOnly(output: OutputRow): void {
+  if (PDF_KINDS.some((k) => k === output.kind)) return;
+  throw new AppError({
+    code: "not_exportable",
+    message: `${outputKindLabel(output.kind)} exports as text only. Use Copy text.`,
+  });
+}
+
+/** Gate, then the body of one included output (a must-answer falls back to the profile answer). */
+async function exportableBody(deps: Deps, outputId: OutputId) {
+  const { output } = await loadOutput(deps, outputId);
+  refuseUnticked(output, "export");
+  const gate = await gateFor(deps, output.opportunityId);
+  if (!gate.ok) throw needsInput(gate);
+  const { standardAnswers } = await loadContact(deps);
+  const body = output.body ?? (output.mustAnswer ? standardAnswers[output.mustAnswer] : undefined) ?? "";
+  return { output, body };
+}
+
+/** Copy text: "content only" (toPlainText), with no name line and no private repo links. */
 export async function exportText(deps: Deps, { outputId }: { outputId: OutputId }): Promise<{ text: string }> {
-  const { text } = await exportableText(deps, outputId);
-  return { text };
+  const { body } = await exportableBody(deps, outputId);
+  const [{ contact }, repos] = await Promise.all([loadContact(deps), privateGithubRepos(deps)]);
+  return { text: toPlainText(outgoingText(body, { name: contact.fullName, repos })) };
 }
 
 export async function exportPdf(
   deps: Deps,
   { outputId }: { outputId: OutputId },
 ): Promise<{ bytes: Uint8Array; filename: string }> {
-  const { output, contact, text } = await exportableText(deps, outputId);
-  const kind = PDF_KINDS.find((k) => k === output.kind);
-  if (kind === undefined) {
+  const { output, body } = await exportableBody(deps, outputId);
+  refuseTextOnly(output);
+  const { doc, filename } = await pdfDocument(deps, { output, body });
+  return { bytes: await deps.pdf.render(doc), filename };
+}
+
+/**
+ * The preview PDF: not gated, so it works while blanks remain, and each blank shows as a
+ * highlighted box. The output must be included and written. Works on applied jobs too.
+ */
+export async function previewPdf(
+  deps: Deps,
+  { outputId }: { outputId: OutputId },
+): Promise<{ bytes: Uint8Array; filename: string }> {
+  const { output } = await loadOutput(deps, outputId);
+  refuseUnticked(output, "preview it");
+  refuseTextOnly(output);
+  if (output.body === null || output.body.trim() === "") {
     throw new AppError({
       code: "not_exportable",
-      message: `${outputKindLabel(output.kind)} exports as text only. Use Copy as text.`,
+      message: `${outputKindLabel(output.kind)} is empty. Draft or write it, then preview it.`,
     });
   }
-  const { job } = await loadOpportunity(deps, output.opportunityId);
-  const label = outputKindLabel(kind);
-  const bytes = await deps.pdf.render({ contact, title: `${label} · ${job.company}`, body: text });
-  const name = [contact.fullName || "Application", job.company, label]
-    .join(" - ")
-    .replace(/[^\p{L}\p{N} ._-]+/gu, "")
-    .trim();
-  return { bytes, filename: `${name}.pdf` };
+  const { doc, filename } = await pdfDocument(deps, { output, body: output.body });
+  return { bytes: await deps.pdf.render(doc), filename };
 }
 
 // ---------- Drafting (section 3.4) ----------
 
-type DraftFactRow = PromptFact & { id: FactId };
+type DraftFactRow = PromptFact & { id: FactId; roleId: RoleId | null };
 
 /** Confirmed facts with their item's link and usage, in key order. */
 async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftFactRow[]> {
@@ -614,6 +842,7 @@ async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftF
       usage: profileItems.usage,
       githubPrivate: profileItems.githubPrivate,
       evidence: facts.evidence,
+      roleId: facts.roleId,
     })
     .from(facts)
     .innerJoin(profileItems, eq(profileItems.id, facts.itemId))
@@ -626,7 +855,26 @@ async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftF
     // A private repo's link is not offered to the drafter; the export filter is the backstop.
     link: r.githubPrivate === true || r.evidence?.private === true ? null : r.link,
     usage: r.usage,
+    roleId: r.roleId,
   }));
+}
+
+/**
+ * A resume's roles (decision 71): those with at least one fact the resume may use, keyed ROLE-1,
+ * ROLE-2 in draft order, and the facts marked with their role's key. Other kinds get none.
+ */
+async function draftRoles(
+  deps: Pick<Deps, "db" | "userId">,
+  { kind, allowed }: { kind: OutputKind; allowed: readonly DraftFactRow[] },
+): Promise<{ roles: DraftRole[]; facts: DraftFactRow[] }> {
+  if (kind !== "resume") return { roles: [], facts: [...allowed] };
+  const used = new Set(allowed.flatMap((f) => (f.roleId ? [f.roleId] : [])));
+  const kept = (await loadDraftRoles(deps)).filter((r) => used.has(r.id));
+  const keyOf = new Map(kept.map((r, i) => [r.id, `ROLE-${i + 1}`]));
+  return {
+    roles: kept.map((r) => ({ ...r, key: keyOf.get(r.id) ?? "" })),
+    facts: allowed.map((f) => ({ ...f, roleKey: f.roleId ? (keyOf.get(f.roleId) ?? null) : null })),
+  };
 }
 
 function mustAnswerRefusal(output: Pick<OutputRow, "question">): AppError {
@@ -634,6 +882,29 @@ function mustAnswerRefusal(output: Pick<OutputRow, "question">): AppError {
     code: "must_answer",
     message: `"${output.question ?? "This question"}" is yours to answer. Write it yourself, or set a standard answer in Profile.`,
   });
+}
+
+/**
+ * The requirement map's inputs for one opportunity (decision 73): every confirmed fact with its
+ * role, whatever the kind, so one map serves every file. `map` is the stored map when it was read
+ * against this posting and these facts, else null and `prompt` reads it again.
+ */
+async function requirementMapState(
+  deps: Deps,
+  {
+    opportunity,
+    posting,
+    all,
+  }: {
+    opportunity: typeof opportunities.$inferSelect;
+    posting: { title: string; company: string; description: string };
+    all: readonly DraftFactRow[];
+  },
+) {
+  const { roles, facts } = await draftRoles(deps, { kind: "resume", allowed: all });
+  const key = requirementMapKey(requirementMapSource({ posting, facts }));
+  const map = opportunity.requirementMapKey === key ? opportunity.requirementMap : null;
+  return { key, map, facts, prompt: buildRequirementsPrompt({ posting, facts, roles }) };
 }
 
 /** Everything one output's prompt needs, read fresh at the moment of drafting. */
@@ -646,15 +917,30 @@ async function draftContext(
     loadContact(deps),
     loadDraftFacts(deps),
   ]);
-  const allowed = allowedFacts({ kind: output.kind, facts: all });
+  const posting = { title: job.title, company: job.company, description: job.description };
+  const requirements = await requirementMapState(deps, { opportunity, posting, all });
+  const { roles, facts: kindFacts } = await draftRoles(deps, {
+    kind: output.kind,
+    allowed: allowedFacts({ kind: output.kind, facts: all }),
+  });
+  const map =
+    requirements.map &&
+    restrictRequirementMap({ map: requirements.map, allowedKeys: new Set(kindFacts.map((f) => f.key)) });
+  // A resume is drafted from the facts that prove a requirement, plus one per role (decision 73).
+  const allowed = output.kind === "resume" && map !== null ? selectResumeFacts({ map, facts: kindFacts }) : kindFacts;
+  const required = output.kind === "resume" && map !== null ? requiredResumeFacts({ map, facts: allowed }) : [];
   const prompt = buildDraftPrompt({
     kind: output.kind,
     opportunityType: opportunity.type,
-    posting: { title: job.title, company: job.company, description: job.description },
+    posting,
     candidateName: contact.fullName,
     facts: allowed,
     question: output.question,
+    roles,
+    map,
+    required,
   });
+  const roleHeaders = roles.map((r) => ({ key: r.key, header: roleHeader(r) }));
   const check = (body: string) =>
     checkDraft({
       body,
@@ -662,8 +948,11 @@ async function draftContext(
       allowedKeys: allowed.map((f) => f.key),
       posting: { company: job.company, title: job.title },
       contact,
+      roles: roleHeaders,
     });
-  return { opportunity, allowed, prompt, check };
+  /** The model writes `[ROLE-n]`; the server writes the header, so its words are the role's own. */
+  const expand = (text: string) => expandRoles({ body: cleanModelText(text), roles });
+  return { opportunity, allowed, prompt, check, expand, requirements, required };
 }
 
 const StyleRewriteReply = z.object({ rewrites: z.array(z.string()) });
@@ -692,6 +981,159 @@ function replaceSentences(body: string, swaps: ReadonlyMap<string, string>): str
   return out;
 }
 
+// ---------- Tailoring the base CV (decision 75) ----------
+
+/**
+ * Everything a tailored resume needs, or null when the user has no CV the parser can use, in
+ * which case the resume is generated from facts as before. Reads the stored requirement map, so
+ * the map step runs first.
+ */
+async function tailorContext(deps: Deps, { opportunityId }: { opportunityId: OpportunityId }) {
+  const [cv] = await deps.db
+    .select({ id: profileItems.id, body: profileItems.body })
+    .from(profileItems)
+    .where(and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "cv")));
+  if (!cv || cv.body.trim() === "") return null;
+  const [{ opportunity, job }, { contact }, all, allRoles] = await Promise.all([
+    loadOpportunity(deps, opportunityId),
+    loadContact(deps),
+    loadDraftFacts(deps),
+    loadDraftRoles(deps),
+  ]);
+  const { facts: kindFacts } = await draftRoles(deps, {
+    kind: "resume",
+    allowed: allowedFacts({ kind: "resume", facts: all }),
+  });
+  // The CV's roles keep the keys the facts carry; a role no usable fact is in has none.
+  const keyOf = new Map(kindFacts.flatMap((f) => (f.roleId && f.roleKey ? [[f.roleId, f.roleKey] as const] : [])));
+  const roles = allRoles.filter((r) => r.itemId === cv.id).map((r) => ({ ...r, key: keyOf.get(r.id) ?? null }));
+  const parsed = parseBaseCv({ text: cv.body, roles });
+  if (!isUsableBase({ lines: parsed, roleCount: roles.length })) return null;
+  const { lines: base } = mapFactsToLines({ lines: parsed, facts: kindFacts });
+
+  const posting = { title: job.title, company: job.company, description: job.description };
+  const { map: stored } = await requirementMapState(deps, { opportunity, posting, all });
+  const map = stored && restrictRequirementMap({ map: stored, allowedKeys: new Set(kindFacts.map((f) => f.key)) });
+  // Decision 74 carries over: a line holding a REQUIRED fact can't be removed.
+  const protectedKeys = new Set(map ? requiredResumeFacts({ map, facts: kindFacts }) : []);
+  const requirementIds = new Set((map?.requirements ?? []).map((r) => r.id));
+  return {
+    hash: baseHash(cv.body),
+    base,
+    map,
+    prompt: buildTailorPrompt({ posting, base, facts: kindFacts, map, protectedKeys }),
+    validate: (ops: readonly TailorOp[]) =>
+      validateEdits({
+        base,
+        ops,
+        facts: kindFacts,
+        protectedKeys,
+        requirementIds,
+        posting: { company: job.company, title: job.title },
+        contact,
+      }),
+  };
+}
+
+/**
+ * Save a tailoring and the body it derives: style hits on the changed lines only, citations
+ * synced (kept markers keep their snapshot), review cleared.
+ */
+async function saveTailoring(
+  db: DbOrTx,
+  deps: Deps,
+  {
+    outputId,
+    tailoring,
+    patch = {},
+  }: { outputId: OutputId; tailoring: Tailoring; patch?: Partial<typeof outputs.$inferInsert> },
+): Promise<void> {
+  const body = applyEdits(tailoring);
+  await db
+    .update(outputs)
+    .set({
+      ...patch,
+      body,
+      tailoring,
+      reviewedAt: null,
+      styleHits: checkStyle({ body: changedText(tailoring), kind: "resume" }),
+    })
+    .where(eq(outputs.id, outputId));
+  await syncCitations(db, deps, outputId, body);
+}
+
+/**
+ * Tailor the resume from the base CV: one call for an edit list, one retry when edits were
+ * dropped or the reply can't be read, then save the base with the edits that passed. When neither
+ * reply can be read the CV is saved as it is, never generated from facts.
+ */
+async function tailorResume(
+  deps: Deps,
+  ctx: TaskContext,
+  {
+    outputId,
+    t,
+    confirmOverCap,
+    label,
+  }: {
+    outputId: OutputId;
+    t: NonNullable<Awaited<ReturnType<typeof tailorContext>>>;
+    confirmOverCap: boolean;
+    label: string;
+  },
+): Promise<void> {
+  const ai = (prompt: typeof t.prompt) =>
+    runAi(deps, {
+      tier: "writing",
+      purpose: "draft",
+      taskId: ctx.taskId,
+      prompt,
+      maxOutputTokens: TAILOR_MAX_TOKENS,
+      confirmOverCap,
+    });
+  const read = (text: string) => {
+    const parsed = parseTailorReply(text);
+    return parsed && { ...t.validate(parsed.ops), unreadable: parsed.unreadable };
+  };
+  const first = await ai(t.prompt);
+  let aiCallId = first.aiCallId;
+  let result = read(first.text);
+  if (result === null || result.unreadable > 0 || worthRetry(result.dropped)) {
+    await ctx.step(`Checking ${label} against your facts`);
+    const retry = await ai(
+      buildTailorRetryPrompt({
+        prompt: t.prompt,
+        reply: cleanModelText(first.text),
+        dropped: result?.dropped ?? [],
+        unreadable: result?.unreadable ?? 0,
+      }),
+    );
+    // An unreadable retry keeps the first reply's edits that passed.
+    const second = read(retry.text);
+    if (second !== null) {
+      result = second;
+      aiCallId = retry.aiCallId;
+    }
+  }
+  if (result === null) await ctx.step(`No changes could be read, so ${label} is your CV as it is`);
+  const tailoring: Tailoring = {
+    baseHash: t.hash,
+    base: t.base,
+    changes: result?.changes ?? [],
+    dropped: result ? result.dropped.length + result.unreadable : 0,
+    map: t.map,
+  };
+  await deps.db.transaction(async (tx) => {
+    // A fresh draft takes fresh snapshots of every fact it cites.
+    await tx.delete(outputFacts).where(eq(outputFacts.outputId, outputId));
+    await saveTailoring(tx, deps, {
+      outputId,
+      tailoring,
+      patch: { aiCallId, generatedAt: deps.clock.now(), editedAt: null },
+    });
+  });
+}
+
 /** Draft one output: prompt, check, one retry, quarantine, one style rewrite, save. */
 async function draftOne(
   deps: Deps,
@@ -701,7 +1143,28 @@ async function draftOne(
   const { output, status } = await loadOutput(deps, outputId);
   assertEditable(status);
   if (output.mustAnswer !== null) throw mustAnswerRefusal(output);
-  const { allowed, prompt, check } = await draftContext(deps, { opportunityId: output.opportunityId, output });
+  const before = await draftContext(deps, { opportunityId: output.opportunityId, output });
+  // Step 1a: read the posting's requirements, once per posting and fact set (decision 73).
+  if (before.requirements.map === null) {
+    await ctx.step("Reading what the job asks for");
+    await buildRequirementMap(deps, {
+      opportunityId: output.opportunityId,
+      prompt: before.requirements.prompt,
+      facts: before.requirements.facts,
+      key: before.requirements.key,
+      taskId: ctx.taskId,
+      confirmOverCap,
+    });
+  }
+  // A resume starts from the user's own CV when there is one the parser can use (decision 75).
+  if (output.kind === "resume") {
+    const t = await tailorContext(deps, { opportunityId: output.opportunityId });
+    if (t !== null) return tailorResume(deps, ctx, { outputId, t, confirmOverCap, label });
+  }
+  const { opportunity, allowed, prompt, check, expand, required } =
+    before.requirements.map === null
+      ? await draftContext(deps, { opportunityId: output.opportunityId, output })
+      : before;
   const ai = (p: typeof prompt) =>
     runAi(deps, {
       tier: "writing",
@@ -712,29 +1175,48 @@ async function draftOne(
       confirmOverCap,
     });
 
-  // Steps 2 to 4: draft, check, retry once with the violations, then quarantine what still fails.
+  // Steps 2 to 4: draft, check, retry once with the violations and any REQUIRED fact left out
+  // (decision 74), then quarantine what still fails. Role keys expand to headers before the check;
+  // the retry shows the model what it wrote. A required fact still missing after the retry is accepted.
   const first = await ai(prompt);
-  let body = cleanModelText(first.text);
+  let body = expand(first.text);
   let aiCallId = first.aiCallId;
   let result = check(body);
-  if (!result.ok) {
+  const cited = (text: string) => new Set<string>(parseCitations(text));
+  const firstCited = cited(body);
+  const missing = required.filter((k) => !firstCited.has(k));
+  if (!result.ok || missing.length > 0) {
     await ctx.step(`Checking ${label} against your facts`);
-    const retry = await ai(buildRetryPrompt({ prompt, draft: body, violations: result.violations }));
-    body = cleanModelText(retry.text);
+    const retry = await ai(
+      buildRetryPrompt({
+        prompt,
+        draft: cleanModelText(first.text),
+        violations: result.ok ? [] : result.violations,
+        missing,
+      }),
+    );
+    body = expand(retry.text);
     aiCallId = retry.aiCallId;
     result = check(body);
     if (!result.ok) body = quarantineViolations({ body, violations: result.violations });
   }
 
   // Step 4a: one rewrite of the flagged sentences. A rewrite that fails checkDraft is discarded.
-  const hits = checkStyle(body);
+  const hits = checkStyle({ body, kind: output.kind });
   if (hits.length > 0) {
     await ctx.step(`Tidying the wording of ${label}`);
     const sentences = [...new Set(hits.map((h) => h.sentence))].map((sentence) => ({
       sentence,
       hits: hits.filter((h) => h.sentence === sentence),
     }));
-    const reply = await ai(buildStyleRewritePrompt({ sentences, facts: allowed }));
+    const reply = await ai(
+      buildStyleRewritePrompt({
+        kind: output.kind,
+        opportunityType: opportunity.type,
+        sentences,
+        facts: allowed,
+      }),
+    );
     const rewrites = parseRewrites(reply.text, sentences.length) ?? [];
     const swaps = new Map<string, string>();
     rewrites.forEach((rewrite, i) => {
@@ -747,7 +1229,7 @@ async function draftOne(
 
   // Step 5: save body, ai_call_id, generated_at, style hits and fresh citation snapshots.
   const byKey = new Map<string, DraftFactRow>(allowed.map((f) => [f.key, f]));
-  const cited = parseCitations(body).flatMap((key) => {
+  const citedFacts = parseCitations(body).flatMap((key) => {
     const fact = byKey.get(key);
     return fact ? [fact] : [];
   });
@@ -760,14 +1242,17 @@ async function draftOne(
         generatedAt: deps.clock.now(),
         editedAt: null,
         reviewedAt: null,
-        styleHits: checkStyle(body),
+        styleHits: checkStyle({ body, kind: output.kind }),
+        tailoring: null,
       })
       .where(eq(outputs.id, outputId));
     await tx.delete(outputFacts).where(eq(outputFacts.outputId, outputId));
-    if (cited.length) {
+    if (citedFacts.length) {
       await tx
         .insert(outputFacts)
-        .values(cited.map((f) => ({ outputId, factKey: f.key, userId: deps.userId, factId: f.id, factText: f.text })));
+        .values(
+          citedFacts.map((f) => ({ outputId, factKey: f.key, userId: deps.userId, factId: f.id, factText: f.text })),
+        );
     }
   });
 }
@@ -829,9 +1314,17 @@ export async function startDraft(
 
   const config = await requireAiConfig(deps);
   let estimate = 0;
-  for (const output of targets) {
-    const { prompt } = await draftContext(deps, { opportunityId, output });
+  for (const [i, output] of targets.entries()) {
+    const { prompt, requirements } = await draftContext(deps, { opportunityId, output });
     estimate += estimateUsd({ model: config.models.writing, prompt, maxOutputTokens: DRAFT_MAX_TOKENS[output.kind] });
+    // The first target reads the map when it is missing; the others reuse it.
+    if (i === 0 && requirements.map === null) {
+      estimate += estimateUsd({
+        model: config.models.writing,
+        prompt: requirements.prompt,
+        maxOutputTokens: REQUIREMENTS_MAX_TOKENS,
+      });
+    }
   }
   await checkCap(deps, { capUsd: config.capUsd, estimateUsd: estimate, confirmOverCap });
 

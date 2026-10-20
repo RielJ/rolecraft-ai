@@ -34,11 +34,12 @@ import {
 import { webUrl } from "@/shared/web-url";
 import { ApiError, errorMessage } from "../api";
 import { DraftStatus, NoKeyHint, useDraftActions } from "../components/draft-actions";
+import { AnswerBody, BlanksForm, FileCard, OutdatedNotice } from "../components/file-card";
 import { JobFacts, PossibleDuplicates } from "../components/job-facts";
 import { NeedsInput } from "../components/needs-input";
-import { OutdatedNotice, OutputEditor } from "../components/output-editor";
 import { PostingText } from "../components/posting-text";
 import { panelId, TabList, tabId } from "../components/tab-list";
+import { TailorChanges } from "../components/tailor-changes";
 import { readReturn } from "../lib/matches-return";
 import {
   useAddQuestion,
@@ -85,10 +86,32 @@ function draftingIds(ws: WorkspaceDto): ReadonlySet<OutputId> {
   return ws.draftTask?.status === "running" ? new Set(ws.draftTask.outputIds) : new Set();
 }
 
-/** Remount editors when the server body changes by an edit or a new draft. */
-const editorKey = (o: OutputDto) => `${o.id}:${o.editedAt ?? ""}:${o.generatedAt ?? ""}`;
+type DraftRequest = { label: string; run: () => void; disabled: boolean };
 
 /** Draft or Regenerate for one output. Null when drafting is not possible here. */
+function draftRequest({
+  ws,
+  output,
+  actions,
+}: {
+  ws: WorkspaceDto;
+  output: OutputDto;
+  actions: DraftActions;
+}): DraftRequest | null {
+  if (ws.opportunity.frozen || !ws.aiReady || output.mustAnswer !== null) return null;
+  const label = outputKindLabel(output.kind).toLowerCase();
+  return {
+    label: output.body === null ? (output.kind === "answer" ? "Draft answer" : `Draft ${label}`) : "Regenerate",
+    disabled: actions.starting || ws.draftTask?.status === "running",
+    run: () =>
+      actions.request({
+        input: { outputId: output.id },
+        what: output.kind === "answer" ? "this answer" : `the ${label}`,
+        replacesEdits: output.body !== null && output.editedAt !== null,
+      }),
+  };
+}
+
 function DraftOne({
   ws,
   output,
@@ -100,23 +123,11 @@ function DraftOne({
   actions: DraftActions;
   variant?: "outline" | "default";
 }) {
-  if (ws.opportunity.frozen || !ws.aiReady || output.mustAnswer !== null) return null;
-  const label = outputKindLabel(output.kind).toLowerCase();
-  const busy = actions.starting || ws.draftTask?.status === "running";
+  const request = draftRequest({ ws, output, actions });
+  if (request === null) return null;
   return (
-    <Button
-      size="sm"
-      variant={variant}
-      disabled={busy}
-      onClick={() =>
-        actions.request({
-          input: { outputId: output.id },
-          what: output.kind === "answer" ? "this answer" : `the ${label}`,
-          replacesEdits: output.body !== null && output.editedAt !== null,
-        })
-      }
-    >
-      {output.body === null ? (output.kind === "answer" ? "Draft answer" : `Draft ${label}`) : "Regenerate"}
+    <Button size="sm" variant={variant} disabled={request.disabled} onClick={request.run}>
+      {request.label}
     </Button>
   );
 }
@@ -178,6 +189,37 @@ function savedToast(output: OutputDto): void {
   toast(`${what} saved. Mark it reviewed again so the extension can use it.`);
 }
 
+/** The inner texts of this output's `[[...]]` blanks, as the gate reports them. */
+function blanksFor(ws: WorkspaceDto, id: OutputId): string[] {
+  return blockersFor(ws, id).flatMap((b) => (b.kind === "placeholder" ? [b.text] : []));
+}
+
+/**
+ * Save a clean edit. Resolves true when saved, false when refused (and says why). mutateAsync, not
+ * mutate(…, { onSuccess }): a save changes `editedAt`, which keys the card, so it can remount
+ * before per-call callbacks run, and TanStack Query drops them on unmount.
+ */
+function saveText({
+  update,
+  output,
+  text,
+}: {
+  update: ReturnType<typeof useUpdateOutput>;
+  output: OutputDto;
+  text: string;
+}): Promise<boolean> {
+  return update.mutateAsync({ id: output.id, text }).then(
+    () => {
+      savedToast(output);
+      return true;
+    },
+    (error: unknown) => {
+      onError(error);
+      return false;
+    },
+  );
+}
+
 /** "Draft all" for the included files, the task's progress, and the no-key hint. */
 function DraftBar({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions }) {
   const included = ws.files.filter((f) => f.included);
@@ -230,6 +272,7 @@ function Files({
   if (!current) return null;
   const label = outputKindLabel(current.kind);
   const drafting = draftingIds(ws);
+  const blanks = blanksFor(ws, current.id);
 
   return (
     <section aria-label="Files" className="grid gap-4">
@@ -264,22 +307,25 @@ function Files({
           <Label htmlFor={`include-${current.id}`}>Include the {label.toLowerCase()} in this application</Label>
         </div>
         {current.included ? (
-          <OutputEditor
-            key={editorKey(current)}
+          <FileCard
+            key={current.id}
             output={current}
             frozen={ws.opportunity.frozen}
-            blockers={blockersFor(ws, current.id)}
             blocked={!ws.gate.ok}
-            saving={update.isPending}
-            onSave={(body) => update.mutateAsync({ id: current.id, body }).then(() => savedToast(current), onError)}
+            blanks={blanks.length}
             drafting={drafting.has(current.id)}
-            draftButton={
-              <>
-                <DraftOne ws={ws} output={current} actions={actions} />
-                {!drafting.has(current.id) && <ReviewControl ws={ws} output={current} busy={update.isPending} />}
-              </>
-            }
+            saving={update.isPending}
+            onSaveText={(text) => saveText({ update, output: current, text })}
+            draftButton={<DraftOne ws={ws} output={current} actions={actions} variant="default" />}
+            regenerate={draftRequest({ ws, output: current, actions })}
+            review={(busy) => <ReviewControl ws={ws} output={current} busy={busy} />}
             outdated={<Outdated ws={ws} output={current} actions={actions} />}
+            fillForm={<BlanksForm opportunityId={ws.opportunity.id} output={current} blanks={blanks} />}
+            changes={
+              current.tailoring && (
+                <TailorChanges opportunityId={ws.opportunity.id} outputId={current.id} tailoring={current.tailoring} />
+              )
+            }
           />
         ) : (
           <p className="text-muted-foreground text-sm">
@@ -295,27 +341,9 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
   const id = useId();
   const update = useUpdateOutput(ws.opportunity.id);
   const remove = useDeleteQuestion(ws.opportunity.id);
-  const saved = answer.body ?? "";
-  const [draft, setDraft] = useState(saved);
-  const dirty = draft !== saved;
   const frozen = ws.opportunity.frozen;
   const drafting = draftingIds(ws).has(answer.id);
-  // Clicking "Save answer" blurs the textarea first, so save() runs twice in one gesture, before
-  // `update.isPending` re-renders the button disabled. The ref drops the second call.
-  const inFlight = useRef(false);
-  const save = () => {
-    if (!dirty || inFlight.current) return;
-    inFlight.current = true;
-    // mutateAsync, not mutate(…, { onSuccess }): a save changes `editedAt`, which is part of this
-    // row's key, so the row can remount before per-call callbacks run, and TanStack Query drops
-    // them on unmount. The promise settles either way, so the toast always shows.
-    update
-      .mutateAsync({ id: answer.id, body: draft.trim() === "" ? null : draft })
-      .then(() => savedToast(answer), onError)
-      .finally(() => {
-        inFlight.current = false;
-      });
-  };
+  const blanks = blanksFor(ws, answer.id);
 
   return (
     <li id={`output-${answer.id}`} className="grid scroll-mt-20 gap-2 py-4">
@@ -328,59 +356,34 @@ function AnswerRow({ ws, answer, actions }: { ws: WorkspaceDto; answer: OutputDt
           aria-label={`Include "${answer.question}"`}
           onCheckedChange={(checked) => update.mutate({ id: answer.id, included: checked === true }, { onError })}
         />
-        <Label htmlFor={`${id}-body`} className="flex-1 font-medium leading-snug">
-          {answer.question}
-        </Label>
+        <h3 className="flex-1 font-medium text-sm leading-snug">{answer.question}</h3>
         {!answer.included && <span className="pt-0.5 text-muted-foreground text-xs">Not added</span>}
         {answer.mustAnswer && <Badge variant="outline">{mustAnswerLabel(answer.mustAnswer)}</Badge>}
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={`Delete "${answer.question}"`}
-          disabled={frozen || remove.isPending}
-          onClick={() => remove.mutate(answer.id, { onError })}
-        >
-          <Trash2Icon aria-hidden />
-        </Button>
-      </div>
-      <div className="grid gap-2 pl-7">
-        <Outdated ws={ws} output={answer} actions={actions} />
-        <Textarea
-          id={`${id}-body`}
-          value={draft}
-          readOnly={frozen || drafting}
-          aria-busy={drafting}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={save}
-          className="min-h-20 max-w-[68ch] font-serif"
-          placeholder={
-            answer.mustAnswer
-              ? answer.profileAnswer
-                ? `Uses your profile answer: ${answer.profileAnswer}`
-                : "Answer here for this job, or save a standard answer under Needs your input."
-              : "Write your answer. Cite facts with [FACT-n]."
-          }
-        />
-        {answer.mustAnswer && answer.body === null && answer.profileAnswer && (
-          <p className="text-muted-foreground text-sm">
-            Using your profile answer. Type above to answer differently here.
-          </p>
+        {!frozen && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Delete "${answer.question}"`}
+            disabled={remove.isPending}
+            onClick={() => remove.mutate(answer.id, { onError })}
+          >
+            <Trash2Icon aria-hidden />
+          </Button>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          {dirty && (
-            <Button size="sm" onClick={save} disabled={update.isPending}>
-              Save answer
-            </Button>
-          )}
-          {drafting ? (
-            <span className="text-muted-foreground text-sm">Drafting…</span>
-          ) : (
-            <>
-              <DraftOne ws={ws} output={answer} actions={actions} />
-              <ReviewControl ws={ws} output={answer} busy={dirty || update.isPending} />
-            </>
-          )}
-        </div>
+      </div>
+      <div className="grid gap-3 pl-7">
+        <Outdated ws={ws} output={answer} actions={actions} />
+        <AnswerBody
+          answer={answer}
+          frozen={frozen}
+          blocked={!ws.gate.ok}
+          drafting={drafting}
+          saving={update.isPending}
+          onSaveText={(text) => saveText({ update, output: answer, text })}
+          actions={<DraftOne ws={ws} output={answer} actions={actions} />}
+          review={(busy) => <ReviewControl ws={ws} output={answer} busy={busy} />}
+        />
+        {!frozen && answer.included && <BlanksForm opportunityId={ws.opportunity.id} output={answer} blanks={blanks} />}
       </div>
     </li>
   );
@@ -515,7 +518,7 @@ function Questions({ ws, actions }: { ws: WorkspaceDto; actions: DraftActions })
       ) : (
         <ul className="divide-y border-y">
           {ws.answers.map((a) => (
-            <AnswerRow key={editorKey(a)} ws={ws} answer={a} actions={actions} />
+            <AnswerRow key={a.id} ws={ws} answer={a} actions={actions} />
           ))}
         </ul>
       )}
@@ -619,6 +622,13 @@ function MarkApplied({ ws }: { ws: WorkspaceDto }) {
   );
 }
 
+/** Rail facts by employer or project (or add-on title), in the order they first appear. */
+function factGroups(facts: WorkspaceDto["facts"]): [string | null, WorkspaceDto["facts"]][] {
+  const groups = new Map<string | null, WorkspaceDto["facts"]>();
+  for (const f of facts) groups.set(f.group, [...(groups.get(f.group) ?? []), f]);
+  return [...groups];
+}
+
 /**
  * The actions column. On wide screens it stays pinned under the top bar, lined up with the title,
  * and scrolls on its own when it is taller than the window. Apply sits first.
@@ -666,16 +676,23 @@ function Rail({ ws, onJump }: { ws: WorkspaceDto; onJump: (id: OutputId) => void
         {ws.facts.length === 0 ? (
           <p className="text-muted-foreground text-sm">None yet. Paste and confirm your CV on the Profile page.</p>
         ) : (
-          <ul className="grid gap-1.5 text-sm">
-            {ws.facts.map((f) => (
-              <li key={f.key} className="flex gap-2">
-                <span className="w-14 shrink-0 font-mono text-muted-foreground text-xs leading-5 tabular-nums">
-                  {f.key}
-                </span>
-                <span>{f.text}</span>
-              </li>
+          <div className="grid gap-4">
+            {factGroups(ws.facts).map(([group, facts], _, groups) => (
+              <div key={group ?? ""} className="grid gap-1.5">
+                {/* Facts from no employer or project only need a heading beside other groups. */}
+                {(group !== null || groups.length > 1) && (
+                  <h3 className="text-muted-foreground text-xs">{group ?? "Other"}</h3>
+                )}
+                <ul className="grid list-disc gap-1.5 pl-4 text-sm marker:text-muted-foreground">
+                  {facts.map((f) => (
+                    <li key={f.key} className="text-pretty">
+                      {f.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </aside>
@@ -945,13 +962,13 @@ function Workspace({
     if (tab !== "drafts") switchTab("drafts");
     if (ws.files.some((f) => f.id === id)) {
       setSelected(id);
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`#${panelId(id)} textarea`)?.focus());
+      requestAnimationFrame(() => document.querySelector<HTMLElement>(`#${panelId(id)} [data-jump]`)?.focus());
       return;
     }
     requestAnimationFrame(() => {
       const row = document.getElementById(`output-${id}`);
       row?.scrollIntoView({ block: "center" });
-      row?.querySelector<HTMLElement>("textarea")?.focus();
+      row?.querySelector<HTMLElement>("[data-jump]")?.focus();
     });
   }
 

@@ -18,6 +18,7 @@ import {
 import {
   ADDON_KINDS,
   AddonKind,
+  hasRoles,
   ITEM_USAGES,
   ItemUsage,
   MUST_ANSWERS,
@@ -39,6 +40,7 @@ import {
 import { ApiError, errorMessage } from "../api";
 import { CvPreviewDialog } from "../components/cv-preview-dialog";
 import { FileDropZone } from "../components/file-drop-zone";
+import { RolesEditor, rolesKey } from "../components/roles-editor";
 import { type PageSection, SaveRow, SectionHeading, SectionPage } from "../components/section-page";
 import { SetupChecklist } from "../components/setup-checklist";
 import { SkillsForMatching } from "../components/skills-for-matching";
@@ -434,6 +436,11 @@ const SPLIT_WORDS: OverCapWords = {
   noun: "This split",
   action: "Split anyway",
 };
+const ROLES_WORDS: OverCapWords = {
+  doing: "Reading the roles in this text with AI",
+  noun: "This read",
+  action: "Read anyway",
+};
 const READ_WORDS: OverCapWords = {
   doing: "Reading this link from GitHub with AI",
   noun: "This read",
@@ -541,6 +548,20 @@ function SplitStatus({ item, what }: { item: ProfileItemDto; what: string }) {
       return _exhaustive;
     }
   }
+}
+
+// ---------- Roles (decision 71) ----------
+
+/** The Roles list of the CV or an experience add-on, with its over-cap confirmation. */
+function ItemRoles({ item, what, aiReady }: { item: ProfileItemDto; what: string; aiReady: boolean }) {
+  const overCap = useOverCap(ROLES_WORDS);
+  if (!hasRoles(item.kind)) return null;
+  return (
+    <>
+      <RolesEditor key={rolesKey(item)} item={item} what={what} aiReady={aiReady} onOverCap={overCap.onError} />
+      {overCap.dialog}
+    </>
+  );
 }
 
 // ---------- GitHub reads ----------
@@ -1491,6 +1512,7 @@ function AddonRow({
       </div>
       <SplitStatus item={item} what={item.title} />
       <GithubRead item={item} aiReady={aiReady} />
+      <ItemRoles item={item} what={`"${item.title}"`} aiReady={aiReady} />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1595,7 +1617,12 @@ export function ProfilePage() {
       label: "CV",
       hint: cv ? undefined : "Missing",
       attention: true,
-      content: <CvForm key={cv?.rev ?? 0} cv={cv} cvFile={cvFile} facts={facts} contact={contact} aiReady={aiReady} />,
+      content: (
+        <div className="grid gap-8">
+          <CvForm key={cv?.rev ?? 0} cv={cv} cvFile={cvFile} facts={facts} contact={contact} aiReady={aiReady} />
+          {cv && <ItemRoles item={cv} what="your CV" aiReady={aiReady} />}
+        </div>
+      ),
     },
     {
       id: "facts",

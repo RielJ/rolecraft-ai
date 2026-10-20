@@ -1,12 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { FactKey, OutputId } from "./api";
 import {
   agoLabel,
+  blockerLabel,
+  fileStatusLabel,
   fillRatesSummary,
   fxAgeLabel,
   fxAgeLines,
   fxProvenanceLabel,
+  matchSkillsLabel,
+  outdatedLabel,
+  RESUME_ONE_PAGE_WORDS,
   rateDayLabel,
   refreshedLabel,
+  resumeLikelyLong,
 } from "./labels";
 
 const NOW = new Date("2026-10-18T10:00:00Z");
@@ -96,5 +103,88 @@ describe("fillRatesSummary", () => {
     expect(fillRatesSummary({ ...none, viewChanged: true })).toBe(
       "Your view currency changed while filling, so nothing was saved. Fill again.",
     );
+  });
+});
+
+describe("fileStatusLabel", () => {
+  const at = hoursAgo(2).toISOString();
+
+  test("a draft: when, words and blanks", () => {
+    expect(fileStatusLabel({ generatedAt: at, editedAt: null, words: 290, blanks: 2, now: NOW })).toBe(
+      "Drafted 2 hours ago · 290 words · 2 blanks",
+    );
+  });
+
+  test("an edit newer than the draft names the edit; no blanks, no blank count", () => {
+    expect(
+      fileStatusLabel({ generatedAt: hoursAgo(5).toISOString(), editedAt: at, words: 300, blanks: 0, now: NOW }),
+    ).toBe("Edited 2 hours ago · 300 words");
+  });
+
+  test("written by hand with no draft", () => {
+    expect(fileStatusLabel({ generatedAt: null, editedAt: at, words: 1, blanks: 1, now: NOW })).toBe(
+      "Edited 2 hours ago · 1 word · 1 blank",
+    );
+  });
+});
+
+describe("resumeLikelyLong", () => {
+  test("warns only past the one-page estimate", () => {
+    expect(resumeLikelyLong(RESUME_ONE_PAGE_WORDS)).toBe(false);
+    expect(resumeLikelyLong(RESUME_ONE_PAGE_WORDS + 1)).toBe(true);
+  });
+});
+
+describe("labels name no fact keys", () => {
+  test("outdated changes", () => {
+    for (const reason of ["edited", "deleted", "unconfirmed", "letters_only"] as const) {
+      expect(outdatedLabel(reason)).not.toMatch(/FACT/);
+    }
+    expect(outdatedLabel("deleted")).toBe("A fact this used was deleted");
+  });
+
+  test("placeholder blockers name the blank without its brackets", () => {
+    const outputId = OutputId.parse("00000000-0000-4000-8000-000000000000");
+    expect(blockerLabel({ kind: "placeholder", outputId, text: "Employer for the 2019 role" })).toBe(
+      "Fill in: Employer for the 2019 role",
+    );
+    expect(
+      blockerLabel({
+        kind: "placeholder",
+        outputId,
+        text: 'Check this: "I led a team of 40" is not backed by your facts',
+      }),
+    ).toBe('Check a sentence your facts don\'t back: "I led a team of 40"');
+  });
+
+  test("a deleted-fact blocker", () => {
+    const label = blockerLabel({
+      kind: "deleted_fact",
+      outputId: OutputId.parse("00000000-0000-4000-8000-000000000000"),
+      factKey: FactKey.parse("FACT-3"),
+    });
+    expect(label).not.toMatch(/FACT/);
+  });
+});
+
+describe("matchSkillsLabel (decision 76)", () => {
+  const label = (matched: number, asked: number, nice = { matched: 0, asked: 0 }) =>
+    matchSkillsLabel({ matched, asked, nice });
+
+  test("a percentage from three skills up; the count below that", () => {
+    expect(label(7, 8)).toEqual({ short: "88% skills", full: "7 of 8 skills" });
+    expect(label(0, 3)).toEqual({ short: "0% skills", full: "0 of 3 skills" });
+    expect(label(1, 2)).toEqual({ short: "1 of 2 skills", full: "1 of 2 skills" });
+  });
+
+  test("with nice-to-have skills the percentage is of the required ones", () => {
+    expect(label(11, 12, { matched: 2, asked: 5 })).toEqual({
+      short: "92% required skills",
+      full: "11 of 12 required skills · 2 of 5 nice-to-have",
+    });
+  });
+
+  test("no skills named: nothing", () => {
+    expect(label(0, 0)).toBeNull();
   });
 });

@@ -7,10 +7,9 @@ import { createHttpClient, type FetchFn } from "@/server/adapters/http";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
 import { ensureBuiltinSources } from "@/server/services/sources";
-import { rereadSkills, runRefresh } from "@/server/services/sync";
+import { runRefresh } from "@/server/services/sync";
 import { waitForTask } from "@/server/services/tasks";
 import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto, TaskId } from "@/shared/api";
-import { CUSTOM_SKILLS, skillTexts } from "./fixtures/skill-texts";
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
@@ -418,9 +417,19 @@ describe("skills in stored jobs (decisions 66 and 68)", () => {
     const before = await testSql()<
       { title: string; skills: string[] }[]
     >`SELECT title, skills FROM jobs ORDER BY title`;
-    await testSql()`UPDATE jobs SET skills = '{}', skills_stamp = ${OLD_VERSION}`;
+    // A job stored before nice-to-have skills: the re-read fills them in (decision 76).
+    await testSql()`UPDATE jobs SET description = description || ${"\n\nNice to have\n- Kafka\n- Linux"}
+      WHERE title = 'Site Reliability Engineer'`;
+    await testSql()`UPDATE jobs SET skills = '{}', nice_skills = '{}', skills_stamp = ${OLD_VERSION}`;
     expect((await refresh(hours(0.1))).result?.skillsReread).toBe(7);
-    expect(await testSql()`SELECT title, skills FROM jobs ORDER BY title`).toEqual(before);
+    const after = await testSql()<
+      { title: string; skills: string[]; nice: string[] }[]
+    >`SELECT title, skills, nice_skills AS nice FROM jobs ORDER BY title`;
+    expect(after.map(({ title, skills }) => ({ title, skills: skills.filter((s) => s !== "Kafka") }))).toEqual(before);
+    // Linux is also named in the posting's main text, so only Kafka is nice to have.
+    expect(after.filter((j) => j.nice.length > 0)).toEqual([
+      { title: "Site Reliability Engineer", skills: ["Kafka", "Linux", "Grafana", "Prometheus"], nice: ["Kafka"] },
+    ]);
     expect((await refresh(hours(0.2))).result?.skillsReread).toBe(0);
   });
 
@@ -459,31 +468,4 @@ describe("skills in stored jobs (decisions 66 and 68)", () => {
     expect(next.result?.skillsReread).toBe(7);
     expect(await skillsOf("Product Designer")).toEqual(["payroll"]);
   });
-
-  test("timing: the re-read step over 1,930 open jobs of 8 KB with 20 skills of your own", async () => {
-    const rows = skillTexts({ count: 1930, bytes: 8192 }).map((description, i) => ({
-      user_id: deps.userId,
-      origin: "paste",
-      title: `Engineer ${i}`,
-      company: "Acme",
-      title_key: `engineer ${i}`,
-      company_key: "acme",
-      description,
-      content_hash: String(i),
-      description_key: String(i),
-    }));
-    for (let i = 0; i < rows.length; i += 500) await testSql()`INSERT INTO jobs ${testSql()(rows.slice(i, i + 500))}`;
-    const skills = compileSkills(CUSTOM_SKILLS);
-
-    const timed = async () => {
-      const started = performance.now();
-      const changed = await rereadSkills({ deps, skills });
-      return { changed, ms: Math.round(performance.now() - started) };
-    };
-    const first = await timed();
-    const second = await timed();
-    console.log(JSON.stringify({ msg: "skills re-read timing", jobs: rows.length, first, second }));
-    expect(first.changed).toBe(rows.length);
-    expect(second.changed).toBe(0);
-  }, 30_000);
 });

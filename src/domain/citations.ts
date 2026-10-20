@@ -1,5 +1,6 @@
 import { type Contact, FactKey } from "@/shared/api";
 import { sentenceSpans } from "./text";
+import { ROLE_TOKEN } from "./work-roles";
 
 // [FACT-n] with n >= 1, not part of a [[...]] placeholder.
 const MARKER = /(?<!\[)\[FACT-([1-9]\d*)\](?!\])/g;
@@ -37,13 +38,42 @@ export function stripMarkers(body: string): string {
 
 // ---------- Anti-invention check (section 3.4, step 3) ----------
 
-export type DraftFact = { key: FactKey; text: string };
+/** A fact as the check sees it. `roleKey` is the `ROLE-n` of its role, in a resume with roles. */
+export type DraftFact = { key: FactKey; text: string; roleKey?: string | null };
+
+/** A role the server wrote into the draft: its key and the header line it expanded to. */
+export type DraftRoleHeader = { key: string; header: string };
 
 type Span = { sentence: string; start: number; end: number };
 export type DraftViolation =
   | (Span & { kind: "unknown_fact"; factKey: string })
   | (Span & { kind: "unsupported_token"; tokens: string[] })
-  | (Span & { kind: "uncited_claim"; tokens: string[] });
+  | (Span & { kind: "uncited_claim"; tokens: string[] })
+  | (Span & { kind: "unknown_role"; roleKey: string })
+  | (Span & { kind: "wrong_role"; roleKey: string | null; factKeys: string[] });
+
+/** A `##` section that holds roles. Anything cited in it must sit under its own role's header. */
+const EXPERIENCE_HEADING = /^#{1,2}\s+.*\b(?:experience|employment|work history)\b/i;
+
+/**
+ * For each line of the body, the role it sits under (the key of the last role header since the
+ * last `#` or `##` heading), and whether it is in an Experience section.
+ */
+function roleContext({ lines, roles }: { lines: readonly string[]; roles: readonly DraftRoleHeader[] }) {
+  const keyOf = new Map(roles.map((r) => [r.header.trim(), r.key]));
+  let role: string | null = null;
+  let experience = false;
+  return lines.map((raw) => {
+    const line = raw.trim();
+    const key = keyOf.get(line);
+    if (key !== undefined) role = key;
+    else if (/^#{1,2}\s/.test(line)) {
+      role = null;
+      experience = EXPERIENCE_HEADING.test(line);
+    }
+    return { role, experience };
+  });
+}
 
 export type DraftCheck = { ok: true } | { ok: false; violations: [DraftViolation, ...DraftViolation[]] };
 
@@ -295,6 +325,15 @@ function claimText(sentence: string): string {
  * - `unsupported_token`: a number, URL, email, skill or proper noun that the cited facts lack.
  *   Proper nouns may also come from the posting's company and title and the contact fields.
  * - `uncited_claim`: a sentence with no markers contains one of those tokens.
+ * - `unknown_role`: a `[ROLE-n]` left in the body: a key not in the list, or one not on its own
+ *   line (decision 71). The server expands known keys on their own line before this check.
+ *
+ * - `wrong_role`: with `roles`, a sentence under a role's header cites a fact that is not marked
+ *   with that role, or a sentence in an Experience section cites facts before any role header.
+ *   Roles are matched by key only, so overlapping dates never matter.
+ *
+ * A line equal to the header of an allowed role (`roles`, as `roleHeader` renders it) is the
+ * server's own text and is not checked. Any other header line is checked like a sentence.
  */
 export function checkDraft({
   body,
@@ -302,15 +341,18 @@ export function checkDraft({
   allowedKeys,
   posting,
   contact,
+  roles = [],
 }: {
   body: string;
   facts: readonly DraftFact[];
   allowedKeys: readonly FactKey[];
   posting: { company: string; title: string };
   contact: Contact;
+  roles?: readonly DraftRoleHeader[];
 }): DraftCheck {
   const allowed = new Set<string>(allowedKeys);
   const byKey = new Map<string, string>(facts.map((f) => [f.key, f.text]));
+  const roleOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.roleKey ?? null]));
   const names = evidenceOf([
     posting.company,
     posting.title,
@@ -320,15 +362,33 @@ export function checkDraft({
     ...contact.links,
   ]);
   const violations: DraftViolation[] = [];
+  const headers = new Set(roles.map((r) => r.header.trim()));
+  const lines = body.split("\n");
+  const context = roles.length > 0 ? roleContext({ lines, roles }) : [];
 
   for (const span of sentenceSpans(body)) {
+    if (headers.has((lines[span.line] ?? "").trim())) continue;
     const base: Span = { sentence: span.text, start: span.start, end: span.end };
+    const roleKeys = new Set(Array.from(span.text.matchAll(ROLE_TOKEN), (m) => m[1] ?? ""));
+    for (const roleKey of roleKeys) violations.push({ ...base, kind: "unknown_role", roleKey });
+    if (roleKeys.size > 0) continue;
     const keys = parseCitations(span.text);
     const cited: string[] = [];
     for (const key of keys) {
       const text = byKey.get(key);
       if (text === undefined || !allowed.has(key)) violations.push({ ...base, kind: "unknown_fact", factKey: key });
       else cited.push(text);
+    }
+    const where = context[span.line];
+    if (where && keys.length > 0 && (where.role !== null || where.experience)) {
+      const misplaced = keys.filter((key) => byKey.has(key) && roleOfFact.get(key) !== where.role);
+      if (where.role === null || misplaced.length > 0)
+        violations.push({
+          ...base,
+          kind: "wrong_role",
+          roleKey: where.role,
+          factKeys: where.role === null ? keys.map(String) : misplaced.map(String),
+        });
     }
     const text = claimText(span.text);
     const tokens = unsupportedTokens(text, evidenceOf(cited), names);
@@ -340,6 +400,41 @@ export function checkDraft({
 
   const [first, ...rest] = violations;
   return first ? { ok: false, violations: [first, ...rest] } : { ok: true };
+}
+
+/**
+ * The claim tokens in one changed resume line (decision 75) that its evidence lacks: numbers,
+ * URLs, emails, skills and proper nouns, as `checkDraft` reads them. `evidence` is the CV line the
+ * change replaces plus the facts behind it, so the user's own words count as proof. Names may also
+ * come from the posting and the contact. Pure.
+ */
+export function checkLine({
+  text,
+  evidence,
+  posting,
+  contact,
+}: {
+  text: string;
+  evidence: readonly string[];
+  posting: { company: string; title: string };
+  contact: Contact;
+}): string[] {
+  const facts = evidenceOf(evidence);
+  const names = evidenceOf([
+    posting.company,
+    posting.title,
+    contact.fullName,
+    contact.location,
+    contact.email,
+    ...contact.links,
+  ]);
+  const missing: string[] = [];
+  for (const span of sentenceSpans(text)) {
+    for (const token of unsupportedTokens(claimText(span.text), facts, names)) {
+      if (!missing.includes(token)) missing.push(token);
+    }
+  }
+  return missing;
 }
 
 /** The placeholder that replaces a sentence that failed the check twice. */

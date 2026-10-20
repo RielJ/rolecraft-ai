@@ -233,6 +233,7 @@ const MATCH_COLUMNS = {
   firstSeenAt: jobs.firstSeenAt,
   applyUrl: jobs.applyUrl,
   skills: jobs.skills,
+  niceSkills: jobs.niceSkills,
   seniority: jobs.seniority,
   minYears: jobs.minYears,
   eligibility: jobs.eligibility,
@@ -251,16 +252,20 @@ const MATCH_COLUMNS = {
  */
 function matchJobOf(
   t: Pick<Targeting, "knownSkill">,
-  row: { title: string; skills: string[]; seniority: MatchJob["seniority"]; minYears: number | null } & Pick<
-    MatchJob,
-    "eligibility"
-  >,
+  row: {
+    title: string;
+    skills: string[];
+    niceSkills: string[];
+    seniority: MatchJob["seniority"];
+    minYears: number | null;
+  } & Pick<MatchJob, "eligibility">,
   unclear: { reason: string } | null,
   overridden: boolean,
 ): MatchJob {
   return {
     title: row.title,
     skills: row.skills.filter(t.knownSkill),
+    niceSkills: row.niceSkills.filter(t.knownSkill),
     seniority: row.seniority,
     minYears: row.minYears,
     eligibility: row.eligibility,
@@ -483,6 +488,7 @@ export async function matchDetail(deps: Deps, jobId: JobId): Promise<MatchDetail
     seenOn: listings.get(job.id) ?? [],
     level: match.level,
     reasons: match.reasons,
+    skills: match.skills,
     roleUnclear: unclear?.reason ?? null,
     facts: await jobFacts(deps, job),
     opportunityId: row.opportunityId,

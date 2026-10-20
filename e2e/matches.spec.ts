@@ -295,6 +295,30 @@ test("Profile's seniority, years and minimum pay save, and the minimum pay start
   await expect(page.getByText("From your profile")).toBeHidden();
 });
 
+test("skills show as a percentage of the required ones; the pane gives the counts", async ({ page }) => {
+  await withSql(async (sql) => {
+    const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;
+    const userId = user?.id ?? "";
+    // You have Go and PostgreSQL. Alpha asks for Go, PostgreSQL and Docker; Kafka and Rust are nice to have.
+    await sql`INSERT INTO user_skills (user_id, key, name, kind)
+      VALUES (${userId}, 'go', 'Go', 'added'), (${userId}, 'postgresql', 'PostgreSQL', 'added')`;
+    await sql`UPDATE jobs SET skills = '{Go,PostgreSQL,Docker,Kafka,Rust}', nice_skills = '{Kafka,Rust}'
+      WHERE title = 'Alpha Engineer'`;
+    await sql`UPDATE jobs SET skills = '{Go,Rust}' WHERE title = 'Bravo Engineer'`;
+  });
+  await page.goto("/");
+  const alpha = list(page).getByRole("option", { name: /Alpha Engineer/ });
+  await expect(alpha).toContainText("67% required skills");
+  await expect(alpha.getByTitle("2 of 3 required skills · 0 of 2 nice-to-have")).toBeVisible();
+  // Too few skills for a percentage.
+  await expect(list(page).getByRole("option", { name: /Bravo Engineer/ })).toContainText("1 of 2 skills");
+
+  await alpha.click();
+  const reasons = pane(page).getByRole("region", { name: "Match reasons" });
+  await expect(reasons).toContainText("2 of 3 required skills · 0 of 2 nice-to-have");
+  await expect(reasons).toContainText("Nice to have, not in your facts: Kafka, Rust");
+});
+
 test("the reading pane offers Merge for a likely duplicate, and merging leaves one job", async ({ page }) => {
   await withSql(async (sql) => {
     const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;

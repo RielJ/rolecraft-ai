@@ -78,7 +78,7 @@ The extension adds a side panel that fills empty fields on a job's application f
 2. In `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select `dist-extension/`.
 3. Pair it with a code from **Settings** > **Chrome extension**.
 
-[docs/EXTENSION.md](docs/EXTENSION.md) covers pairing, revoking, permissions, stored data, the threat model, the limits, and the manual checks.
+[docs/extension-guide.md](docs/extension-guide.md) walks through the setup, what to prepare in your profile, each step of an application, and troubleshooting. [docs/EXTENSION.md](docs/EXTENSION.md) covers permissions, stored data, the threat model, the limits, and the manual checks.
 
 ## Environment variables
 

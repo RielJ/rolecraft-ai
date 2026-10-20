@@ -1,7 +1,7 @@
 import { type ReactNode, type Ref, useEffect, useRef } from "react";
 import type { JobId, MatchItem } from "@/shared/api";
 import type { Eligibility, MatchLevel } from "@/shared/enums";
-import { matchLevelLabel } from "@/shared/labels";
+import { matchLevelLabel, matchSkillsLabel } from "@/shared/labels";
 import { cn } from "@/web/lib/utils";
 import { Badge } from "../ui/badge";
 import { Skeleton } from "../ui/skeleton";
@@ -77,6 +77,7 @@ function Row({
   children: ReactNode;
 }) {
   const who = whoCanApply(job.eligibility);
+  const skills = matchSkillsLabel(job.skills);
   return (
     // Keyboard selection lives on the listbox (aria-activedescendant), so options take focus only
     // by click (tabIndex -1); the listbox owns the keys (section 4 keyboard model).
@@ -108,9 +109,16 @@ function Row({
       <span className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
         <span className={who.tone}>{who.text}</span>
         {job.pay && <span className="text-muted-foreground tabular-nums">{job.pay}</span>}
-        {job.skills.asked > 0 && (
-          <span className="text-muted-foreground tabular-nums">
-            {job.skills.matched} of {job.skills.asked} skills
+        {skills && (
+          <span className="text-muted-foreground tabular-nums" title={skills.full}>
+            {skills.short === skills.full ? (
+              skills.short
+            ) : (
+              <>
+                <span aria-hidden="true">{skills.short}</span>
+                <span className="sr-only">{skills.full}</span>
+              </>
+            )}
           </span>
         )}
         {job.roleUnclear && <span className="text-warning-foreground">Role unclear</span>}

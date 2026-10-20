@@ -19,6 +19,7 @@ import {
   PayPeriod,
   ProfileItemKind,
   RateType,
+  RequirementWeight,
   RoleFamily,
   SkillChipSource,
   SourceKind,
@@ -37,6 +38,8 @@ export const ItemId = z.uuid().brand<"ItemId">();
 export type ItemId = z.infer<typeof ItemId>;
 export const FactId = z.uuid().brand<"FactId">();
 export type FactId = z.infer<typeof FactId>;
+export const RoleId = z.uuid().brand<"RoleId">();
+export type RoleId = z.infer<typeof RoleId>;
 export const JobId = z.uuid().brand<"JobId">();
 export type JobId = z.infer<typeof JobId>;
 export const OpportunityId = z.uuid().brand<"OpportunityId">();
@@ -185,6 +188,8 @@ export const FactDto = z.object({
   text: z.string(),
   /** The job, project or heading the fact sits under, copied from the item's text. Null when none. */
   section: z.string().nullable(),
+  /** The role it sits under (decision 71): its section names exactly one role's company. */
+  roleId: RoleId.nullable(),
   status: FactStatus,
   itemId: ItemId,
   itemKind: ProfileItemKind,
@@ -235,6 +240,21 @@ export const ItemGithubDto = z.object({
 });
 export type ItemGithubDto = z.infer<typeof ItemGithubDto>;
 
+/** A role read from a CV or experience add-on, or typed on Profile (decision 71). */
+export const RoleDto = z.object({
+  id: RoleId,
+  title: z.string(),
+  company: z.string(),
+  location: z.string().nullable(),
+  /** As the CV writes it ("Jan, 2026", "January 2026"). */
+  start: z.string().nullable(),
+  /** As the CV writes it, "Present" included. */
+  end: z.string().nullable(),
+  /** Facts of the item linked to this role. */
+  factCount: z.number().int(),
+});
+export type RoleDto = z.infer<typeof RoleDto>;
+
 /** The CV or an add-on, with its latest split task so a reload can resume progress or offer Retry. */
 export const ProfileItemDto = z.object({
   id: ItemId,
@@ -251,6 +271,10 @@ export const ProfileItemDto = z.object({
   fileName: z.string().nullable(),
   splitTask: TaskDto.nullable(),
   github: ItemGithubDto.nullable(),
+  /** The CV's or an experience add-on's roles, most recent first. Empty for other kinds. */
+  roles: z.array(RoleDto),
+  /** The latest "Read roles" task (`roles_read`); a split reads roles in its own task. */
+  rolesTask: TaskDto.nullable(),
 });
 export type ProfileItemDto = z.infer<typeof ProfileItemDto>;
 
@@ -380,6 +404,42 @@ export type AddonInput = z.infer<typeof AddonInput>;
 /** What a split task needs to run again (stored in `tasks.input`). */
 export const SplitTaskInput = z.object({ itemId: ItemId });
 export type SplitTaskInput = z.infer<typeof SplitTaskInput>;
+
+/** What a "Read roles" task needs to run again (stored in `tasks.input`). */
+export const RolesReadTaskInput = z.object({ itemId: ItemId });
+export type RolesReadTaskInput = z.infer<typeof RolesReadTaskInput>;
+
+/** Most roles one item keeps. */
+export const MAX_ROLES = 30;
+
+/** An optional role field: blank means not given. */
+const RoleText = z
+  .string()
+  .trim()
+  .max(200, "Keep each role field under 200 characters.")
+  .nullable()
+  .transform((v) => (v ? v : null));
+
+/** One role as Profile saves it. `id` keeps an existing role, and the facts linked to it. */
+export const RoleInput = z.object({
+  id: RoleId.optional(),
+  title: z.string().trim().min(1, "Each role needs a title.").max(200, "Keep each role field under 200 characters."),
+  company: z
+    .string()
+    .trim()
+    .min(1, "Each role needs a company.")
+    .max(200, "Keep each role field under 200 characters."),
+  location: RoleText,
+  start: RoleText,
+  end: RoleText,
+});
+export type RoleInput = z.infer<typeof RoleInput>;
+
+/** `PUT /api/profile/items/:id/roles`: the whole list, in order, most recent first. */
+export const SaveRolesInput = z.object({
+  roles: z.array(RoleInput).max(MAX_ROLES, `An item keeps at most ${MAX_ROLES} roles.`),
+});
+export type SaveRolesInput = z.infer<typeof SaveRolesInput>;
 
 /** What a GitHub read needs to run again (stored in `tasks.input`). */
 export const GithubReadTaskInput = z.object({ itemId: ItemId });
@@ -620,6 +680,20 @@ export const GateResult = z.discriminatedUnion("ok", [
 ]);
 export type GateResult = z.infer<typeof GateResult>;
 
+/**
+ * What a posting asks for and which confirmed facts prove each part (decision 73). A requirement
+ * with no facts is a gap. `context` holds, for roles that back no requirement, the fact that best
+ * says what the role was, so the resume can keep the role with one bullet.
+ */
+export const RequirementMap = z.object({
+  role: z.string(),
+  requirements: z.array(
+    z.object({ id: z.string(), text: z.string(), weight: RequirementWeight, facts: z.array(FactKey) }),
+  ),
+  context: z.array(FactKey),
+});
+export type RequirementMap = z.infer<typeof RequirementMap>;
+
 export const StyleHit = z.object({
   sentence: z.string(),
   /** The text that tripped the rule, as it appears in the sentence. */
@@ -645,6 +719,53 @@ export const CitationDto = z.object({
 });
 export type CitationDto = z.infer<typeof CitationDto>;
 
+// ---------- Tailoring from the base CV (decision 75) ----------
+
+export const TAILOR_OPS = ["summary", "order", "reword", "remove", "add"] as const;
+export const TailorOpKind = z.enum(TAILOR_OPS);
+export type TailorOpKind = z.infer<typeof TailorOpKind>;
+export const CHANGE_STATUSES = ["accepted", "rejected"] as const;
+export const ChangeStatus = z.enum(CHANGE_STATUSES);
+export type ChangeStatus = z.infer<typeof ChangeStatus>;
+
+/** One proposed change as the review list shows it. */
+export const ChangeView = z.object({
+  id: z.string(),
+  op: TailorOpKind,
+  status: ChangeStatus,
+  /** The CV's text before the change; null for an add, or a new summary where the CV had none. */
+  before: z.string().nullable(),
+  /** The text after; null for a remove and an order. */
+  after: z.string().nullable(),
+  /** An order's lines before and after; null for every other change. */
+  beforeList: z.array(z.string()).nullable(),
+  afterList: z.array(z.string()).nullable(),
+  /** The role or section the change is in. */
+  where: z.string().nullable(),
+  /** The posting's requirements the change serves. */
+  reasons: z.array(z.object({ id: z.string(), text: z.string() })),
+  note: z.string().nullable(),
+});
+export type ChangeView = z.infer<typeof ChangeView>;
+
+export const TailoringDto = z.object({
+  changes: z.array(ChangeView),
+  /** Edits the checks dropped, never shown as changes. */
+  dropped: z.number().int(),
+  /** The CV was imported again after this draft; regenerating starts from the new one. */
+  baseChanged: z.boolean(),
+  /** Requirements of the posting no fact proves. */
+  gaps: z.array(z.object({ id: z.string(), text: z.string(), weight: RequirementWeight })),
+});
+export type TailoringDto = z.infer<typeof TailoringDto>;
+
+/** Keep or undo changes; several at once for Keep all and Undo all. */
+export const DecideChangesInput = z.object({
+  ids: z.array(z.string().min(1).max(20)).min(1).max(200),
+  status: ChangeStatus,
+});
+export type DecideChangesInput = z.infer<typeof DecideChangesInput>;
+
 export const OutputDto = z.object({
   id: OutputId,
   kind: OutputKind,
@@ -660,10 +781,21 @@ export const OutputDto = z.object({
   /** Set by "Mark reviewed"; cleared when a draft or an edit rewrites the body. Gates generated answers in prefill. */
   reviewedAt: z.string().nullable(),
   citations: z.array(CitationDto),
+  /** The body as the user edits it: no `[FACT-n]` markers, blanks kept as `[[...]]`. Null when not written. */
+  text: z.string().nullable(),
+  /**
+   * The body as it reads when copied ("content only": no markers, no Markdown marks, no name line,
+   * no private repo links). Blanks stay as `[[...]]`. Null when not written.
+   */
+  plain: z.string().nullable(),
+  /** Words in `plain`; 0 when not written. */
+  words: z.number().int(),
   /** Style warnings (decision 43). They never block export. */
   styleHits: z.array(StyleHit),
   /** Empty when nothing it cites has changed, and always empty on frozen jobs. */
   outdated: z.array(OutdatedChange),
+  /** A resume tailored from the base CV (decision 75); null for every other output. */
+  tailoring: TailoringDto.nullable(),
 });
 export type OutputDto = z.infer<typeof OutputDto>;
 
@@ -843,7 +975,11 @@ export const WorkspaceDto = z.object({
   files: z.array(OutputDto),
   answers: z.array(OutputDto),
   gate: GateResult,
-  facts: z.array(z.object({ key: FactKey, text: z.string() })),
+  /**
+   * Confirmed facts. `group` is the fact's section, else the add-on it came from; null for CV facts
+   * with no section (shown under "Other").
+   */
+  facts: z.array(z.object({ key: FactKey, text: z.string(), group: z.string().nullable() })),
   /** Whether an AI key is saved, so drafting can run. */
   aiReady: z.boolean(),
   /** The latest draft task for this job, so a reload can resume progress or offer Retry. */
@@ -855,15 +991,39 @@ export type WorkspaceDto = z.infer<typeof WorkspaceDto>;
 
 const OutputBody = z.string().max(100_000);
 
+/**
+ * `body` is the stored form, markers and all. `text` is a clean edit (OutputDto.text): the server
+ * puts back the markers of every sentence the user left unchanged. Empty text clears the body.
+ */
 export const UpdateOutputInput = z
   .object({
     body: OutputBody.nullable().optional(),
+    text: OutputBody.optional(),
     included: z.boolean().optional(),
   })
-  .refine((v) => v.body !== undefined || v.included !== undefined, {
-    message: "Send body, included, or both.",
-  });
+  .refine((v) => v.body !== undefined || v.text !== undefined || v.included !== undefined, {
+    message: "Send body, text, included, or a mix.",
+  })
+  .refine((v) => v.body === undefined || v.text === undefined, { message: "Send body or text, not both." });
 export type UpdateOutputInput = z.infer<typeof UpdateOutputInput>;
+
+/** One `[[...]]` blank, by its inner text, as the gate reports it. */
+const BlankText = z.string().max(2000);
+
+/**
+ * `POST /api/outputs/:id/fill`: the "Needs your input" form. Each answer replaces its blank; with
+ * `saveAsFact` (missing-info blanks only) the answer is also kept as a confirmed fact. Each
+ * `remove` drops a Check this blank's sentence.
+ */
+export const FillBlanksInput = z
+  .object({
+    answers: z
+      .array(z.object({ blank: BlankText, value: z.string().trim().min(1).max(2000), saveAsFact: z.boolean() }))
+      .max(100),
+    remove: z.array(BlankText).max(100),
+  })
+  .refine((v) => v.answers.length + v.remove.length > 0, { message: "Fill in or remove at least one blank." });
+export type FillBlanksInput = z.infer<typeof FillBlanksInput>;
 
 /**
  * "Mark reviewed": the body the user was shown. The server marks the output reviewed only if the
@@ -1041,6 +1201,18 @@ export type MatchReason = z.infer<typeof MatchReason>;
  */
 export const SeenOn = z.array(z.object({ label: z.string(), listingUrl: z.string(), via: z.string().nullable() }));
 
+/**
+ * How many of the posting's required skills your confirmed facts name, and of its nice-to-have
+ * ones (decision 76). `nice.asked` is 0 when the posting has no nice-to-have skills, so `asked`
+ * counts all of them; `asked` is 0 when it names no skills we know.
+ */
+export const MatchSkills = z.object({
+  matched: z.number().int(),
+  asked: z.number().int(),
+  nice: z.object({ matched: z.number().int(), asked: z.number().int() }),
+});
+export type MatchSkills = z.infer<typeof MatchSkills>;
+
 /** One row of the Matches list. */
 export const MatchItem = z.object({
   id: JobId,
@@ -1056,8 +1228,7 @@ export const MatchItem = z.object({
   /** The role filter's reason when it is unsure (section 3.7a), shown as the "Role unclear" chip. */
   roleUnclear: z.string().nullable(),
   eligibility: Eligibility,
-  /** How many of the posting's known skills your confirmed facts name; `asked` is 0 when it names none. */
-  skills: z.object({ matched: z.number().int(), asked: z.number().int() }),
+  skills: MatchSkills,
   /** Monthly in the view currency, or as posted; null when the posting states none. */
   pay: z.string().nullable(),
 });
@@ -1133,6 +1304,7 @@ export const MatchDetail = z.object({
   seenOn: SeenOn,
   level: MatchLevel,
   reasons: z.array(MatchReason),
+  skills: MatchSkills,
   roleUnclear: z.string().nullable(),
   facts: JobFacts,
   /** Set once the job is saved or dismissed. */

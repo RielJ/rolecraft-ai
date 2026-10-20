@@ -780,12 +780,14 @@ Keys are ignored while focus is in a text field. Saved and dismissed jobs leave 
 Every slice leaves `bun run check` green. Package scripts used below:
 
 ```
-check       = biome check . && tsc --noEmit && bun test
+check       = biome check . && tsc --noEmit && bun run test && bun run test:budget && bun run test:extension
+test        = bun test --parallel=4 --no-isolate   # one database per worker (hanapbuhay_test_wN)
+test:budget = cd test/budget && bun test          # wall-clock budgets, alone and serial
 db:up       = docker compose up -d db
 db:generate = drizzle-kit generate
 db:migrate  = bun src/server/db/migrate.ts
 build       = vite build
-e2e         = playwright test        # starts the built app with HB_AI=fake HB_SOURCES=fixture
+e2e         = playwright test        # one built server per worker (HB_E2E_WORKERS, default 4), HB_AI=fake HB_SOURCES=fixture
 ```
 
 Tests use `DATABASE_URL_TEST` against the same Compose Postgres. `test/setup.ts` (bunfig preload) migrates once, and `resetDb()` empties every table except `users` (DELETE in foreign-key order, then restart sequences; see `test/reset.ts`).

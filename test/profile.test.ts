@@ -222,11 +222,16 @@ describe("split: checked against the item's own text", () => {
       "Built a billing service in TypeScript and Postgres at Lakbay Labs",
       "Mentored 3 junior engineers through code review",
     ]);
-    expect(deps.fake.calls).toHaveLength(1);
+    // The split, then the roles read in the same task (decision 71).
+    expect(deps.fake.calls).toHaveLength(2);
     const prompt = deps.fake.calls[0]?.messages[0]?.content ?? "";
     expect(prompt).toContain(`<<<\n${CV_LINES.join("\n")}\n>>>`);
-    const calls = await testSql()`SELECT purpose, tier, model FROM ai_calls`;
-    expect([...calls]).toEqual([{ purpose: "split", tier: "light", model: deps.fake.calls[0]?.model ?? "" }]);
+    const calls = await testSql()`SELECT purpose, tier, model FROM ai_calls ORDER BY created_at, purpose DESC`;
+    const model = deps.fake.calls[0]?.model ?? "";
+    expect([...calls]).toEqual([
+      { purpose: "split", tier: "light", model },
+      { purpose: "roles", tier: "light", model },
+    ]);
   });
 
   test("without an AI key, split falls back to the rule splitter and makes no AI call", async () => {
@@ -395,7 +400,8 @@ describe("fact sections: grouping by job", () => {
       ),
     );
     const after = await pasteCv(CV);
-    const prompt = deps.fake.calls[1]?.messages[0]?.content ?? "";
+    // Calls: split, roles, then the second split.
+    const prompt = deps.fake.calls[2]?.messages[0]?.content ?? "";
     expect(prompt).toContain("SAVED FACTS");
     expect(prompt).toContain("- Led a team of 4 engineers");
     expect(after.facts.map((f) => ({ id: f.id, status: f.status, section: f.section }))).toEqual(

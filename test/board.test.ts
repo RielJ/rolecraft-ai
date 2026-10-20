@@ -325,6 +325,13 @@ describe("freeze on apply", () => {
 
     const edit = await call("PATCH", `/outputs/${file(ws, "resume").id}`, { body: "Changed." });
     expect((await json(edit, ApiErrorBody, 409)).error.code).toBe("frozen");
+    const cleanEdit = await call("PATCH", `/outputs/${file(ws, "resume").id}`, { text: "Changed." });
+    expect((await json(cleanEdit, ApiErrorBody, 409)).error.code).toBe("frozen");
+    const fill = await call("POST", `/outputs/${file(ws, "resume").id}/fill`, {
+      answers: [{ blank: "x", value: "y", saveAsFact: true }],
+      remove: [],
+    });
+    expect((await json(fill, ApiErrorBody, 409)).error.code).toBe("frozen");
     const draft = await call("POST", `/opportunities/${ws.opportunity.id}/draft`, {});
     expect((await json(draft, ApiErrorBody, 409)).error.code).toBe("frozen");
     const ask = await call("POST", `/opportunities/${ws.opportunity.id}/questions`, { question: "Why us?" });

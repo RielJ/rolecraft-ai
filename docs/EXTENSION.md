@@ -2,7 +2,7 @@
 
 The extension is an unpacked Manifest V3 extension with a side panel. It pairs with your own Hanapbuhay server. When you click **Apply** in a job's workspace, the panel links the job's tab to that application. After you click **Prefill**, it fills empty fields from your profile, your saved answers, and the answers you marked reviewed. It attaches a PDF only to the upload field you pick. It never submits a form, never overwrites a field that has a value, and never fills a pay question. When the page looks like a confirmation page, it asks you before it marks the job applied.
 
-This page has three parts:
+To set it up and use it step by step, read [extension-guide.md](extension-guide.md). This page has three parts:
 
 - How-to guides: install, pair, revoke, and run the tests.
 - Reference: permissions, stored data, the threat model, and the limits.

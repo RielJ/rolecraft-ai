@@ -3,60 +3,90 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// E2E runs the built SPA and the real server on its own port and database, so it never
-// touches the dev database or whatever already listens on 3000.
-const PORT = Number(process.env.HB_E2E_PORT ?? 3100);
-export const E2E_DATABASE_URL =
+// E2E runs the built SPA against real servers, one per worker, each on its own port, database and
+// temp dirs, so workers never share rows and never touch the dev database or whatever listens on
+// 3000. Specs reset their tables, so two workers on one database would wipe each other mid-test.
+//
+// This file is loaded by the main process (which starts the servers below) and again by every
+// worker. A worker's exports point at its own server: Playwright gives each worker a slot,
+// TEST_PARALLEL_INDEX (0 to WORKERS - 1), which a replacement worker after a failure reuses.
+const WORKERS = Number(process.env.HB_E2E_WORKERS ?? 4);
+const BASE_PORT = Number(process.env.HB_E2E_PORT ?? 3100);
+const BASE_DATABASE_URL =
   process.env.DATABASE_URL_E2E ?? "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay_e2e";
 
+/** The resources of worker slot `slot`: its server's port, database, and fixture dirs. */
+function slotOf(slot: number) {
+  const db = new URL(BASE_DATABASE_URL);
+  db.pathname = `${db.pathname}_w${slot}`;
+  const dir = join(tmpdir(), `hanapbuhay-e2e-w${slot}`);
+  return {
+    port: BASE_PORT + slot,
+    databaseUrl: db.toString(),
+    sourcesLog: join(dir, "sources.log"),
+    githubDir: join(dir, "github"),
+    fxDir: join(dir, "fx"),
+    dataDir: join(dir, "data"),
+  };
+}
+
+const own = slotOf(Number(process.env.TEST_PARALLEL_INDEX ?? 0));
+
+/** This worker's database. */
+export const E2E_DATABASE_URL = own.databaseUrl;
+
 /** Every fixture source request, one `host/path` line each (HB_SOURCES_LOG). Tests clear and read it. */
-export const E2E_SOURCES_LOG = join(tmpdir(), "hanapbuhay-e2e-sources.log");
+export const E2E_SOURCES_LOG = own.sourcesLog;
 
 /** Recorded GitHub repos the server reads (HB_GITHUB=fixture). Tests copy snapshots here. */
-export const E2E_GITHUB_DIR = join(tmpdir(), "hanapbuhay-e2e-github");
+export const E2E_GITHUB_DIR = own.githubDir;
 
 /**
  * Recorded exchange-rate bodies the server reads (HB_FX=fixture). Empty, so every rate fetch fails
  * as if the sites were unreachable; only e2e/rates.spec.ts copies fixtures in. Emptied once, in the
  * main process: workers load this file too, and must not wipe it mid-run.
  */
-export const E2E_FX_DIR = join(tmpdir(), "hanapbuhay-e2e-fx");
+export const E2E_FX_DIR = own.fxDir;
+
+const slots = Array.from({ length: WORKERS }, (_, slot) => slotOf(slot));
 if (process.env.TEST_WORKER_INDEX === undefined) {
-  rmSync(E2E_FX_DIR, { recursive: true, force: true });
-  mkdirSync(E2E_FX_DIR, { recursive: true });
+  for (const slot of slots) {
+    rmSync(slot.fxDir, { recursive: true, force: true });
+    mkdirSync(slot.fxDir, { recursive: true });
+  }
 }
 
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
-  workers: 1,
+  workers: WORKERS,
   retries: 0,
   reporter: [["list"]],
   timeout: 60_000,
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    baseURL: `http://localhost:${own.port}`,
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
+  webServer: slots.map((slot) => ({
     command: "bun src/server/main.ts",
-    url: `http://localhost:${PORT}/api/health`,
+    url: `http://localhost:${slot.port}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,
     env: {
-      PORT: String(PORT),
-      DATABASE_URL: E2E_DATABASE_URL,
+      PORT: String(slot.port),
+      DATABASE_URL: slot.databaseUrl,
       HB_STATIC_DIR: "./dist",
       HB_AI: "fake",
       HB_SOURCES: "fixture",
-      HB_SOURCES_LOG: E2E_SOURCES_LOG,
+      HB_SOURCES_LOG: slot.sourcesLog,
       HB_GITHUB: "fixture",
-      HB_GITHUB_DIR: E2E_GITHUB_DIR,
+      HB_GITHUB_DIR: slot.githubDir,
       HB_FX: "fixture",
-      HB_FX_DIR: E2E_FX_DIR,
-      HB_DATA_DIR: join(tmpdir(), "hanapbuhay-e2e-data"),
+      HB_FX_DIR: slot.fxDir,
+      HB_DATA_DIR: slot.dataDir,
     },
-    stdout: "pipe",
-    stderr: "pipe",
-  },
+    stdout: "pipe" as const,
+    stderr: "pipe" as const,
+  })),
 });

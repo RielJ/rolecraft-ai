@@ -18,8 +18,23 @@ import { waitForTask } from "@/server/services/tasks";
 import type { ProfileDto } from "@/shared/api";
 import { resetTables } from "./reset";
 
-// bunfig preload: migrate the test database once per `bun test` run.
-const url = process.env.DATABASE_URL_TEST || "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay_test";
+/**
+ * The test database for this process. Under `bun test --parallel`, each worker gets its own
+ * database (`hanapbuhay_test_w2` for worker 2), because every test file empties the tables it uses:
+ * two files sharing one database would wipe each other's rows mid-test.
+ */
+function workerUrl(base: string, worker: string | undefined): string {
+  if (worker === undefined || worker === "") return base;
+  const parsed = new URL(base);
+  parsed.pathname = `${parsed.pathname}_w${worker}`;
+  return parsed.toString();
+}
+
+// bunfig preload: create and migrate this process's test database once per run.
+const url = workerUrl(
+  process.env.DATABASE_URL_TEST || "postgres://hanapbuhay:hanapbuhay@localhost:5432/hanapbuhay_test",
+  process.env.BUN_TEST_WORKER_ID,
+);
 await migrateDb({ url });
 
 /** The test database's URL, for a test that needs its own connection. */
@@ -47,11 +62,12 @@ export async function resetDb(): Promise<void> {
   await resetTables(sql);
 }
 
-// One key directory per test run, removed at the end.
-const keyDir = mkdtempSync(join(tmpdir(), "hb-test-keys-"));
+// One key directory per test file, made on first use and removed after the file.
+let keyDir: string | null = null;
 
-/** A key store in a fresh directory under this run's temp dir, so tests never touch ./data or each other. */
+/** A key store in a fresh directory under this file's temp dir, so tests never touch ./data or each other. */
 export function testKeyStore(): KeyStore {
+  keyDir ??= mkdtempSync(join(tmpdir(), "hb-test-keys-"));
   return createFileKeyStore({ dir: mkdtempSync(join(keyDir, "store-")) });
 }
 
@@ -115,10 +131,15 @@ export function testSql(): postgres.Sql {
   return connections().sql;
 }
 
+// A preload's afterAll runs after each file. Under `--parallel --no-isolate` the next file in the
+// same worker shares this module, so everything closed here is reset to be made again on use.
 afterAll(async () => {
-  rmSync(keyDir, { recursive: true, force: true });
+  if (keyDir !== null) rmSync(keyDir, { recursive: true, force: true });
+  keyDir = null;
   if (!shared) return;
-  await shared.pdf.close();
-  await shared.sql.end({ timeout: 5 });
-  await shared.closeDb();
+  const closing = shared;
+  shared = null;
+  await closing.pdf.close();
+  await closing.sql.end({ timeout: 5 });
+  await closing.closeDb();
 });

@@ -139,11 +139,13 @@ export const SKILLS: readonly Skill[] = [
   { name: "Jest", spellings: ["Jest"] },
 ];
 /**
- * Bump this whenever `SKILLS` or the way a spelling matches changes: every stored job's skills
- * stamp goes stale and the next Refresh reads them all again once (decision 68). A test pins a
- * fingerprint of the dictionary to this number, so an edit without a bump fails.
+ * Bump this whenever `SKILLS`, the way a spelling matches, or the way `skill-sections.ts` finds
+ * nice-to-have text changes: every stored job's skills stamp goes stale and the next Refresh reads
+ * them all again once (decision 68). A test pins a fingerprint of the dictionary to this number, so
+ * a dictionary edit without a bump fails; a `skill-sections.ts` edit needs the bump by hand.
+ * 2: nice-to-have skills (decision 76).
  */
-export const BUILTIN_SKILLS_VERSION = 1;
+export const BUILTIN_SKILLS_VERSION = 2;
 
 // Measured extras (open jobs naming each in the dev database, 2026-10-18; kept at 5 or more):
 // GitHub Actions 36, LangChain 34, BigQuery 28, Databricks 26, Vercel 25, Tableau 22, Jenkins 21,

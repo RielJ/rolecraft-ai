@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, type Ref, useId } from "react";
 import type { JobId, MatchDetail, MatchReason, PossibleDuplicate } from "@/shared/api";
+import { matchSkillsLabel } from "@/shared/labels";
 import { cn } from "@/web/lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -287,12 +288,14 @@ function Details({
   merging: JobId | null;
   onMerge: (into: JobId) => void;
 }) {
+  const skills = matchSkillsLabel(job.skills);
   return (
     <>
       <JobFacts job={job.facts} location={false} stacked={stacked} />
       {job.reasons.length > 0 && (
         <section aria-label="Match reasons" className="grid gap-1.5">
           <h3 className="font-medium text-sm">Why this level</h3>
+          {skills && <p className="text-muted-foreground text-sm tabular-nums">{skills.full}</p>}
           <ul className="grid gap-1 text-sm">
             {job.reasons.map((r) => (
               <li key={`${r.sign}:${r.text}`} className="flex gap-2">

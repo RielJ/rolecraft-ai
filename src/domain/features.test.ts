@@ -143,7 +143,7 @@ describe("BUILTIN_SKILLS_VERSION (decision 68)", () => {
       BUILTIN_SKILLS.patterns.map((p) => `${p.name}\u0000${p.re.source}\u0000${p.re.flags}`).join("\n"),
     );
     expect({ version: BUILTIN_SKILLS_VERSION, fingerprint }).toEqual({
-      version: 1,
+      version: 2,
       fingerprint: "2a0e491226d15ee7c3da2ed1273ad35062601332260f552b4ff02e0538ba5bf4",
     });
   });

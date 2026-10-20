@@ -45,8 +45,9 @@ async function seed(page: Page): Promise<string> {
     },
     targeting: { targetTitles: ["Engineer"], roleFamilies: ["engineering"] },
   });
+  // A role header (decision 71), so Profile shows the Roles list under axe and the focus checks.
   await api(page, "PUT", "/profile/cv", ProfileDto, {
-    text: "- Built a payments API in Go serving 2M requests a day\n- Led a team of 4 engineers",
+    text: "Backend Engineer Jan, 2022 – Present\nAcme Corp (Remote)\n- Built a payments API in Go serving 2M requests a day\n- Led a team of 4 engineers",
   });
   await expect
     .poll(async () => (await api(page, "GET", "/profile", ProfileDto)).facts.length, { timeout: 15_000 })
@@ -107,6 +108,10 @@ async function themedSurfaces(page: Page, label: string): Promise<void> {
   expect(surfaces.scrollbar, label).not.toBe("auto");
   expect(surfaces.caret, label).not.toBe(surfaces.bodyText);
 }
+
+// Every test starts from reset() on its worker's own database, so they spread across workers:
+// run in order, this file alone took 28 s of a 39 s suite.
+test.describe.configure({ mode: "parallel" });
 
 for (const colorScheme of SCHEMES) {
   test.describe(`${colorScheme} theme`, () => {

@@ -162,7 +162,15 @@ export function checkCandidates({
       result.kept.push(text);
       continue;
     }
-    const tokens = check.violations.flatMap((v) => (v.kind === "unknown_fact" ? [v.factKey] : v.tokens));
+    const tokens = check.violations.flatMap((v) =>
+      v.kind === "unknown_fact"
+        ? [v.factKey]
+        : v.kind === "unknown_role"
+          ? [v.roleKey]
+          : v.kind === "wrong_role"
+            ? v.factKeys
+            : v.tokens,
+    );
     result.dropped.push({ text, tokens: [...new Set(tokens)] });
   }
   return result;

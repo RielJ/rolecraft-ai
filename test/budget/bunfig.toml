@@ -1,0 +1,4 @@
+# Wall-clock budgets (decision 68). They run alone, serially, because parallel workers share the
+# machine and Postgres and would make a 100 ms budget measure the neighbours instead.
+[test]
+preload = ["../setup.ts"]

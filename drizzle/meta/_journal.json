@@ -113,6 +113,34 @@
       "when": 1792344698393,
       "tag": "0015_cv_files",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792389616370,
+      "tag": "0016_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792400249682,
+      "tag": "0017_requirement_map",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792410647380,
+      "tag": "0018_tailoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792459864063,
+      "tag": "0019_nice_skills",
+      "breakpoints": true
     }
   ]
 }

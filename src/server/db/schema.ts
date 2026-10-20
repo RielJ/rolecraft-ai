@@ -18,6 +18,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { Tailoring } from "@/domain/tailor";
 import type {
   AiCallId,
   FactEvidence,
@@ -29,6 +30,8 @@ import type {
   JobId,
   OpportunityId,
   OutputId,
+  RequirementMap,
+  RoleId,
   SourceId,
   StandardAnswers,
   StyleHit,
@@ -192,6 +195,35 @@ export const profileItems = pgTable(
   ],
 );
 
+/**
+ * A job on a CV or experience add-on (decision 71): read from the item's text, every field found
+ * in it, then editable on Profile. Dates stay as the text writes them.
+ */
+export const roles = pgTable(
+  "roles",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<RoleId>(),
+    userId: userRef(),
+    itemId: uuid()
+      .notNull()
+      .references(() => profileItems.id, { onDelete: "cascade" })
+      .$type<ItemId>(),
+    /** The order the source lists them, most recent first. */
+    position: integer().notNull(),
+    title: text().notNull(),
+    company: text().notNull(),
+    location: text(),
+    startText: text(),
+    endText: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("roles_title", sql`length(btrim(title)) > 0`),
+    check("roles_company", sql`length(btrim(company)) > 0`),
+    index("roles_item").on(t.itemId, t.position),
+  ],
+);
+
 export const facts = pgTable(
   "facts",
   {
@@ -205,6 +237,10 @@ export const facts = pgTable(
     text: text().notNull(),
     /** The job, project or heading the fact sits under, copied from the item's text; null when none. */
     section: text(),
+    /** The role the fact sits under: its section names exactly one of the item's roles' companies. */
+    roleId: uuid()
+      .references(() => roles.id, { onDelete: "set null" })
+      .$type<RoleId>(),
     status: text().notNull().default("pending").$type<(typeof FACT_STATUSES)[number]>(),
     /** `text` facts compare `seen_rev` with the item's `rev`, `github` facts with its `github_rev`. */
     seenRev: integer().notNull(),
@@ -248,8 +284,10 @@ export const jobs = pgTable(
     payPhrase: text(),
     hours: jsonb().$type<JobHours>(),
     skills: text().array().notNull().default(sql`'{}'::text[]`),
+    /** The `skills` the posting names only in its nice-to-have text (decision 76); the rest are required. */
+    niceSkills: text().array().notNull().default(sql`'{}'::text[]`),
     /**
-     * Which dictionary `skills` was read with: the built-in version and the user's own skill names
+     * Which dictionary `skills` and `niceSkills` were read with: the built-in version and the user's own skill names
      * (decision 68, `skillsStamp`). Null, or any other value than the current one, means stale: the
      * next Refresh reads the job again.
      */
@@ -275,6 +313,7 @@ export const jobs = pgTable(
     check("jobs_pay_currency", sql`pay_min IS NULL OR pay_currency IS NOT NULL`),
     check("jobs_pay_range", sql`pay_min IS NULL OR pay_max IS NULL OR pay_max >= pay_min`),
     check("jobs_eligibility_phrase", sql`eligibility_phrase IS NOT NULL OR eligibility = 'unclear'`),
+    check("jobs_nice_skills", sql`nice_skills <@ skills`),
     // Dedup key 1, DB-enforced. title_key keeps a generic careers URL from forcing two roles together.
     uniqueIndex("jobs_apply_url_key").on(t.userId, t.applyUrlKey, t.titleKey),
     index("jobs_company_title").on(t.userId, t.companyKey, t.titleKey, t.descriptionKey),
@@ -478,6 +517,9 @@ export const opportunities = pgTable(
     rateType: text().$type<(typeof RATE_TYPES)[number]>(),
     rateCurrency: char({ length: 3 }),
     platform: text(),
+    /** The posting's requirements and the facts behind each (decision 73), with the hash it was built for. */
+    requirementMap: jsonb().$type<RequirementMap>(),
+    requirementMapKey: text(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -522,10 +564,13 @@ export const outputs = pgTable(
     editedAt: timestamp({ withTimezone: true }),
     /** Set by "Mark reviewed"; cleared when a draft rewrites the body. Gates generated answers in prefill. */
     reviewedAt: timestamp({ withTimezone: true }),
+    /** A resume tailored from the base CV: the base and the changes the body is derived from (decision 75). */
+    tailoring: jsonb().$type<Tailoring>(),
     createdAt: createdAt(),
   },
   (t) => [
     check("outputs_kind", oneOf("kind", OUTPUT_KINDS)),
+    check("outputs_tailoring_resume", sql`tailoring IS NULL OR kind = 'resume'`),
     check("outputs_must_answer_value", sql`must_answer IS NULL OR ${oneOf("must_answer", MUST_ANSWERS)}`),
     check("outputs_question", sql`(kind = 'answer') = (question IS NOT NULL)`),
     check("outputs_must_answer_kind", sql`must_answer IS NULL OR kind = 'answer'`),

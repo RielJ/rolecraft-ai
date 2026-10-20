@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { compileSkills, type SkillDictionary } from "@/domain/features";
+import { splitNiceToHave } from "@/domain/skill-sections";
 import { customSkillNames, dictionaryStamp, normalizeSkillName } from "@/domain/user-skills";
 import type { JobId, UserId } from "@/shared/api";
 import type { UserSkillKind } from "@/shared/enums";
@@ -65,10 +66,15 @@ export async function applySkillChange(
   const idIn = (ids: readonly string[]) =>
     sql`${jobs.id} IN (SELECT e::uuid FROM jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb) e)`;
 
-  // The new skills: removed names dropped, then each added name appended to the jobs it matches.
+  // The new skills: removed names dropped, then each added name appended to the jobs it matches,
+  // and to their nice skills where the posting names it only in its nice-to-have text.
   let skills = sql`${jobs.skills}`;
+  let niceSkills = sql`${jobs.niceSkills}`;
   const touched: JobId[] = [];
-  for (const name of removed) skills = sql`array_remove(${skills}, ${name})`;
+  for (const name of removed) {
+    skills = sql`array_remove(${skills}, ${name})`;
+    niceSkills = sql`array_remove(${niceSkills}, ${name})`;
+  }
   for (const name of added) {
     const patterns = after.patterns.filter((p) => p.name === name);
     const text = sql`lower(${jobs.title} || E'\n' || ${jobs.description})`;
@@ -80,12 +86,21 @@ export async function applySkillChange(
       .from(jobs)
       .where(and(mine, isNull(jobs.closedAt), sql`NOT (${name} = ANY(${jobs.skills}))`, contains));
     // The same text and patterns `jobSkills` reads.
-    const ids = candidates
-      .filter((job) => patterns.some((p) => p.re.test(`${job.title}\n${job.description}`)))
-      .map((job) => job.id);
-    if (ids.length === 0) continue;
+    const named = (text: string) => patterns.some((p) => p.re.test(text));
+    const matched = candidates.filter((job) => named(`${job.title}\n${job.description}`));
+    if (matched.length === 0) continue;
+    const ids = matched.map((job) => job.id);
     touched.push(...ids);
     skills = sql`CASE WHEN ${idIn(ids)} THEN array_append(${skills}, ${name}) ELSE ${skills} END`;
+    const nice = matched
+      .filter((job) => {
+        const split = splitNiceToHave(job.description);
+        return named(split.nice) && !named(`${job.title}\n${split.main}`);
+      })
+      .map((job) => job.id);
+    if (nice.length > 0) {
+      niceSkills = sql`CASE WHEN ${idIn(nice)} THEN array_append(${niceSkills}, ${name}) ELSE ${niceSkills} END`;
+    }
   }
 
   // One statement: jobs that drop a removed name or gain an added one, and open jobs that held the
@@ -96,6 +111,7 @@ export async function applySkillChange(
     .update(jobs)
     .set({
       skills,
+      niceSkills,
       skillsStamp: sql`CASE WHEN ${stale} THEN ${to} ELSE ${jobs.skillsStamp} END`,
     })
     .where(and(mine, or(stale, holdsRemoved, touched.length > 0 ? idIn(touched) : undefined)));

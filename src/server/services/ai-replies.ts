@@ -2,7 +2,10 @@ import { z } from "zod";
 import type { AiEligibilityAnswer } from "@/domain/eligibility";
 import type { GithubProposal } from "@/domain/github-read";
 import { cleanModelText, MAX_SUGGESTED_QUESTIONS } from "@/domain/prompts";
-import { Eligibility } from "@/shared/enums";
+import type { RequirementsReply as RequirementsReplyShape } from "@/domain/requirements";
+import type { TailorOp } from "@/domain/tailor";
+import { FactKey } from "@/shared/api";
+import { Eligibility, RequirementWeight } from "@/shared/enums";
 
 /**
  * Parsers for the light tier's JSON replies. The sync pass, the workspace and `eval/run.ts` all
@@ -67,4 +70,52 @@ const GithubFactsReply = z.object({
 /** `{ text, evidence }` proposals, unchecked (acceptGithubFacts drops the bad ones). Null when unreadable. */
 export function parseGithubFactsReply(text: string): GithubProposal[] | null {
   return parseReply(text, GithubFactsReply)?.facts ?? null;
+}
+
+const RequirementsReply = z.object({
+  role: z.string().default(""),
+  requirements: z.array(
+    z.object({ text: z.string(), weight: RequirementWeight.catch("must"), facts: z.array(z.string()).default([]) }),
+  ),
+  context: z.array(z.object({ role: z.string(), fact: z.string() })).default([]),
+});
+
+/**
+ * A requirement map reply (decision 73), unvalidated against the facts (`toRequirementMap` does
+ * that). An unknown weight reads as "must". Null when the reply is not the JSON asked for.
+ */
+export function parseRequirementsReply(text: string): RequirementsReplyShape | null {
+  return parseReply(text, RequirementsReply);
+}
+
+const LineId = z.string().regex(/^L[1-9]\d*$/);
+const OpText = z.string().min(1).max(1000);
+const OpCommon = {
+  reasons: z.array(z.string()).default([]),
+  note: z.string().max(300).nullable().default(null),
+};
+const OpFacts = z.array(FactKey).default([]);
+const TailorOpReply = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("summary"), text: OpText, facts: OpFacts, ...OpCommon }),
+  z.object({ op: z.literal("order"), parent: LineId, lines: z.array(LineId).min(1), ...OpCommon }),
+  z.object({ op: z.literal("reword"), line: LineId, text: OpText, facts: OpFacts, ...OpCommon }),
+  z.object({ op: z.literal("remove"), line: LineId, ...OpCommon }),
+  z.object({ op: z.literal("add"), after: LineId, text: OpText, facts: OpFacts, ...OpCommon }),
+]);
+const TailorReply = z.object({ ops: z.array(z.unknown()).max(60) });
+
+/**
+ * A tailor reply (decision 75): the ops in the shapes asked for, unvalidated against the CV
+ * (`validateEdits` does that), and how many were not in any of those shapes. Null when the reply
+ * is not `{"ops": [...]}`.
+ */
+export function parseTailorReply(text: string): { ops: TailorOp[]; unreadable: number } | null {
+  const parsed = parseReply(text, TailorReply);
+  if (!parsed) return null;
+  const ops: TailorOp[] = [];
+  for (const raw of parsed.ops) {
+    const op = TailorOpReply.safeParse(raw);
+    if (op.success) ops.push(op.data);
+  }
+  return { ops, unreadable: parsed.ops.length - ops.length };
 }

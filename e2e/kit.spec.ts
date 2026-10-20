@@ -56,12 +56,12 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   await expect(page.getByRole("tab", { name: "Posting" })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: /^Drafts/ }).click();
 
-  // 3. Write the resume, citing facts.
-  await page
-    .getByLabel("Resume text")
-    .fill("# Summary\n- Built a payments API in Go [FACT-2]\n- Led a team of 4 [FACT-3]");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Facts cited in the resume" }).getByText("FACT-2")).toBeVisible();
+  // 3. Write the resume by hand. The card then says when, and how many words it has.
+  const resume = page.getByRole("tabpanel", { name: /^Resume/ });
+  await resume.getByRole("button", { name: "Write it yourself" }).click();
+  await resume.getByLabel("Resume text").fill("# Summary\n- Built a payments API in Go\n- Led a team of 4");
+  await resume.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(resume.getByText(/^Edited just now · 12 words$/)).toBeVisible();
 
   // 4. Untick the letter and the message.
   for (const name of ["Cover letter", "Short message"]) {
@@ -75,16 +75,16 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   await page.getByRole("button", { name: "Add a question" }).click();
   await expect(page.getByText("Needs your input (1)")).toBeVisible();
   await page.getByRole("tab", { name: "Resume" }).click();
-  await expect(page.getByRole("button", { name: "Export PDF" })).toBeDisabled();
+  await expect(resume.getByRole("button", { name: "Download PDF" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Mark ready" })).toBeDisabled();
 
   await page.getByLabel("Salary expectations for your profile").fill("PHP 180,000 a month");
   await page.getByRole("button", { name: "Save to profile" }).click();
   await expect(page.getByText("Nothing. Every included file and answer is filled in.")).toBeVisible();
 
-  // 6. Export the PDF.
+  // 6. Download the PDF.
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export PDF" }).click();
+  await resume.getByRole("button", { name: "Download PDF" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("Juan Dela Cruz - Acme Inc - Resume.pdf");
   const stream = await download.createReadStream();
@@ -92,8 +92,8 @@ test("paste a CV and a job, write the resume, clear the gate, export a PDF", asy
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   expect(Buffer.concat(chunks).subarray(0, 5).toString()).toBe("%PDF-");
 
-  // 7. Copy as text and Mark ready are available once the gate passes.
-  await expect(page.getByRole("button", { name: "Copy as text" })).toBeEnabled();
+  // 7. Copy text and Mark ready are available once the gate passes.
+  await expect(resume.getByRole("button", { name: "Copy text" })).toBeEnabled();
   await page.getByRole("button", { name: "Mark ready" }).click();
   await expect(page.getByText("Ready to apply")).toBeVisible();
 

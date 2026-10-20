@@ -1,11 +1,19 @@
-import type { FactKey, StyleHit } from "@/shared/api";
+import type { FactKey, RequirementMap, StyleHit } from "@/shared/api";
 import type { ItemUsage, OpportunityType, OutputKind } from "@/shared/enums";
+import { type BaseLine, projectEntries } from "./base-cv";
 import type { DraftViolation } from "./citations";
 import type { GithubBundle } from "./github-read";
+import { guideFor, tailorGuide } from "./guide";
+import { requirementLines, requirementsByFact } from "./requirements";
 import { styleHitLabel, VOICE_RULES } from "./style";
+import { type DroppedOp, MAX_ADDS, MAX_REWORDS, type TailorOp } from "./tailor";
+import { type DraftRole, rolePromptLine } from "./work-roles";
 
-/** A confirmed fact as drafting sees it. */
-export type PromptFact = { key: FactKey; text: string; link: string | null; usage: ItemUsage };
+/**
+ * A confirmed fact as drafting sees it. `roleKey` is the `ROLE-n` of the role it sits under, in a
+ * resume prompt only (decision 71).
+ */
+export type PromptFact = { key: FactKey; text: string; link: string | null; usage: ItemUsage; roleKey?: string | null };
 
 export type PromptMessage = { role: "user" | "assistant"; content: string };
 export type Prompt = { system: string; messages: [PromptMessage, ...PromptMessage[]] };
@@ -31,8 +39,13 @@ export function allowedFacts<F extends Pick<PromptFact, "usage">>({
   return kind === "resume" ? facts.filter((f) => f.usage !== "letters_only") : [...facts];
 }
 
-const FORMAT_RULES = [
-  "Every sentence about the candidate ends with the [FACT-n] markers of the facts that support it, for example: I built the payments API in Go [FACT-3].",
+/** The marker rule's example. A resume has no pronouns; everything else is in first person. */
+function markerExample(kind: OutputKind): string {
+  return kind === "resume" ? "Built the payments API in Go [FACT-3]." : "I built the payments API in Go [FACT-3].";
+}
+
+const formatRules = (kind: OutputKind) => [
+  `Every sentence about the candidate ends with the [FACT-n] markers of the facts that support it, for example: ${markerExample(kind)}`,
   "Use only what the facts say. Do not add numbers, years, dates, employers, tools, links or titles that are not in the facts you cite.",
   "When something is needed but is not in the facts, write [[what is missing]] instead of guessing.",
   "Never mention salary, pay, rates, visa or work authorization, notice period, start date or references. The candidate answers those separately.",
@@ -50,7 +63,7 @@ function taskFor({
 }): string {
   switch (kind) {
     case "resume":
-      return "Write a one-page resume tailored to this job. Start with # and the candidate's name, then ## sections such as Summary, Experience, Projects and Skills. Lead with the facts that matter most for this job. Bullets are short and concrete.";
+      return "Write a resume tailored to this job, following the guide's Tailoring and Resume sections. Use ## Summary, ## Skills, ## Experience, ## Projects and ## Education, in that order, and leave out a section with no facts. Do not write the candidate's name or contact details. No pronouns anywhere.";
     case "letter":
       return "Write a cover letter for this job in three or four short paragraphs. Say why this role, then what the candidate has done that fits it. End with a plain sign-off and the candidate's name.";
     case "message":
@@ -66,20 +79,69 @@ function taskFor({
   }
 }
 
-function factLines(facts: readonly PromptFact[]): string {
+/** `FACT-n: text (link) (ROLE-n) [R1, R3]`: the role and the requirements it proves, when known. */
+function factLines(facts: readonly PromptFact[], proves: ReadonlyMap<FactKey, string[]> = new Map()): string {
   if (facts.length === 0) return "(none yet)";
-  return facts.map((f) => `${f.key}: ${f.text}${f.link ? ` (${f.link})` : ""}`).join("\n");
+  return facts
+    .map((f) => {
+      const ids = proves.get(f.key) ?? [];
+      const marks = `${f.link ? ` (${f.link})` : ""}${f.roleKey ? ` (${f.roleKey})` : ""}`;
+      return `${f.key}: ${f.text}${marks}${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}`;
+    })
+    .join("\n");
 }
 
-function systemPrompt(): string {
+/** How the task uses the requirement map (decision 73). */
+const MAP_TASK =
+  "Build the text from the REQUIREMENTS: prove the most important ones first, with the facts listed for each (a fact's marks such as [R1, R3] say which requirements it proves; never write those ids in the text). Leave out facts that prove nothing this posting asks for, unless a role would otherwise have no bullet. Never write about a requirement marked as a gap.";
+
+/**
+ * The resume's version (decision 74): nothing in the REQUIRED list is dropped, related facts of one
+ * role become one bullet, and the Summary opens with the posting's role where the facts show that work.
+ */
+function resumeMapTask({ map, required }: { map: RequirementMap; required: readonly FactKey[] }): string[] {
+  return [
+    "Build the resume from the REQUIREMENTS: in each role, lead with the bullets that prove the most important ones (a fact's marks such as [R1, R3] say which requirements it proves; never write those ids in the text). Never write about a requirement marked as a gap.",
+    ...(required.length > 0
+      ? [
+          `REQUIRED: cite every one of these facts: ${required.join(", ")}. They prove a requirement or carry a measured result, so leaving one out weakens the resume.`,
+        ]
+      : []),
+    "Combine related facts from the same role into one bullet when they describe one piece of work, with its scope and result (for example a rewrite with its parts, its tests and its numbers). A strong bullet usually cites two to four facts.",
+    ...(map.role
+      ? [
+          `Open the Summary with the role noun for "${map.role}" where the facts show that kind of work, without a seniority word unless a fact gives it. Then say why the candidate fits, using the most important requirements.`,
+        ]
+      : []),
+  ];
+}
+
+/** The resume task's role rule: the model writes keys, the server writes the headers. */
+const ROLE_TASK =
+  "Under ## Experience, write [ROLE-n] alone on its own line before that role's bullets, in the order of the ROLES list (roles may overlap in time; keep that order). Under a role, use only the facts marked with its ROLE-n. Facts with no (ROLE-n) go in Summary, Skills, Projects or Education, never under ## Experience. Never write a role's title, company, location or dates yourself: the [ROLE-n] line becomes the role's header.";
+
+/** Who the text speaks as. Resumes leave the subject out; everything else is the candidate's voice. */
+function voiceFor(kind: OutputKind): string {
+  return kind === "resume"
+    ? "Write resume lines without pronouns: start with the verb, never with I, my, we or our."
+    : "Write as the candidate, in plain first person.";
+}
+
+/** Rules, voice, then the drafting guide's sections for this kind (decision 72). */
+function systemPrompt({ kind, opportunityType }: { kind: OutputKind; opportunityType: OpportunityType }): string {
   return [
     "You write job application material for one candidate, using only facts they have confirmed.",
     "",
     "Rules:",
-    ...FORMAT_RULES.map((r) => `- ${r}`),
+    ...formatRules(kind).map((r) => `- ${r}`),
     "",
     "Voice:",
-    ...VOICE_RULES.map((r) => `- ${r}`),
+    ...[voiceFor(kind), ...VOICE_RULES].map((r) => `- ${r}`),
+    "",
+    "GUIDE",
+    "Follow this guide. Where it conflicts with the rules above, the rules win.",
+    "",
+    guideFor({ kind, opportunityType }),
   ].join("\n");
 }
 
@@ -94,6 +156,9 @@ export function buildDraftPrompt({
   candidateName,
   facts,
   question = null,
+  roles = [],
+  map = null,
+  required = [],
 }: {
   kind: OutputKind;
   opportunityType: OpportunityType;
@@ -101,7 +166,15 @@ export function buildDraftPrompt({
   candidateName: string;
   facts: readonly PromptFact[];
   question?: string | null;
+  /** The candidate's roles, for a resume only. Fact lines name theirs with `(ROLE-n)`. */
+  roles?: readonly DraftRole[];
+  /** What the posting requires and which facts prove it (decision 73). Null drafts from the facts alone. */
+  map?: RequirementMap | null;
+  /** Resume only: facts the draft must cite (`requiredResumeFacts`, decision 74). */
+  required?: readonly FactKey[];
 }): Prompt {
+  const withRoles = kind === "resume" && roles.length > 0;
+  const withMap = map !== null && map.requirements.length > 0;
   const user = [
     "JOB POSTING",
     `Title: ${posting.title}`,
@@ -111,14 +184,21 @@ export function buildDraftPrompt({
     "",
     `CANDIDATE: ${candidateName.trim() || "[[your name]]"}`,
     "",
+    ...(withRoles ? ["ROLES", ...roles.map(rolePromptLine), ""] : []),
+    ...(withMap ? ["REQUIREMENTS", ...(map.role ? [`Role: ${map.role}`] : []), ...requirementLines(map), ""] : []),
     "FACTS",
-    factLines(facts),
+    factLines(
+      withRoles ? facts : facts.map((f) => ({ ...f, roleKey: null })),
+      withMap ? requirementsByFact(map) : undefined,
+    ),
     "",
     "TASK",
     taskFor({ kind, opportunityType, question }),
+    ...(withMap ? (kind === "resume" ? resumeMapTask({ map, required }) : [MAP_TASK]) : []),
+    ...(withRoles ? [ROLE_TASK] : []),
     "Return only the text.",
   ].join("\n");
-  return { system: systemPrompt(), messages: [{ role: "user", content: user }] };
+  return { system: systemPrompt({ kind, opportunityType }), messages: [{ role: "user", content: user }] };
 }
 
 function describeViolation(v: DraftViolation): string {
@@ -129,6 +209,12 @@ function describeViolation(v: DraftViolation): string {
       return `"${v.sentence}" says ${v.tokens.map((t) => `"${t}"`).join(", ")}, which the facts it cites do not say.`;
     case "uncited_claim":
       return `"${v.sentence}" says ${v.tokens.map((t) => `"${t}"`).join(", ")} without a [FACT-n] marker.`;
+    case "unknown_role":
+      return `"${v.sentence}" writes [${v.roleKey}]. Write only a ROLE-n from the ROLES list, alone on its own line.`;
+    case "wrong_role":
+      return v.roleKey === null
+        ? `"${v.sentence}" is under ## Experience before any [ROLE-n] line. Put it under the role its facts are marked with, or in another section.`
+        : `"${v.sentence}" is under [${v.roleKey}] but cites ${v.factKeys.join(", ")}, which ${v.factKeys.length === 1 ? "is" : "are"} not marked (${v.roleKey}). Put it under its own role, or in Summary, Skills, Projects or Education.`;
     default: {
       const _exhaustive: never = v;
       return _exhaustive;
@@ -141,16 +227,25 @@ export function buildRetryPrompt({
   prompt,
   draft,
   violations,
+  missing = [],
 }: {
   prompt: Prompt;
   draft: string;
   violations: readonly DraftViolation[];
+  /** REQUIRED facts the draft left out (decision 74). */
+  missing?: readonly FactKey[];
 }): Prompt {
   const fix = [
-    "Some sentences are not backed by the facts:",
-    ...violations.map((v) => `- ${describeViolation(v)}`),
-    "",
-    "Rewrite the whole text. Remove or fix those sentences, using [[what is missing]] where a fact is needed. Return only the text.",
+    ...(violations.length > 0
+      ? ["Some sentences are not backed by the facts:", ...violations.map((v) => `- ${describeViolation(v)}`), ""]
+      : []),
+    ...(missing.length > 0
+      ? [
+          `These REQUIRED facts are missing: ${missing.join(", ")}. Add each one to a bullet under its own role, combined with related facts where they describe the same work.`,
+          "",
+        ]
+      : []),
+    `Rewrite the whole text.${violations.length > 0 ? " Remove or fix those sentences, using [[what is missing]] where a fact is needed." : ""} Return only the text.`,
   ].join("\n");
   return {
     system: prompt.system,
@@ -163,9 +258,13 @@ export function buildRetryPrompt({
  * The reply is JSON `{ "rewrites": string[] }`, one entry per sentence, in order.
  */
 export function buildStyleRewritePrompt({
+  kind,
+  opportunityType,
   sentences,
   facts,
 }: {
+  kind: OutputKind;
+  opportunityType: OpportunityType;
   sentences: readonly { sentence: string; hits: readonly Pick<StyleHit, "rule" | "phrase">[] }[];
   facts: readonly PromptFact[];
 }): Prompt {
@@ -179,7 +278,205 @@ export function buildStyleRewritePrompt({
     "",
     `Reply with JSON only: {"rewrites": ["sentence 1", ...]} with exactly ${sentences.length} strings, in the same order.`,
   ].join("\n");
-  return { system: systemPrompt(), messages: [{ role: "user", content: user }] };
+  return { system: systemPrompt({ kind, opportunityType }), messages: [{ role: "user", content: user }] };
+}
+
+// ---------- Tailoring the base CV (decision 75) ----------
+
+/** Output budget for one tailor call: an edit list, never the whole resume. */
+export const TAILOR_MAX_TOKENS = 3000;
+
+const TAILOR_REPLY = `Reply with JSON only: {"ops": [...]}, using these shapes:
+{"op": "summary", "text": "...", "facts": ["FACT-n"], "reasons": ["R1"], "note": null}
+{"op": "order", "parent": "L12", "lines": ["L15", "L13", "L14"], "reasons": ["R2"], "note": null}
+{"op": "reword", "line": "L13", "text": "...", "facts": [], "reasons": ["R1"], "note": null}
+{"op": "remove", "line": "L40", "reasons": [], "note": "why, in a few words"}
+{"op": "add", "after": "L14", "text": "...", "facts": ["FACT-n"], "reasons": ["R3"], "note": null}`;
+
+const TAILOR_TASK = [
+  "Propose the edits that make this CV fit the posting, following the guide's section on editing a base resume. Return an empty list when the CV already fits.",
+  "summary: replace the Summary's text, citing the facts it draws on. At most one.",
+  "order: list every child of one role line (its bullets) or of the Skills heading (its lines), in the new order. Nothing else moves.",
+  `reword: new text for one bullet or Skills line. Keep its numbers, tools and names; cite a fact of the same role in "facts" only to use something the line doesn't say. At most ${MAX_REWORDS}.`,
+  "remove: drop one bullet or Skills line. Never a line marked (keep), and never every bullet of a project: each project keeps its name, link and at least one line saying what it is.",
+  `add: a new bullet after a role line or one of its bullets, from facts of that role marked "not in the CV". At most ${MAX_ADDS}.`,
+  'Each line gets at most one edit. "reasons" holds the REQUIREMENTS ids the edit serves; "note" is null or a few words for the candidate.',
+  "Write text without [FACT-n] markers, ids or Markdown. No pronouns.",
+];
+
+/** `L13 bullet (ROLE-1) (keep) [R1]: text`: the CV as the model may edit it. Contact lines are left out. */
+function baseLineText({
+  line,
+  proves,
+  protectedKeys,
+  onlyDescriptions,
+}: {
+  line: BaseLine;
+  proves: ReadonlyMap<FactKey, string[]>;
+  protectedKeys: ReadonlySet<FactKey>;
+  /** Bullets that are the only line describing their project (decision 77). */
+  onlyDescriptions: ReadonlySet<string>;
+}): string {
+  const ids = [...new Set(line.facts.flatMap((k) => proves.get(k) ?? []))];
+  const keep = line.facts.some((k) => protectedKeys.has(k)) || onlyDescriptions.has(line.id) ? " (keep)" : "";
+  const role = line.roleKey && line.kind !== "heading" ? ` (${line.roleKey})` : "";
+  return `${line.id} ${line.kind}${role}${keep}${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}: ${line.text}`;
+}
+
+/**
+ * The tailor prompt (decision 75): the posting, its requirements, the CV as numbered lines and
+ * every fact a resume may cite, with where it already is. The reply is a JSON edit list
+ * (`parseTailorReply`), checked by `validateEdits`.
+ */
+export function buildTailorPrompt({
+  posting,
+  base,
+  facts,
+  map,
+  protectedKeys,
+}: {
+  posting: DraftPosting;
+  base: readonly BaseLine[];
+  /** Facts a resume may cite (`allowedFacts`), with their `roleKey`. */
+  facts: readonly PromptFact[];
+  map: RequirementMap | null;
+  protectedKeys: ReadonlySet<FactKey>;
+}): Prompt {
+  const withMap = map !== null && map.requirements.length > 0;
+  const proves = withMap ? requirementsByFact(map) : new Map<FactKey, string[]>();
+  const lineOf = new Map(base.flatMap((l) => l.facts.map((k) => [k, l.id] as const)));
+  const onlyDescriptions = new Set(projectEntries(base).flatMap((e) => (e.bullets.length === 1 ? e.bullets : [])));
+  const factText = facts.map((f) => {
+    const ids = proves.get(f.key) ?? [];
+    const where = lineOf.get(f.key) ? `on ${lineOf.get(f.key)}` : "not in the CV";
+    return `${f.key} (${f.roleKey ?? "no role"}) (${where})${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}: ${f.text}`;
+  });
+  const user = [
+    "JOB POSTING",
+    `Title: ${posting.title}`,
+    `Company: ${posting.company}`,
+    "Description:",
+    posting.description.trim(),
+    "",
+    ...(withMap ? ["REQUIREMENTS", ...(map.role ? [`Role: ${map.role}`] : []), ...requirementLines(map), ""] : []),
+    "CV",
+    ...base
+      .filter((l) => l.kind !== "contact")
+      .map((line) => baseLineText({ line, proves, protectedKeys, onlyDescriptions })),
+    "",
+    "FACTS",
+    ...(factText.length > 0 ? factText : ["(none)"]),
+    "",
+    "TASK",
+    ...TAILOR_TASK,
+    ...(withMap && map.role
+      ? [
+          `The Summary opens with the role noun for "${map.role}" where the CV shows that kind of work, without a seniority word the CV doesn't give.`,
+        ]
+      : []),
+    "",
+    TAILOR_REPLY,
+  ].join("\n");
+  const system = [
+    "You edit one candidate's own resume for one job posting. The CV is theirs and already true; you propose a short list of edits, and the candidate keeps or undoes each one.",
+    "",
+    "Rules:",
+    "- Use only what the CV line and the facts you cite say. Never add a number, year, employer, tool, link or title they don't have.",
+    "- Never mention salary, pay, rates, visa or work authorization, notice period, start date or references.",
+    "",
+    "Voice:",
+    ...[voiceFor("resume"), ...VOICE_RULES].map((r) => `- ${r}`),
+    "",
+    "GUIDE",
+    "Follow this guide. Where it conflicts with the rules above, the rules win. The guide's Resume section describes the finished resume; you get there by editing the CV, never by rewriting it.",
+    "",
+    tailorGuide(),
+  ].join("\n");
+  return { system, messages: [{ role: "user", content: user }] };
+}
+
+function opLabel(op: TailorOp): string {
+  switch (op.op) {
+    case "summary":
+      return "the summary";
+    case "order":
+      return `the order under ${op.parent}`;
+    case "reword":
+    case "remove":
+      return `${op.op} ${op.line}`;
+    case "add":
+      return `the add after ${op.after}`;
+    default: {
+      const _exhaustive: never = op;
+      return _exhaustive;
+    }
+  }
+}
+
+function describeDrop({ op, reason, detail }: DroppedOp): string {
+  const what = opLabel(op);
+  switch (reason) {
+    case "bad_target":
+      return `${what}: that line can't take this edit (${detail}).`;
+    case "unknown_fact":
+      return `${what}: ${detail} is not in the FACTS list.`;
+    case "uncited":
+      return `${what}: cite the facts it draws on.`;
+    case "wrong_role":
+      return `${what}: ${detail} belongs to another role.`;
+    case "unsupported":
+      return `${what}: says ${detail}, which the line and the facts it cites don't say.`;
+    case "pronoun":
+      return `${what}: uses "${detail}". No pronouns.`;
+    case "protected":
+      return `${what}: the line is marked (keep).`;
+    case "only_description":
+      return `${what}: it is the only line describing "${detail}".`;
+    case "duplicate":
+      return `${what}: repeats ${detail}.`;
+    case "cap":
+      return `${what}: over the limit of edits.`;
+    case "no_change":
+      return `${what}: changes nothing.`;
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/** The one retry: the first prompt, the reply, and why some edits were dropped (decision 75). */
+export function buildTailorRetryPrompt({
+  prompt,
+  reply,
+  dropped,
+  unreadable = 0,
+}: {
+  prompt: Prompt;
+  reply: string;
+  /** Empty when the reply could not be read at all. */
+  dropped: readonly DroppedOp[];
+  /** Edits in none of the shapes asked for. */
+  unreadable?: number;
+}): Prompt {
+  const problems = [
+    ...dropped.map((d) => `- ${describeDrop(d)}`),
+    ...(unreadable > 0
+      ? [`- ${unreadable === 1 ? "1 edit was" : `${unreadable} edits were`} in none of the shapes asked for.`]
+      : []),
+  ];
+  const fix =
+    problems.length > 0
+      ? ["These edits were dropped:", ...problems, "", "Send the whole list again with those fixed or left out."]
+      : ["That reply is not the JSON asked for."];
+  return {
+    system: prompt.system,
+    messages: [
+      ...prompt.messages,
+      { role: "assistant", content: reply },
+      { role: "user", content: [...fix, TAILOR_REPLY.split("\n")[0] ?? ""].join("\n") },
+    ],
+  };
 }
 
 /** Model replies sometimes come wrapped in a code fence or with stray whitespace. */
@@ -226,6 +523,7 @@ export function buildSplitPrompt({ item }: { item: SplitItem }): Prompt {
     "- Keep their own words. Keep every number, name, tool, date and link exactly as written.",
     "- Add nothing the text does not say. Do not infer skills, years, titles or employers.",
     "- Skip headings and contact details (name, email, phone, address).",
+    '- Skip job header lines, made only of a job title, employer, location and dates (for example "Software Engineer, Jan, 2023 – Present"). Those are read separately as roles; facts are what was done in them.',
     '- Keep every line that lists skills, tools or technologies as one fact, worded as the text has it (for example "Databases & Tools: PostgreSQL, Redis"). Job matching reads skills only from facts, so a skipped skills line hides those skills.',
     "- Write each fact as a plain sentence or phrase, without bullets or numbering.",
     "- Give each fact a section: the employer, project, school or heading it sits under, copied exactly as the text writes it (for a job, just the company name). Use null when it sits under none.",
@@ -260,6 +558,61 @@ export function buildSplitRetryPrompt({ prompt, reply }: { prompt: Prompt; reply
       ...prompt.messages,
       { role: "assistant", content: reply },
       { role: "user", content: `That reply could not be read. ${SPLIT_REPLY}` },
+    ],
+  };
+}
+
+// ---------- Reading roles from a CV or experience add-on (decision 71) ----------
+
+/** Output budget for one roles call. The cap estimate uses the same number. */
+export const ROLES_MAX_TOKENS = 1500;
+
+export type RolesItem = { kindLabel: string; title: string; body: string };
+
+const ROLES_REPLY =
+  'Reply with JSON only: {"roles": [{"title": "...", "company": "...", "location": "..." or null, "start": "..." or null, "end": "..." or null}, ...]}';
+
+/**
+ * The light-tier roles prompt: every job the text lists, each field copied exactly. Every field is
+ * later checked against the text by `checkRoles`.
+ */
+export function buildRolesPrompt({ item }: { item: RolesItem }): Prompt {
+  const system = [
+    "You read the jobs out of one person's CV or work entry.",
+    "",
+    "Rules:",
+    "- One role per job the text lists: the job title, the employer, the location and the dates.",
+    "- Copy every field exactly as the text writes it: same spelling, same capitals, same punctuation. Do not expand, shorten or translate anything.",
+    '- The company is the employer\'s name only. A location in brackets or after a comma is the location: "Acme (Remote, Part-time)" is company "Acme" and location "Remote, Part-time"; "ACME, MANILA" is company "ACME" and location "MANILA".',
+    '- Dates stay as written: "Jan, 2026", "January 2026" or "2019". An end of "Present" is kept as "Present". Use null for a field the text does not give.',
+    "- List the roles in the order the text lists them.",
+    "- Skip schools, projects and anything that is not a job.",
+    "- Add nothing the text does not say.",
+  ].join("\n");
+  const user = [
+    "ITEM",
+    `Kind: ${item.kindLabel}`,
+    `Title: ${item.title}`,
+    "Text:",
+    "<<<",
+    item.body.trim(),
+    ">>>",
+    "",
+    "TASK",
+    "List the roles in the text.",
+    ROLES_REPLY,
+  ].join("\n");
+  return { system, messages: [{ role: "user", content: user }] };
+}
+
+/** The one retry after a roles reply that was not the JSON asked for. */
+export function buildRolesRetryPrompt({ prompt, reply }: { prompt: Prompt; reply: string }): Prompt {
+  return {
+    system: prompt.system,
+    messages: [
+      ...prompt.messages,
+      { role: "assistant", content: reply },
+      { role: "user", content: `That reply could not be read. ${ROLES_REPLY}` },
     ],
   };
 }

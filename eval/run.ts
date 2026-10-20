@@ -296,9 +296,16 @@ function eligibilityLine(o: EligibilityOutcome): string {
 }
 
 function violationText(v: DraftViolation): string {
-  return v.kind === "unknown_fact"
-    ? `cites ${v.factKey}, which is not a fact here: ${quote(v.sentence)}`
-    : `${v.tokens.join(", ")} in ${quote(v.sentence)}`;
+  switch (v.kind) {
+    case "unknown_fact":
+      return `cites ${v.factKey}, which is not a fact here: ${quote(v.sentence)}`;
+    case "unknown_role":
+      return `writes ${v.roleKey}, which is not a role here: ${quote(v.sentence)}`;
+    case "wrong_role":
+      return `${v.factKeys.join(", ")} under ${v.roleKey ?? "Experience, before any role"}: ${quote(v.sentence)}`;
+    default:
+      return `${v.tokens.join(", ")} in ${quote(v.sentence)}`;
+  }
 }
 
 function draftingLine(o: DraftingOutcome): string {

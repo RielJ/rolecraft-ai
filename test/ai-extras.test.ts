@@ -688,7 +688,8 @@ describe("eval set and scorer", () => {
         const candidates = [`${target}.ts`, `${target}.tsx`, `${target}/index.ts`, target];
         let resolved: string | undefined;
         for (const p of candidates) if (!resolved && (await Bun.file(join(root, p)).exists())) resolved = p;
-        if (resolved) queue.push(resolved);
+        // Text imports (the drafting guide) are data, not code with imports of their own.
+        if (resolved && /\.tsx?$/.test(resolved)) queue.push(resolved);
       }
     }
     expect([...seen].filter((f) => f.startsWith("src/server/db/") || f === "src/server/services/ai.ts")).toEqual([]);

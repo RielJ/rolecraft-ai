@@ -9,6 +9,7 @@ import {
   quarantineViolations,
   stripMarkers,
 } from "./citations";
+import { expandRoles, roleHeader } from "./work-roles";
 
 describe("factKey", () => {
   test("formats the identity number", () => {
@@ -115,6 +116,179 @@ describe("checkDraft", () => {
     expect(check("I also know kubernetes [FACT-1].")).toMatchObject({
       ok: false,
       violations: [{ kind: "unsupported_token", tokens: ["kubernetes"] }],
+    });
+  });
+
+  describe("role headers (decision 71)", () => {
+    const header = roleHeader({
+      title: "Full-stack Software Engineer",
+      company: "Cashflowy",
+      location: "Remote",
+      start: "Jan, 2026",
+      end: "Jun, 2026",
+    });
+    // FACT-2 sits under ROLE-1; FACT-1 and FACT-3 have no role.
+    const roleFacts = facts.map((f) => ({ ...f, roleKey: f.key === k(2) ? "ROLE-1" : null }));
+    const withRoles = (body: string) =>
+      checkDraft({
+        body,
+        facts: roleFacts,
+        allowedKeys: [k(1), k(2), k(3)],
+        posting,
+        contact,
+        roles: [{ key: "ROLE-1", header }],
+      });
+
+    test("an expanded header of an allowed role passes", () => {
+      expect(
+        withRoles(["## Experience", header, "- Led a team of 4 engineers at Acme Corp [FACT-2]"].join("\n")),
+      ).toEqual({
+        ok: true,
+      });
+    });
+
+    test("without the role list, the same header is an uncited claim", () => {
+      expect(check(header)).toMatchObject({ ok: false, violations: [{ kind: "uncited_claim" }] });
+    });
+
+    test("an invented header is still flagged", () => {
+      const result = withRoles("### Staff Engineer | Google, Remote | Jan, 2019 – Jun, 2021");
+      expect(result).toMatchObject({ ok: false, violations: [{ kind: "uncited_claim" }] });
+      if (!result.ok)
+        expect(result.violations[0]).toMatchObject({ tokens: expect.arrayContaining(["Google", "2019"]) });
+    });
+
+    test("a [ROLE-n] left after expansion is an unknown role", () => {
+      expect(withRoles("## Experience\n[ROLE-9]\n- Led a team of 4 engineers at Acme Corp [FACT-2]")).toMatchObject({
+        ok: false,
+        // The bullet has no real header above it, so it is also in the wrong place.
+        violations: [
+          { kind: "unknown_role", roleKey: "ROLE-9", sentence: "[ROLE-9]" },
+          { kind: "wrong_role", roleKey: null, factKeys: ["FACT-2"] },
+        ],
+      });
+      expect(withRoles("- Led a team at [ROLE-1] [FACT-2]")).toMatchObject({
+        ok: false,
+        violations: [{ kind: "unknown_role", roleKey: "ROLE-1" }],
+      });
+    });
+
+    test("expansion then check: a known key passes, an unknown one fails", () => {
+      const roles = [
+        {
+          key: "ROLE-1",
+          title: "Full-stack Software Engineer",
+          company: "Cashflowy",
+          location: "Remote",
+          start: "Jan, 2026",
+          end: "Jun, 2026",
+        },
+      ];
+      const body = "## Experience\n[ROLE-1]\n- Led a team of 4 engineers at Acme Corp [FACT-2]";
+      expect(withRoles(expandRoles({ body, roles }))).toEqual({ ok: true });
+      expect(withRoles(expandRoles({ body: body.replace("ROLE-1", "ROLE-2"), roles }))).toMatchObject({
+        ok: false,
+        violations: [
+          { kind: "unknown_role", roleKey: "ROLE-2" },
+          { kind: "wrong_role", roleKey: null },
+        ],
+      });
+    });
+  });
+
+  describe("facts under the right role (decision 71)", () => {
+    // Two overlapping roles, as on the user's CV: a part-time one runs alongside a full-time one.
+    const cashflowy = roleHeader({
+      title: "Full-stack Software Engineer",
+      company: "Cashflowy",
+      location: "Remote",
+      start: "Jan, 2026",
+      end: "Jun, 2026",
+    });
+    const tailor = roleHeader({
+      title: "Full-stack Software Engineer",
+      company: "Tailor.video",
+      location: "Remote, Part-time",
+      start: "Oct, 2025",
+      end: "Apr, 2026",
+    });
+    const roleFacts = [
+      { key: k(1), text: "Built the cash-flow dashboard in React.", roleKey: "ROLE-1" },
+      { key: k(2), text: "Built the Zapier integration.", roleKey: "ROLE-2" },
+      { key: k(3), text: "Skilled in TypeScript and Go.", roleKey: null },
+    ];
+    const run = (lines: string[]) =>
+      checkDraft({
+        body: lines.join("\n"),
+        facts: roleFacts,
+        allowedKeys: [k(1), k(2), k(3)],
+        posting,
+        contact,
+        roles: [
+          { key: "ROLE-1", header: cashflowy },
+          { key: "ROLE-2", header: tailor },
+        ],
+      });
+
+    test("each role's own facts under it pass, overlapping dates or not", () => {
+      expect(
+        run([
+          "## Summary",
+          "Skilled in TypeScript and Go [FACT-3]. Built the Zapier integration [FACT-2].",
+          "## Experience",
+          cashflowy,
+          "- Built the cash-flow dashboard in React [FACT-1]",
+          tailor,
+          "- Built the Zapier integration [FACT-2]",
+          "## Skills",
+          "- TypeScript, Go [FACT-3]",
+        ]),
+      ).toEqual({ ok: true });
+    });
+
+    test("another role's fact under a header is a wrong role", () => {
+      expect(run(["## Experience", cashflowy, "- Built the Zapier integration [FACT-2]"])).toMatchObject({
+        ok: false,
+        violations: [{ kind: "wrong_role", roleKey: "ROLE-1", factKeys: ["FACT-2"] }],
+      });
+    });
+
+    test("a fact with no role under a header is a wrong role", () => {
+      expect(run(["## Experience", tailor, "- Skilled in TypeScript and Go [FACT-3]"])).toMatchObject({
+        ok: false,
+        violations: [{ kind: "wrong_role", roleKey: "ROLE-2", factKeys: ["FACT-3"] }],
+      });
+    });
+
+    test("a cited line under Experience before any header is a wrong role", () => {
+      expect(run(["## Experience", "- Built the cash-flow dashboard in React [FACT-1]", cashflowy])).toMatchObject({
+        ok: false,
+        violations: [{ kind: "wrong_role", roleKey: null, factKeys: ["FACT-1"] }],
+      });
+    });
+
+    test("a new section ends the role", () => {
+      expect(
+        run([
+          "## Experience",
+          cashflowy,
+          "- Built the cash-flow dashboard in React [FACT-1]",
+          "## Skills",
+          "- TypeScript, Go [FACT-3]",
+        ]),
+      ).toEqual({ ok: true });
+    });
+
+    test("without roles there is no role rule", () => {
+      expect(
+        checkDraft({
+          body: "## Experience\n- Skilled in TypeScript and Go [FACT-3]",
+          facts: roleFacts,
+          allowedKeys: [k(3)],
+          posting,
+          contact,
+        }),
+      ).toEqual({ ok: true });
     });
   });
 

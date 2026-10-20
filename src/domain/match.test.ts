@@ -11,6 +11,7 @@ const PROFILE: MatchProfile = {
 const JOB: MatchJob = {
   title: "Senior Frontend Engineer",
   skills: ["React", "TypeScript", "CSS"],
+  niceSkills: [],
   seniority: "senior",
   minYears: 5,
   eligibility: "worldwide",
@@ -155,6 +156,44 @@ describe("matchJob: level boundaries (section 3.7)", () => {
     expect(level({ minYears: 8 })).toBe("possible");
     expect(texts({ minYears: 8 })).toContain("negative: Asks for 8+ years of experience; you have 6 years");
     expect(level({ minYears: 20 }, { years: null })).toBe("strong");
+  });
+});
+
+describe("matchJob: required and nice-to-have skills (decision 76)", () => {
+  const skills = (job: Partial<MatchJob>) => matchJob({ job: { ...JOB, ...job }, profile: PROFILE }).skills;
+  // React, TypeScript, CSS required; Rust, Kafka, Go nice to have, none of them yours.
+  const SPLIT = { skills: ["React", "TypeScript", "CSS", "Rust", "Kafka", "Go"], niceSkills: ["Rust", "Kafka", "Go"] };
+
+  test("only required skills count toward the level and the count", () => {
+    expect(level({ skills: SPLIT.skills, niceSkills: [] })).toBe("possible");
+    expect(level(SPLIT)).toBe("strong");
+    expect(skills(SPLIT)).toEqual({ matched: 3, asked: 3, nice: { matched: 0, asked: 3 } });
+  });
+
+  test("a missing nice-to-have skill is neutral; one you have is positive", () => {
+    expect(
+      texts({ ...SPLIT, skills: [...SPLIT.skills, "GraphQL"], niceSkills: [...SPLIT.niceSkills, "GraphQL"] }),
+    ).toEqual([
+      "positive: Title fits your target “Frontend Engineer”",
+      "positive: In your facts: React, TypeScript, CSS",
+      "positive: Nice to have, in your facts: GraphQL",
+      "neutral: Nice to have, not in your facts: Rust, Kafka, Go",
+      "positive: Hires worldwide",
+    ]);
+  });
+
+  test("missing nice-to-have skills never make a job Weak", () => {
+    const job = { skills: ["React", "Rust", "Kafka", "Go", "Elixir"], niceSkills: ["Rust", "Kafka", "Go", "Elixir"] };
+    expect(level({ skills: job.skills, niceSkills: [] })).toBe("weak");
+    expect(level(job)).toBe("strong");
+  });
+
+  test("a posting whose every skill is nice to have counts them all as one list", () => {
+    expect(skills({ skills: ["React", "Rust"], niceSkills: ["React", "Rust"] })).toEqual({
+      matched: 1,
+      asked: 2,
+      nice: { matched: 0, asked: 0 },
+    });
   });
 });
 

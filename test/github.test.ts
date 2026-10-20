@@ -666,6 +666,14 @@ describe("export filter", () => {
     // The public profile link stays in the contact line; the private repo link does not.
     expect(pdfText).toContain("github.com/juandc");
     expect(pdfText).toContain("jeep-route");
+
+    // The preview and the read-only plain text never show the private links either.
+    const preview = await call("GET", `/outputs/${byKind("resume")}/preview.pdf`);
+    expect(preview.status).toBe(200);
+    const previewDoc = await getDocumentProxy(new Uint8Array(await preview.arrayBuffer()));
+    expect((await extractText(previewDoc, { mergePages: true })).text).not.toMatch(/sari-ledger/i);
+    const after = await json(await call("GET", `/opportunities/${added.opportunityId}`), WorkspaceDto);
+    for (const f of after.files) expect(f.plain ?? "").not.toMatch(/sari-ledger/i);
   });
 });
 

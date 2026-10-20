@@ -1,8 +1,9 @@
 import { applyUrlKey, companyKey, titleKey } from "./dedup";
 import { classifyEligibility } from "./eligibility";
-import { extractSkills, minYears, type SkillDictionary, seniority } from "./features";
+import { minYears, type SkillDictionary, seniority } from "./features";
 import { parseHours } from "./hours";
 import { type Pay, parsePay } from "./pay";
+import { readJobSkills } from "./skill-sections";
 import { contentHash, descriptionKey } from "./text";
 import { dictionaryStamp } from "./user-skills";
 
@@ -60,7 +61,7 @@ export function derive(fields: JobFields, dict?: SkillDictionary) {
     payPeriod: pay?.period ?? null,
     payPhrase,
     hours: parseHours(fields.description),
-    skills: jobSkills(fields, dict),
+    ...jobSkills(fields, dict),
     // Which dictionary read them, so a Refresh reads the job again only when that changes (decision 68).
     skillsStamp: dictionaryStamp(dict),
     seniority: seniority(fields.title),
@@ -73,7 +74,14 @@ export function derive(fields: JobFields, dict?: SkillDictionary) {
 
 export type Derived = ReturnType<typeof derive>;
 
-/** The one place a job's skills are read: from its title and description. Refresh re-reads stored jobs with it. */
-export function jobSkills(fields: Pick<JobFields, "title" | "description">, dict?: SkillDictionary): string[] {
-  return extractSkills(`${fields.title}\n${fields.description}`, dict);
+/**
+ * The one place a job's skills are read: from its title and description, with the ones named only
+ * in its nice-to-have text (decision 76). Refresh re-reads stored jobs with it.
+ */
+export function jobSkills(
+  fields: Pick<JobFields, "title" | "description">,
+  dict?: SkillDictionary,
+): { skills: string[]; niceSkills: string[] } {
+  const { skills, nice } = readJobSkills(fields, dict);
+  return { skills, niceSkills: nice };
 }
