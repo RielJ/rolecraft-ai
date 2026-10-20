@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffFacts } from "./facts-diff";
+import { diffFacts, dropRepeats } from "./facts-diff";
 
 const existing = [
   { id: 1, text: "Built a payments API in Go", status: "confirmed" as const },
@@ -46,5 +46,38 @@ describe("diffFacts", () => {
   test("an empty split keeps confirmed facts and removes pending ones", () => {
     const diff = diffFacts({ existing, candidates: [] });
     expect(diff).toEqual({ unchanged: [], added: [], removed: [3, 4], vanished: [1, 2] });
+  });
+});
+
+describe("dropRepeats", () => {
+  test("a new fact the add-on's own facts already say is dropped", () => {
+    const out = dropRepeats({
+      candidates: [
+        "Recipe planner for carinderias.",
+        "Prices each dish from the day's market costs.",
+        "A recipe planner for carinderias, written in Go.",
+      ],
+      others: ["Recipe planner for carinderias."],
+    });
+    expect(out).toEqual({
+      kept: ["Prices each dish from the day's market costs.", "A recipe planner for carinderias, written in Go."],
+      repeats: ["Recipe planner for carinderias."],
+    });
+  });
+
+  test("a later fact of the same read that an earlier one says is dropped; a new number is not a repeat", () => {
+    const out = dropRepeats({
+      candidates: [
+        "Plans jeepney trips across 42 routes from the city's open data.",
+        "Plans jeepney trips across 42 routes.",
+        "Plans jeepney trips across 43 routes.",
+      ],
+      others: [],
+    });
+    expect(out.kept).toEqual([
+      "Plans jeepney trips across 42 routes from the city's open data.",
+      "Plans jeepney trips across 43 routes.",
+    ]);
+    expect(out.repeats).toEqual(["Plans jeepney trips across 42 routes."]);
   });
 });

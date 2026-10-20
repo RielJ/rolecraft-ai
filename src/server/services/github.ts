@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { diffFacts } from "@/domain/facts-diff";
+import { diffFacts, dropRepeats } from "@/domain/facts-diff";
 import {
   type AcceptedGithubFact,
   GITHUB_SECTION_TOKENS,
@@ -493,11 +493,18 @@ async function applyRead(
       .set({ githubRev: rev, githubPrivate: isPrivate, projectRoleRead: role })
       .where(eq(profileItems.id, itemId));
 
-    const existing = await tx
-      .select({ id: facts.id, text: facts.text, status: facts.status })
+    const rows = await tx
+      .select({ id: facts.id, text: facts.text, status: facts.status, origin: facts.origin })
       .from(facts)
-      .where(and(eq(facts.itemId, itemId), eq(facts.origin, "github")));
+      .where(eq(facts.itemId, itemId));
+    const existing = rows.filter((f) => f.origin === "github");
     const diff = diffFacts({ existing, candidates: kept.map((k) => k.text) });
+    // A new fact that a staying fact (from the add-on's own text or an earlier read) or an earlier
+    // new fact already says is left out.
+    const fresh = dropRepeats({
+      candidates: diff.added,
+      others: rows.filter((f) => !diff.removed.includes(f.id)).map((f) => f.text),
+    });
     const byText = new Map(kept.map((k) => [normalize(k.text), k.evidence]));
     for (const fact of existing.filter((f) => diff.unchanged.includes(f.id))) {
       // The same fact keeps its id and status; its link follows the latest read.
@@ -508,7 +515,7 @@ async function applyRead(
         .where(eq(facts.id, fact.id));
     }
     if (diff.removed.length) await tx.delete(facts).where(inArray(facts.id, diff.removed));
-    const added = kept.filter((k) => diff.added.includes(k.text.trim()));
+    const added = kept.filter((k) => fresh.kept.includes(k.text.trim()));
     if (added.length) {
       await tx.insert(facts).values(
         added.map((k) => ({

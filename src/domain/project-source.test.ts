@@ -201,6 +201,25 @@ describe("folderPrefill", () => {
     ]);
   });
 
+  test("a small repo of yours says it is small, not that your email is missing", () => {
+    const small = (authors: Record<string, number>) =>
+      folderPrefill({
+        folder: folder({ git: { authors, lastCommitAt: null, remote: null } }),
+        emails: [ME],
+        githubUser: null,
+      }).note;
+    expect(small({ [ME]: 3 })).toBe(
+      "This repo has only 3 of your commits, so a read may find little to turn into facts.",
+    );
+    expect(small({ [ME]: 1 })).toBe(
+      "This repo has only 1 of your commits, so a read may find little to turn into facts.",
+    );
+    // With none of your commits, your email is the likely cause.
+    expect(small({})).toBe(
+      "None of this repo's commits use your email. Check it's yours, or add your other emails to HB_GIT_EMAILS.",
+    );
+  });
+
   test("not a git repo: a note", () => {
     expect(folderPrefill({ folder: folder({ git: null }), emails: [ME], githubUser: null }).note).toBe(
       "This folder isn't a git repo, so nothing shows the work is yours.",

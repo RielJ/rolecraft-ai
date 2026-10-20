@@ -1,10 +1,10 @@
 import { type GithubLink, parseGithubLink, pullUrl, repoUrl } from "@/shared/github-link";
 import {
   type LocalFolder,
-  type LocalHideReason,
   localAddon,
   parseGithubRemote,
   readmeSummary,
+  type ScannedLocal,
   scanLocal,
 } from "./local-scan";
 import { repoAddon } from "./repo-scan";
@@ -160,13 +160,25 @@ export function gitlabPrefill(about: GitlabAbout): AddonPrefill {
 
 // ---------- A folder ----------
 
-const FOLDER_NOTES: Record<LocalHideReason, string> = {
-  not_git: "This folder isn't a git repo, so nothing shows the work is yours.",
-  few_commits:
-    "Few of this repo's commits use your email. Check it's yours, or add your other emails to HB_GIT_EMAILS.",
-  others: "Most of this repo's commits are by someone else. Write what you did in it.",
-  same_remote: "",
-};
+/**
+ * Why the scan's rules would hide this folder, in words. "few_commits" means at least half the
+ * commits are yours but fewer than 5: a small repo, unless none use your email at all.
+ */
+function folderNote(repo: ScannedLocal): string | null {
+  switch (repo.hiddenBy) {
+    case null:
+    case "same_remote":
+      return null;
+    case "not_git":
+      return "This folder isn't a git repo, so nothing shows the work is yours.";
+    case "others":
+      return "Most of this repo's commits are by someone else. Write what you did in it.";
+    case "few_commits":
+      return repo.ownCommits === 0
+        ? "None of this repo's commits use your email. Check it's yours, or add your other emails to HB_GIT_EMAILS."
+        : `This repo has only ${repo.ownCommits} of your commits, so a read may find little to turn into facts.`;
+  }
+}
 
 /** An add-on from one folder, judged by the same rules as the folder scan (decision 79). */
 export function folderPrefill({
@@ -192,7 +204,7 @@ export function folderPrefill({
     skills: addon.skills,
     // Visibility is unknown without reading the repo: kept out of exports until a read says public.
     linkPrivate: addon.link !== null || theirs !== null,
-    note: (repo.hiddenBy && FOLDER_NOTES[repo.hiddenBy]) || null,
+    note: folderNote(repo),
   };
 }
 

@@ -644,6 +644,31 @@ describe("Read from GitHub", () => {
     expect(reread.facts.filter((f) => f.origin === "text").map((f) => f.text)).toEqual(["Rewrote the planner."]);
   });
 
+  test("a read leaves out facts the add-on's own text already says", async () => {
+    const control = githubFacts(await read((await addRepo("https://github.com/juandc/jeep-route")).id)).map(
+      (f) => f.text,
+    );
+    // The read alone says what the project is.
+    const SAID = "Plans jeepney trips across Cebu City using 42 routes from the city's open data.";
+    expect(control).toContain(SAID);
+
+    await setup(createFixtureReader({ dir: await fixtureDir(), user: null }));
+    const profile = await settle(
+      await call("POST", "/profile/addons", {
+        kind: "open_source",
+        title: "jeep-route",
+        body: SAID,
+        link: "https://github.com/juandc/jeep-route",
+      }),
+      201,
+    );
+    const item = profile.addons.at(-1);
+    if (!item) throw new Error("no add-on");
+    const after = await read(item.id);
+    expect(after.facts.filter((f) => f.text === SAID).map((f) => f.origin)).toEqual(["text"]);
+    expect(githubFacts(after).map((f) => f.text)).toEqual(control.filter((t) => t !== SAID));
+  });
+
   test("other links are stored only; a read without a GitHub user asks for one", async () => {
     const other = await settle(
       await call("POST", "/profile/addons", {
