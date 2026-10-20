@@ -14,18 +14,20 @@ import {
 } from "@/domain/github-read";
 import {
   type ChooseCommits,
-  fitPatches,
+  type CommitSource,
+  type CommitsFrom,
   framingOf,
   isSecretPath,
-  listedCommits,
   MAX_LISTED_COMMITS,
+  MAX_PATCH_FILES,
   meaningfulFiles,
-  PATCH_TOKENS,
   parseNumstatLog,
+  type RawPatch,
   splitDiff,
 } from "@/domain/project-read";
 import { estimateTokens } from "@/domain/prompts";
-import type { Git } from "./git";
+import { readCommitEvidence } from "./commit-evidence";
+import type { Git, GitLimits } from "./git";
 import type { GithubPick } from "./github";
 
 /**
@@ -60,8 +62,6 @@ export class FolderReadError extends Error {
 
 /** Commits counted for the share, newest first, merges left out. */
 const MAX_LOG_COMMITS = 3_000;
-/** Files of one commit passed to `git show`. */
-const MAX_SHOW_FILES = 8;
 const README = /^readme(\.(md|markdown|txt|rst))?$/i;
 
 function byDepth(a: string, b: string): number {
@@ -125,55 +125,18 @@ export async function readFolderProject(git: Git, input: FolderReadInput): Promi
     files.push({ path: manifest, ...cut });
   }
 
-  await step(`Reading ${input.user}'s commits`);
-  const log = await at([
-    "log",
-    "--no-merges",
-    "--no-renames",
-    `--max-count=${MAX_LOG_COMMITS}`,
-    "--format=%x1e%H%x1f%ae%x1f%aI%x1f%s",
-    "--numstat",
-    headSha,
-    "--",
-  ]);
-  const everyone = parseNumstatLog(log.stdout);
-  const mine = everyone.filter((c) => input.isMine(c.email)).slice(0, MAX_LISTED_COMMITS);
-  const share = { mine: everyone.filter((c) => input.isMine(c.email)).length, total: everyone.length };
-  const framing = framingOf(share);
-
-  await step("Grouping your commits into features");
-  const choice = mine.length
-    ? await input.choose({ name, user: input.user, readme, commits: mine })
-    : { features: [], shas: [] };
-  const commits = listedCommits({ commits: mine, picked: choice.shas, maxTokens: GITHUB_SECTION_TOKENS.commits });
-  for (const c of commits) budget.take(`${c.sha.slice(0, 12)} ${c.subject}`, GITHUB_SECTION_TOKENS.commits);
-
-  const bySha = new Map(mine.map((c) => [c.sha, c]));
-  const raw: { sha: string; files: { path: string; patch: string }[] }[] = [];
-  for (const sha of choice.shas) {
-    const commit = bySha.get(sha);
-    const paths = commit ? meaningfulFiles(commit.files).slice(0, MAX_SHOW_FILES) : [];
-    if (!commit || paths.length === 0) continue;
-    await step(`Reading the changes in ${sha.slice(0, 7)} ${commit.subject}`.slice(0, 120));
-    const shown = await at(
-      [
-        "show",
-        "--format=",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--no-renames",
-        "--unified=3",
-        sha,
-        "--",
-        ...paths.map((f) => literal(f.path)),
-      ],
-      { maxBytes: 512 * 1024 },
-    );
-    if (shown.exit === 0) raw.push({ sha, files: splitDiff(shown.stdout) });
-  }
-  const patches = fitPatches({ patches: raw, maxTokens: Math.min(PATCH_TOKENS, budget.left()) });
-  for (const p of patches) budget.take(p.text, estimateTokens(p.text) + 1);
+  const source = gitCommitSource(git, { path, head: headSha, isMine: input.isMine, from: "folder" });
+  const evidence = await readCommitEvidence({
+    source,
+    choose: input.choose,
+    name,
+    user: input.user,
+    readme,
+    budget,
+    step,
+  });
+  const { commits, features, patches } = evidence;
+  const share = evidence.share ?? { mine: 0, total: 0 };
 
   if (budget.left() >= MIN_FILE_TOKENS && tree.length > 0) {
     await step("Choosing files to read");
@@ -209,10 +172,92 @@ export async function readFolderProject(git: Git, input: FolderReadInput): Promi
     treeTotal: all.length,
     commits,
     tokens: GITHUB_TOKEN_CAP - budget.left(),
-    framing,
+    framing: framingOf(share),
     share,
-    features: choice.features,
+    features,
     patches,
+  };
+}
+
+/**
+ * The user's commits and hunks from a git folder: a folder read, a local clone of a GitHub repo,
+ * or a blob-less temp clone. `sized: false` lists paths without line counts, so a blob-less clone
+ * fetches no blobs to list; `git show` then fetches only the picked commits' blobs.
+ */
+export function gitCommitSource(
+  git: Git,
+  {
+    path,
+    head = "HEAD",
+    isMine,
+    from,
+    sized = true,
+    showLimits = {},
+    close,
+  }: {
+    path: string;
+    head?: string;
+    isMine: (email: string) => boolean;
+    from: CommitsFrom;
+    sized?: boolean;
+    showLimits?: GitLimits;
+    close?: () => Promise<void>;
+  },
+): CommitSource {
+  const at = (args: string[], limits?: GitLimits) => git.repo(path, args, limits);
+  return {
+    from,
+    maxPatchCommits: Number.POSITIVE_INFINITY,
+    async list() {
+      const log = await at([
+        "log",
+        "--no-merges",
+        "--no-renames",
+        `--max-count=${MAX_LOG_COMMITS}`,
+        "--format=%x1e%H%x1f%ae%x1f%aI%x1f%s",
+        sized ? "--numstat" : "--name-only",
+        head,
+        "--",
+      ]);
+      const everyone = parseNumstatLog(log.stdout, { sized });
+      const mine = everyone.filter((c) => isMine(c.email));
+      return { mine: mine.slice(0, MAX_LISTED_COMMITS), share: { mine: mine.length, total: everyone.length } };
+    },
+    async patches(commits, step) {
+      const out: RawPatch[] = [];
+      for (const commit of commits) {
+        const paths = meaningfulFiles(commit.files).slice(0, MAX_PATCH_FILES);
+        if (paths.length === 0) continue;
+        await step(`Reading the changes in ${commit.sha.slice(0, 7)} ${commit.subject}`.slice(0, 120));
+        const shown = await at(
+          [
+            "show",
+            "--format=",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--unified=3",
+            commit.sha,
+            "--",
+            ...paths.map((f) => literal(f.path)),
+          ],
+          { maxBytes: 512 * 1024, ...showLimits },
+        );
+        if (shown.exit === 0) out.push({ sha: commit.sha, files: splitDiff(shown.stdout) });
+      }
+      return out;
+    },
+    ...(from === "local clone"
+      ? {
+          async pushed(shas: readonly string[]) {
+            const r = await at(["rev-list", "--remotes=origin", "--max-count=100000"]);
+            const onRemote = new Set(r.stdout.split("\n"));
+            return shas.filter((sha) => onRemote.has(sha));
+          },
+        }
+      : {}),
+    ...(close ? { close } : {}),
   };
 }
 

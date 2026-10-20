@@ -10,7 +10,16 @@ import { createReader, GithubError, type GithubReader, type GithubTransport } fr
  * asks for from it, so the real read (token cap, picks, commit filter) runs unchanged.
  */
 
-const FixtureCommit = z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/), message: z.string(), author: z.string() });
+const FixtureCommit = z.object({
+  sha: z.string().regex(/^[0-9a-f]{40}$/),
+  message: z.string(),
+  author: z.string(),
+  date: z.string().nullable().default(null),
+  /** What `commits/<sha>` reports (decision 81); `patch` is the hunks, from the first `@@`. */
+  files: z
+    .array(z.object({ path: z.string(), additions: z.number(), deletions: z.number(), patch: z.string().optional() }))
+    .default([]),
+});
 const FixtureComment = z.object({ author: z.string(), body: z.string() });
 
 export const GithubSnapshot = z.object({
@@ -55,7 +64,7 @@ const notFound = () => new GithubError({ kind: "not_found", message: "Not in the
 const base64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 const commitJson = (c: z.infer<typeof FixtureCommit>) => ({
   sha: c.sha,
-  commit: { message: c.message },
+  commit: { message: c.message, author: { date: c.date } },
   author: { login: c.author },
 });
 const commentJson = (c: z.infer<typeof FixtureComment>) => ({ user: { login: c.author }, body: c.body });
@@ -72,6 +81,7 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
       description: snapshot.description,
       default_branch: snapshot.defaultBranch,
       language: snapshot.language,
+      size: snapshot.sizeKb,
     };
   }
   if (rest.startsWith("git/trees/")) return { tree: paths.map((path) => ({ path, type: "blob" })), truncated: false };
@@ -94,6 +104,25 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
       .filter((c) => author === undefined || c.author.toLowerCase() === author)
       .slice(0, perPage)
       .map(commitJson);
+  }
+  if (rest.startsWith("commits/")) {
+    const sha = rest.slice("commits/".length);
+    const commit = snapshot.commits.find((c) => c.sha === sha);
+    if (!commit) throw notFound();
+    return {
+      ...commitJson(commit),
+      files: commit.files.map((f) => ({
+        filename: f.path,
+        additions: f.additions,
+        deletions: f.deletions,
+        ...(f.patch === undefined ? {} : { patch: f.patch }),
+      })),
+    };
+  }
+  if (rest === "contributors") {
+    const counts = new Map<string, number>();
+    for (const c of snapshot.commits) counts.set(c.author, (counts.get(c.author) ?? 0) + 1);
+    return [...counts].map(([login, contributions]) => ({ login, contributions }));
   }
   const pullMatch = /^(pulls|issues)\/(\d+)(?:\/(.*))?$/.exec(rest);
   const pull = snapshot.pulls.find((p) => p.number === Number(pullMatch?.[2]));

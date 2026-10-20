@@ -6,6 +6,7 @@ import { createOpenAiClient } from "./adapters/ai/openai";
 import { createPiClient } from "./adapters/ai/pi";
 import type { AiClients, AiSource } from "./adapters/ai/types";
 import { createFixtureFx, createFxSource } from "./adapters/fx";
+import { createGit } from "./adapters/git";
 import { createGhReader, createPublicReader, type GithubReader } from "./adapters/github";
 import { createFixtureReader } from "./adapters/github-fixture";
 import { createGitlabReader } from "./adapters/gitlab";
@@ -15,6 +16,7 @@ import { createFolderReader, createProjectsReader } from "./adapters/local-proje
 import { createChromiumPdf } from "./adapters/pdf";
 import { createSourceAdapters } from "./adapters/sources";
 import { createFixtureSources } from "./adapters/sources/fixture";
+import { createCloner } from "./adapters/temp-clone";
 import { createDb } from "./db/client";
 import { migrateDb } from "./db/migrate";
 import { parseEnv } from "./env";
@@ -90,6 +92,7 @@ function buildGithub(): GithubReader {
 }
 const github = buildGithub();
 const folders = createFolderReader({ extraEmails: env.HB_GIT_EMAILS ?? [] });
+const cloner = createCloner({ git: createGit() });
 const gitlab = createGitlabReader({ http, hosts: env.HB_GITLAB_HOSTS ?? [] });
 const projects = env.HB_PROJECTS_DIR
   ? createProjectsReader({ dir: env.HB_PROJECTS_DIR, extraEmails: env.HB_GIT_EMAILS ?? [] })
@@ -108,6 +111,7 @@ const deps: Deps = {
   github,
   projects,
   folders,
+  cloner,
   gitlab,
   fx,
   clock: { now: () => new Date() },

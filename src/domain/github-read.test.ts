@@ -38,6 +38,8 @@ const repo: RepoBundle = {
   share: null,
   features: [],
   patches: [],
+  pushed: null,
+  commitsFrom: "api",
 };
 
 describe("budget", () => {
@@ -104,6 +106,14 @@ describe("evidence", () => {
     expect(resolveEvidence({ bundle: repo, cited: "a1b2c3d" })).toBeNull();
     expect(resolveEvidence({ bundle: repo, cited: "src/planner.ts" })).toBeNull();
     expect(resolveEvidence({ bundle: repo, cited: "deadbeef" })).toBeNull();
+  });
+
+  test("a commit only in a local clone keeps its sha but gets no link", () => {
+    const fromClone: RepoBundle = { ...repo, pushed: [SHA_A], commitsFrom: "local clone" };
+    expect(resolveEvidence({ bundle: fromClone, cited: SHA_A })?.url).toBe(
+      `https://github.com/juandc/jeep-route/commit/${SHA_A}`,
+    );
+    expect(resolveEvidence({ bundle: fromClone, cited: SHA_B })).toMatchObject({ sha: SHA_B, url: null });
   });
 
   test("facts that cite what was not read, or say what the repo does not, are dropped in code", () => {

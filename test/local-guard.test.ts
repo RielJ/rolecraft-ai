@@ -213,6 +213,7 @@ describe("createApp mounts the guard first", () => {
     github: createPublicReader({ http, user: null }),
     projects: null,
     folders: createFolderReader({ readConfigEmail: false }),
+    cloner: null,
     gitlab: createGitlabReader({ http }),
     fx: offlineFx(),
     clock: { now: () => new Date("2026-10-18T00:00:00Z") },

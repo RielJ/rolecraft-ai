@@ -599,8 +599,16 @@ function readSummary(read: GithubReadSummary): string {
   const dropped = read.dropped.length
     ? ` ${plural(read.dropped.length, "claim")} dropped: not backed by a file or commit it read.`
     : "";
-  return `${what}: ${changes.length ? changes.join(", ") : "no facts"}.${dropped}`;
+  const from = read.commitsFrom && read.commitsFrom !== "folder" ? ` ${CHANGES_FROM[read.commitsFrom]}` : "";
+  return `${what}: ${changes.length ? changes.join(", ") : "no facts"}.${from}${dropped}`;
 }
+
+/** Where a GitHub read got your changes (decision 81). */
+const CHANGES_FROM = {
+  "local clone": "Your changes were read from your local clone.",
+  "temp clone": "Your changes were read from a temporary clone, since deleted.",
+  api: "Your changes were read through the GitHub API.",
+} as const;
 
 /**
  * Read from GitHub / Read for facts / Re-read, the read task's progress, and what the last read

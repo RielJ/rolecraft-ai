@@ -8,6 +8,7 @@ import type { KeyStore } from "../adapters/key-store";
 import type { FolderReader, ProjectsReader } from "../adapters/local-projects";
 import type { PdfRenderer } from "../adapters/pdf";
 import type { SourceAdapters } from "../adapters/sources";
+import type { Cloner } from "../adapters/temp-clone";
 import type { Db } from "../db/client";
 
 export type Clock = { now(): Date };
@@ -32,6 +33,11 @@ export type Deps = {
   projects: ProjectsReader | null;
   /** Reads one folder by path, to fill the add-on form (decision 80). */
   folders: FolderReader;
+  /**
+   * Temp clones of public GitHub repos, for their hunks when there is no local clone and no gh
+   * (decision 81). Null leaves those reads to the API, as tests do.
+   */
+  cloner: Cloner | null;
   /** Reads one public GitLab project, to fill the add-on form (decision 80). */
   gitlab: GitlabReader;
   /** Exchange-rate sources (decision 67): live, fixture files (HB_FX=fixture), or offline in tests. */

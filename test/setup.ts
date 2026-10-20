@@ -103,6 +103,7 @@ export async function testDeps(
       | "github"
       | "projects"
       | "folders"
+      | "cloner"
       | "gitlab"
       | "fx"
     >
@@ -124,6 +125,7 @@ export async function testDeps(
     github: over.github ?? createPublicReader({ http, user: null }),
     projects: over.projects ?? null,
     folders: over.folders ?? createFolderReader({ readConfigEmail: false }),
+    cloner: over.cloner ?? null,
     gitlab: over.gitlab ?? createGitlabReader({ http }),
     // Rate sources refuse every call unless a test passes its own (decision 67).
     fx: over.fx ?? offlineFx(),

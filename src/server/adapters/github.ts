@@ -16,9 +16,22 @@ import {
   type TokenBudget,
   validatePicks,
 } from "@/domain/github-read";
+import {
+  biggestCommits,
+  type ChooseCommits,
+  type CommitSource,
+  framingOf,
+  isNoisePath,
+  isSecretPath,
+  MAX_LISTED_COMMITS,
+  MAX_PATCH_FILES,
+  type RawPatch,
+  type UserCommit,
+} from "@/domain/project-read";
 import type { GithubAbout } from "@/domain/project-source";
 import { estimateTokens } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
+import { readCommitEvidence } from "./commit-evidence";
 import { type HttpClient, HttpError, MAX_BYTES } from "./http";
 
 /**
@@ -183,6 +196,8 @@ const Repo = z.object({
   description: z.string().nullable(),
   default_branch: z.string(),
   language: z.string().nullable().default(null),
+  /** In KB. */
+  size: z.number().nonnegative().default(0),
 });
 const TreeEntry = z.object({ path: z.string(), type: z.string() });
 const Tree = z.object({ tree: z.array(TreeEntry), truncated: z.boolean().default(false) });
@@ -194,8 +209,33 @@ const Content = z.object({
 });
 const Commit = z.object({
   sha: z.string(),
-  commit: z.object({ message: z.string() }),
+  commit: z.object({
+    message: z.string(),
+    author: z
+      .object({ date: z.string().nullable().default(null) })
+      .nullable()
+      .default(null),
+  }),
   author: z.object({ login: z.string() }).nullable().default(null),
+});
+const CommitDetail = z.object({
+  files: z
+    .array(
+      z.object({
+        filename: z.string(),
+        additions: z.number().default(0),
+        deletions: z.number().default(0),
+        /** Absent for binary files and very large diffs. */
+        patch: z.string().optional(),
+      }),
+    )
+    .default([]),
+});
+/** `contributors?anon=1`: accounts with a login, and emails no account claims with none. */
+const Contributor = z.object({
+  login: z.string().optional(),
+  email: z.string().optional(),
+  contributions: z.number().int().nonnegative(),
 });
 const Login = z.object({ login: z.string() }).nullable().default(null);
 const Pull = z.object({
@@ -233,11 +273,28 @@ export type GithubPick = (input: {
   already: string[];
 }) => Promise<string[]>;
 
+/** What the reader knows of a repo when it asks where its commits come from. */
+export type RepoInfo = { owner: string; repo: string; branch: string; private: boolean; sizeKb: number };
+
+/**
+ * Where a repo read's commits and hunks come from (decision 81). The service picks a local clone,
+ * a temp clone or the API; `api` is the reader's own, reading hunks for at most `maxPatchCommits`.
+ */
+export type OpenCommitSource = (
+  input: RepoInfo & { api: (options: { maxPatchCommits: number }) => CommitSource },
+) => Promise<CommitSource>;
+
 export type GithubReadInput = {
   link: GithubLink;
   /** The GitHub account whose commits count as the user's. */
   user: string;
   pick: GithubPick;
+  /** Picks the commits whose hunks are read; the biggest ones when absent. */
+  choose?: ChooseCommits;
+  /** Whether a commit email is the user's, for clones and the contributors' count. None when absent. */
+  isMine?: (email: string) => boolean;
+  /** The API, with no cap on hunks, when absent. */
+  source?: OpenCommitSource;
   step?: (text: string) => Promise<void>;
 };
 
@@ -325,6 +382,19 @@ function decodeContent(content: z.infer<typeof Content>): string | null {
   if (content.encoding !== "base64") return null;
   const text = Buffer.from(content.content, "base64").toString("utf8");
   return text.includes("\u0000") ? null : text;
+}
+
+/** The fallback commit choice: the biggest commits, no features. */
+const biggestChoice: ChooseCommits = async ({ commits }) => ({ features: [], shas: biggestCommits({ commits }) });
+
+/** Like `optional`, but any failure other than a used-up rate limit gives the fallback. */
+async function soft<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof GithubError && err.kind !== "rate_limited") return fallback;
+    throw err;
+  }
 }
 
 function subject(message: string): string {
@@ -421,11 +491,28 @@ export function createReader({
       files.push({ path, ...cut });
     }
 
-    await step(`Reading ${input.user}'s commits`);
-    const commits = await readCommits(
-      `${base}/commits?author=${encodeURIComponent(input.user)}&per_page=${MAX_GITHUB_COMMITS}&sha=${encodeURIComponent(branch)}`,
-      budget,
-    );
+    const isMine = input.isMine ?? (() => false);
+    const api = ({ maxPatchCommits }: { maxPatchCommits: number }) =>
+      apiCommitSource({ base, branch, user: input.user, isMine, maxPatchCommits });
+    const repoInfo: RepoInfo = { owner, repo, branch, private: info.private, sizeKb: info.size };
+    const source = input.source
+      ? await input.source({ ...repoInfo, api })
+      : api({ maxPatchCommits: Number.POSITIVE_INFINITY });
+    let evidence: Awaited<ReturnType<typeof readCommitEvidence>>;
+    try {
+      evidence = await readCommitEvidence({
+        source,
+        choose: input.choose ?? biggestChoice,
+        name: `${owner}/${repo}`,
+        user: input.user,
+        readme: readmeText,
+        budget,
+        step,
+      });
+    } finally {
+      await source.close?.();
+    }
+    const { commits, share, features, patches, pushed } = evidence;
 
     if (budget.left() >= MIN_FILE_TOKENS) {
       await step("Choosing files to read");
@@ -463,26 +550,80 @@ export function createReader({
       treeTotal: all.length,
       commits,
       tokens: GITHUB_TOKEN_CAP - budget.left(),
-      framing: owner.toLowerCase() === input.user.toLowerCase() ? "own" : "contribution",
-      share: null,
-      features: [],
-      patches: [],
+      // Counted commits decide; a repo whose commits can't be counted falls back to its owner.
+      framing:
+        share && share.total > 0
+          ? framingOf(share)
+          : owner.toLowerCase() === input.user.toLowerCase()
+            ? "own"
+            : "contribution",
+      share: share && share.total > 0 ? share : null,
+      features,
+      patches,
+      pushed,
+      commitsFrom: source.from,
     };
   }
 
-  async function readCommits(path: string, budget: TokenBudget): Promise<GithubCommit[]> {
-    const list = await optional(async () => parse(z.array(Commit), await get(path), "the commits"), []);
-    const commits: GithubCommit[] = [];
-    let left = GITHUB_SECTION_TOKENS.commits;
-    for (const c of list.slice(0, MAX_GITHUB_COMMITS)) {
-      const line = `${c.sha.slice(0, 12)} ${subject(c.commit.message)}`;
-      const cost = estimateTokens(line);
-      if (cost > left || cost > budget.left()) break;
-      budget.take(line, cost);
-      left -= cost;
-      commits.push({ sha: c.sha, subject: subject(c.commit.message) });
-    }
-    return commits;
+  /** The user's commits from `commits?author=`, hunks from `commits/<sha>`, the share from `contributors`. */
+  function apiCommitSource({
+    base,
+    branch,
+    user,
+    isMine,
+    maxPatchCommits,
+  }: {
+    base: string;
+    branch: string;
+    user: string;
+    isMine: (email: string) => boolean;
+    maxPatchCommits: number;
+  }): CommitSource {
+    return {
+      from: "api",
+      maxPatchCommits,
+      async list() {
+        const path = `${base}/commits?author=${encodeURIComponent(user)}&per_page=100&sha=${encodeURIComponent(branch)}`;
+        const listed = await optional(async () => parse(z.array(Commit), await get(path), "the commits"), []);
+        const mine: UserCommit[] = listed.slice(0, MAX_LISTED_COMMITS).map((c) => ({
+          sha: c.sha,
+          subject: subject(c.commit.message),
+          date: c.commit.author?.date ?? null,
+          files: [],
+          sized: false,
+        }));
+        const people = await soft(
+          async () =>
+            parse(z.array(Contributor), await get(`${base}/contributors?anon=1&per_page=100`), "contributors"),
+          null,
+        );
+        if (!people) return { mine, share: null };
+        const me = user.toLowerCase();
+        const ofMine = people
+          .filter((p) => p.login?.toLowerCase() === me || (p.login === undefined && p.email && isMine(p.email)))
+          .reduce((n, p) => n + p.contributions, 0);
+        const total = people.reduce((n, p) => n + p.contributions, 0);
+        return { mine, share: { mine: Math.min(ofMine, total), total } };
+      },
+      async patches(commits, step) {
+        const out: RawPatch[] = [];
+        for (const commit of commits) {
+          await step(`Reading the changes in ${commit.sha.slice(0, 7)} ${commit.subject}`.slice(0, 120));
+          const detail = await soft(
+            async () => parse(CommitDetail, await get(`${base}/commits/${encodeURIComponent(commit.sha)}`), "a commit"),
+            null,
+          );
+          if (!detail) continue;
+          const files = detail.files
+            .filter((f) => f.patch && !isSecretPath(f.filename) && !isNoisePath(f.filename))
+            .toSorted((a, b) => b.additions + b.deletions - (a.additions + a.deletions))
+            .slice(0, MAX_PATCH_FILES)
+            .map((f) => ({ path: f.filename, patch: f.patch ?? "" }));
+          out.push({ sha: commit.sha, files });
+        }
+        return out;
+      },
+    };
   }
 
   async function readPull(input: GithubReadInput & { link: { kind: "pull"; number: number } }): Promise<PullBundle> {

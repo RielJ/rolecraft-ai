@@ -1,9 +1,11 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import type { GithubRepoRef } from "@/domain/github-link";
 import type { FolderBundle } from "@/domain/github-read";
-import type { LocalFolder } from "@/domain/local-scan";
-import { type FolderReadInput, readFolderProject } from "./folder-read";
+import { type LocalFolder, parseGithubRemote } from "@/domain/local-scan";
+import type { CommitSource } from "@/domain/project-read";
+import { type FolderReadInput, gitCommitSource, readFolderProject } from "./folder-read";
 import { createGit, type GitSpawn } from "./git";
 
 /**
@@ -27,12 +29,18 @@ export type FolderReader = {
   emails(): Promise<string[]>;
   /** Read a resolved folder for facts (decision 81). Throws `FolderReadError` when it can't. */
   deep(input: FolderReadInput): Promise<FolderBundle>;
+  /** A clone's commits and hunks for a GitHub read (decision 81). */
+  commits(input: Omit<Parameters<typeof gitCommitSource>[1], "head">): CommitSource;
+  /** `remote.origin.url` of a folder with commits; null for anything else. */
+  remote(path: string): Promise<string | null>;
 };
 
 export type ProjectsReader = {
   /** The folder scanned, as configured. */
   readonly dir: string;
   list(): Promise<{ folders: LocalFolder[]; emails: string[] }>;
+  /** The folder whose origin is `ref` on GitHub, with symlinks resolved; null when none is. */
+  findClone(ref: GithubRepoRef): Promise<string | null>;
 };
 
 /** At most this many folders are read; the rest are ignored. */
@@ -125,6 +133,13 @@ export function createFolderReader({
       return readFolder(await resolveFolder(raw));
     },
     deep: (input) => readFolderProject(git, input),
+    commits: (input) => gitCommitSource(git, input),
+    async remote(path) {
+      const head = await repoGit(path, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
+      if (head.exit !== 0) return null;
+      const remote = await repoGit(path, ["config", "--get", "remote.origin.url"]);
+      return remote.exit === 0 ? remote.stdout.trim() || null : null;
+    },
     async emails() {
       const all = [...(await configEmails()), ...extraEmails].map((e) => e.trim().toLowerCase()).filter(Boolean);
       return [...new Set(all)];
@@ -138,16 +153,34 @@ export function createProjectsReader({ dir, ...options }: FolderReaderOptions & 
 }
 
 function createProjectsReaderFrom({ dir, folders: reader }: { dir: string; folders: FolderReader }): ProjectsReader {
+  async function folderNames(): Promise<string[]> {
+    const root = await lstat(dir).catch(() => null);
+    if (!root?.isDirectory()) throw new Error(`HB_PROJECTS_DIR (${dir}) is not a folder.`);
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort()
+      .slice(0, MAX_FOLDERS);
+  }
   return {
     dir,
+    async findClone({ owner, repo }) {
+      const want = `${owner}/${repo}`.toLowerCase();
+      const names = await folderNames();
+      for (let i = 0; i < names.length; i += CONCURRENCY) {
+        const batch = names.slice(i, i + CONCURRENCY).map((name) => join(dir, name));
+        const remotes = await Promise.all(batch.map((path) => reader.remote(path)));
+        const at = remotes.findIndex((url) => {
+          const ref = url ? parseGithubRemote(url) : null;
+          return ref !== null && `${ref.owner}/${ref.repo}`.toLowerCase() === want;
+        });
+        const found = batch[at];
+        if (found) return realpath(found);
+      }
+      return null;
+    },
     async list() {
-      const root = await lstat(dir).catch(() => null);
-      if (!root?.isDirectory()) throw new Error(`HB_PROJECTS_DIR (${dir}) is not a folder.`);
-      const names = (await readdir(dir, { withFileTypes: true }))
-        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-        .map((e) => e.name)
-        .sort()
-        .slice(0, MAX_FOLDERS);
+      const names = await folderNames();
       const folders: LocalFolder[] = [];
       for (let i = 0; i < names.length; i += CONCURRENCY) {
         folders.push(

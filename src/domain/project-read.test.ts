@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   biggestCommits,
+  capPicks,
   commitList,
+  commitListLine,
   fitPatches,
   framingOf,
   isNoisePath,
@@ -19,6 +21,7 @@ const commit = (sha: string, date: string, lines: number, path = "src/a.ts"): Us
   subject: `change ${sha}`,
   date,
   files: [{ path, additions: lines, deletions: 0 }],
+  sized: true,
 });
 
 describe("project-read", () => {
@@ -128,9 +131,56 @@ describe("project-read", () => {
           { path: "src/a.ts", additions: 3, deletions: 1 },
           { path: "logo.png", additions: 0, deletions: 0 },
         ],
+        sized: true,
       },
-      { sha: "bbb", email: "p@x.ph", date: "2026-01-01T00:00:00Z", subject: "empty", files: [] },
+      { sha: "bbb", email: "p@x.ph", date: "2026-01-01T00:00:00Z", subject: "empty", files: [], sized: true },
     ]);
+  });
+
+  test("a name-only log lists paths without counts", () => {
+    const log = "\x1eaaa\x1fJ@x.ph\x1f2026-01-02T00:00:00Z\x1ffeat: one\n\nsrc/a.ts\nbun.lock\n";
+    const [c] = parseNumstatLog(log, { sized: false });
+    expect(c).toMatchObject({ sized: false, files: [{ path: "src/a.ts" }, { path: "bun.lock" }] });
+    if (!c) throw new Error("no commit");
+    expect(commitListLine(c)).toBe("aaa 2026-01 feat: one [src/a.ts]");
+  });
+
+  test("without line counts, the fallback weighs files, and a commit with no file list still counts", () => {
+    const paths = (sha: string, date: string, files: string[]): UserCommit => ({
+      sha,
+      subject: sha,
+      date,
+      files: files.map((path) => ({ path, additions: 0, deletions: 0 })),
+      sized: false,
+    });
+    const commits = [
+      paths("one", "2026-01-01", ["a.ts"]),
+      paths("three", "2026-02-01", ["a.ts", "b.ts", "c.ts"]),
+      paths("lock", "2026-03-01", ["bun.lock"]),
+      { ...paths("api", "2026-04-01", []) },
+    ];
+    expect(biggestCommits({ commits })).toEqual(["three", "one", "api"]);
+  });
+
+  test("a capped pick keeps one commit of every feature before a second of any", () => {
+    const choice = {
+      features: [
+        { name: "A", shas: ["a1", "a2", "a3"] },
+        { name: "B", shas: ["b1", "b2"] },
+        { name: "C", shas: ["c1"] },
+      ],
+      shas: ["a1", "a2", "a3", "b1", "b2", "c1"],
+    };
+    expect(capPicks({ choice, max: 4 })).toEqual({
+      features: [
+        { name: "A", shas: ["a1", "a2"] },
+        { name: "B", shas: ["b1"] },
+        { name: "C", shas: ["c1"] },
+      ],
+      shas: ["a1", "a2", "b1", "c1"],
+    });
+    expect(capPicks({ choice, max: 10 })).toBe(choice);
+    expect(capPicks({ choice: { features: [], shas: ["x", "y", "z"] }, max: 2 }).shas).toEqual(["x", "y"]);
   });
 
   test("a diff splits per file, dropping secrets, noise and binaries", () => {

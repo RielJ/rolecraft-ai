@@ -1,6 +1,6 @@
 import type { FactEvidence } from "@/shared/api";
 import { commitUrl, fileUrl, type GithubRepoRef } from "./github-link";
-import type { CommitPatch, Feature, Framing } from "./project-read";
+import type { CommitPatch, CommitsFrom, Feature, Framing } from "./project-read";
 import { isSecretPath } from "./project-read";
 import { estimateTokens } from "./prompts";
 import { checkCandidates } from "./split";
@@ -142,7 +142,13 @@ type TreeFiles = {
   treeTotal: number;
 };
 
-export type RepoBundle = BundleBase & TreeFiles & { kind: "repo" };
+export type RepoBundle = BundleBase &
+  TreeFiles & {
+    kind: "repo";
+    /** Of the listed commits, those on GitHub; null when all are. A local clone may hold unpushed ones. */
+    pushed: string[] | null;
+    commitsFrom: CommitsFrom;
+  };
 
 export type PullBundle = BundleBase & {
   kind: "pull";
@@ -236,9 +242,9 @@ function citableFiles(bundle: ProjectBundle): string[] {
 /** A file's or commit's link: GitHub for GitHub bundles, the public remote for folders, else null. */
 function evidenceUrl(bundle: ProjectBundle, ref: { path: string } | { sha: string }): string | null {
   if (bundle.kind !== "folder") {
-    return "path" in ref
-      ? fileUrl({ owner: bundle.owner, repo: bundle.repo, at: bundle.at, path: ref.path })
-      : commitUrl({ owner: bundle.owner, repo: bundle.repo, sha: ref.sha });
+    if ("path" in ref) return fileUrl({ owner: bundle.owner, repo: bundle.repo, at: bundle.at, path: ref.path });
+    if (bundle.kind === "repo" && bundle.pushed && !bundle.pushed.includes(ref.sha)) return null;
+    return commitUrl({ owner: bundle.owner, repo: bundle.repo, sha: ref.sha });
   }
   const links = bundle.links;
   if (!links) return null;

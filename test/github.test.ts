@@ -281,7 +281,7 @@ describe("public reader", () => {
     expect(bundle.commits).toHaveLength(5);
     expect(new Set(seen.map((s) => new URL(s.url).hostname))).toEqual(new Set(["api.github.com"]));
     expect(seen.every((s) => s.agent === "hanapbuhay/0.1 (personal use)")).toBe(true);
-    expect(seen.some((s) => s.url.includes(`commits?author=juandc&per_page=${MAX_GITHUB_COMMITS}`))).toBe(true);
+    expect(seen.some((s) => s.url.includes("commits?author=juandc&per_page=100"))).toBe(true);
   });
 
   test("a rate limit (403 or 429 after retries) is a clear 429 AppError", async () => {
@@ -550,17 +550,22 @@ describe("Read from GitHub", () => {
         .filter((f) => f.status === "confirmed")
         .map((f) => f.id),
     ).toEqual([first.id]);
-    // Both AI calls are logged under the github purpose.
+    // Grouping the commits into features, picking files and finding facts: all logged under github.
     const calls = await testSql()`SELECT purpose, tier FROM ai_calls ORDER BY created_at`;
     expect([...calls].filter((c) => c.purpose === "github")).toEqual([
       { purpose: "github", tier: "light" },
       { purpose: "github", tier: "light" },
+      { purpose: "github", tier: "light" },
     ]);
+    // Commits came through the fixture API, with hunks of the picked ones (decision 81).
+    expect(after?.github?.lastRead?.commitsFrom).toBe("api");
   });
 
   test("facts citing evidence that was not read are dropped in code", async () => {
     const item = await addRepo("https://github.com/juandc/jeep-route");
     deps.fake.queue(
+      // No usable feature: the biggest commits are read instead.
+      JSON.stringify({ features: [] }),
       JSON.stringify({ files: ["src/planner.ts"] }),
       JSON.stringify({
         facts: [
@@ -600,7 +605,7 @@ describe("Read from GitHub", () => {
     // The repo changes: both commits are gone, one new one appears.
     const snapshot = { ...JEEP };
     snapshot.commits = [
-      { sha: "f".repeat(40), message: "Show the fare in the reply", author: "juandc" },
+      { sha: "f".repeat(40), message: "Show the fare in the reply", author: "juandc", date: null, files: [] },
       ...JEEP.commits.filter((c) => !/42 routes|Serve \/plan/.test(c.message)),
     ];
     await writeFile(join(dir, "jeep-route.json"), JSON.stringify(snapshot));

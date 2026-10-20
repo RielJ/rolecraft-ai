@@ -226,6 +226,8 @@ export const GithubReadSummary = z.object({
   features: z.array(z.string()).default([]),
   /** The user's commits against all commits, when counted (decision 81). */
   share: z.object({ mine: z.number().int(), total: z.number().int() }).nullable().default(null),
+  /** Where the commits and hunks were read from; null for a pull request or a read before decision 81. */
+  commitsFrom: z.enum(["folder", "local clone", "temp clone", "api"]).nullable().default(null),
   added: z.number().int(),
   unchanged: z.number().int(),
   removed: z.number().int(),

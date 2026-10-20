@@ -7,8 +7,11 @@ import { estimateTokens } from "./prompts";
  * the folder reader and the GitHub reader fill these shapes; nothing here runs git or fetches.
  */
 
-/** One of the user's commits, with the files it changed (lock, generated and secret files left out). */
-export type UserCommit = { sha: string; subject: string; date: string | null; files: ChangedFile[] };
+/**
+ * One of the user's commits and the files it changed. `sized` is false when the line counts are
+ * unknown: a blob-less clone lists paths only (each 0/0), and the GitHub commit list no files.
+ */
+export type UserCommit = { sha: string; subject: string; date: string | null; files: ChangedFile[]; sized: boolean };
 
 /** A piece of work the light model found in the user's commits, and the commits that show it. */
 export type Feature = { name: string; shas: string[] };
@@ -33,6 +36,31 @@ export type ChooseCommits = (input: {
   commits: readonly UserCommit[];
 }) => Promise<CommitChoice>;
 
+/** Where a read's commits and hunks came from (decision 81). */
+export type CommitsFrom = "folder" | "local clone" | "temp clone" | "api";
+
+export type CommitShare = { mine: number; total: number };
+
+/** Raw hunks of one picked commit, per file, before `fitPatches`. */
+export type RawPatch = { sha: string; files: { path: string; patch: string }[] };
+
+/**
+ * The user's commits and their hunks, from git on this machine or from the GitHub API. The
+ * readers share one driver over it, so what is listed, picked and cut is the same everywhere.
+ */
+export type CommitSource = {
+  readonly from: CommitsFrom;
+  /** Hunks are read for at most this many picked commits. */
+  readonly maxPatchCommits: number;
+  /** The user's commits, newest first, at most `MAX_LISTED_COMMITS`; the share when counted. */
+  list(): Promise<{ mine: UserCommit[]; share: CommitShare | null }>;
+  /** Hunks of `commits`, in order, secrets and noise left out. */
+  patches(commits: readonly UserCommit[], step: (text: string) => Promise<void>): Promise<RawPatch[]>;
+  /** Of `shas`, those on the GitHub remote; absent when every listed commit is. */
+  pushed?(shas: readonly string[]): Promise<string[]>;
+  /** Removes a temp clone; runs however the read ends. */
+  close?(): Promise<void>;
+};
 export const MAX_FEATURES = 6;
 export const MAX_FEATURE_COMMITS = 3;
 /** With fewer of the user's commits than this, grouping is skipped and the biggest are read. */
@@ -45,6 +73,8 @@ export const MAX_LISTED_COMMITS = 300;
 export const FEATURE_LIST_TOKENS = 4_000;
 /** Tokens of hunks in one read, shared evenly by the picked commits. */
 export const PATCH_TOKENS = 4_500;
+/** Changed files of one picked commit whose hunks are read, biggest first. */
+export const MAX_PATCH_FILES = 8;
 /** Hunks are read for at most this many commits when they come from the GitHub API. */
 export const API_PATCH_COMMITS = 10;
 
@@ -67,12 +97,14 @@ export function isNoisePath(path: string): boolean {
   return NOISE.test(path);
 }
 
-/** Lines the user wrote in a commit, counting only files that are theirs to write. */
+/**
+ * Lines the user wrote in a commit, counting only files that are theirs to write. Without line
+ * counts it is the number of such files, and 1 when the files aren't known either.
+ */
 export function commitWeight(commit: UserCommit): number {
-  return commit.files.reduce(
-    (n, f) => n + (isNoisePath(f.path) || isSecretPath(f.path) ? 0 : f.additions + f.deletions),
-    0,
-  );
+  const files = commit.files.filter((f) => !isNoisePath(f.path) && !isSecretPath(f.path));
+  if (commit.sized) return files.reduce((n, f) => n + f.additions + f.deletions, 0);
+  return commit.files.length === 0 ? 1 : files.length;
 }
 
 /** A commit's files without noise or secrets, biggest first. */
@@ -164,7 +196,8 @@ export function commitListLine(c: UserCommit): string {
     .slice(0, 3)
     .map((f) => f.path)
     .join(", ");
-  return `${c.sha.slice(0, 12)} ${c.date?.slice(0, 7) ?? "?"} +${add} -${del} ${c.subject}${top ? ` [${top}]` : ""}`;
+  const size = c.sized ? ` +${add} -${del}` : "";
+  return `${c.sha.slice(0, 12)} ${c.date?.slice(0, 7) ?? "?"}${size} ${c.subject}${top ? ` [${top}]` : ""}`;
 }
 
 /** The listed commit lines, newest first, within `maxTokens`. */
@@ -210,8 +243,16 @@ export function listedCommits({
   return out;
 }
 
-/** `git log --numstat` output written with `--format=%x1e%H%x1f%ae%x1f%aI%x1f%s`, one record per commit. */
-export function parseNumstatLog(text: string): (UserCommit & { email: string })[] {
+/**
+ * `git log --numstat` (or `--name-only`, which gives paths without counts) output written with
+ * `--format=%x1e%H%x1f%ae%x1f%aI%x1f%s`, one record per commit.
+ */
+export function parseNumstatLog(
+  text: string,
+  { sized = true }: { sized?: boolean } = {},
+): (UserCommit & {
+  email: string;
+})[] {
   const out: (UserCommit & { email: string })[] = [];
   for (const record of text.split("\x1e").slice(1)) {
     const [head = "", ...rest] = record.split("\n");
@@ -219,17 +260,43 @@ export function parseNumstatLog(text: string): (UserCommit & { email: string })[
     if (!sha || email === undefined) continue;
     const files: ChangedFile[] = [];
     for (const line of rest) {
+      if (!sized) {
+        if (line) files.push({ path: line, additions: 0, deletions: 0 });
+        continue;
+      }
       const [add, del, path] = line.split("\t");
       if (!path || add === undefined || del === undefined) continue;
       // Binary files show "-"; they count as no lines written.
       files.push({ path, additions: Number(add) || 0, deletions: Number(del) || 0 });
     }
-    out.push({ sha, email, date: date || null, subject: (subject ?? "").trim().slice(0, 200), files });
+    out.push({ sha, email, date: date || null, subject: (subject ?? "").trim().slice(0, 200), files, sized });
   }
   return out;
 }
 
 // ---------- Hunks ----------
+
+/**
+ * The picked commits to read hunks for when only `max` can be: one per feature in turn, so a cut
+ * drops each feature's last commits first, not whole features.
+ */
+export function capPicks({ choice, max }: { choice: CommitChoice; max: number }): CommitChoice {
+  if (choice.shas.length <= max) return choice;
+  const queues = choice.features.length ? choice.features.map((f) => [...f.shas]) : [[...choice.shas]];
+  const kept = new Set<string>();
+  while (kept.size < max && queues.some((q) => q.length)) {
+    for (const q of queues) {
+      const sha = q.shift();
+      if (sha && kept.size < max) kept.add(sha);
+    }
+  }
+  return {
+    features: choice.features
+      .map((f) => ({ ...f, shas: f.shas.filter((s) => kept.has(s)) }))
+      .filter((f) => f.shas.length),
+    shas: choice.shas.filter((s) => kept.has(s)),
+  };
+}
 
 /** `git show` / GitHub patch text split per file; binary files and secrets are dropped. */
 export function splitDiff(diff: string): { path: string; patch: string }[] {

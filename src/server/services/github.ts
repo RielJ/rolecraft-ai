@@ -15,14 +15,15 @@ import {
   type ProjectBundle,
 } from "@/domain/github-read";
 import { isOwnEmail } from "@/domain/local-scan";
-import { FEATURE_LIST_TOKENS } from "@/domain/project-read";
+import { API_PATCH_COMMITS, type CommitSource, FEATURE_LIST_TOKENS } from "@/domain/project-read";
 import { parseProjectSource } from "@/domain/project-source";
 import { FEATURE_MAX_TOKENS, GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
 import { normalize } from "@/domain/text";
 import { type GithubReadSummary, GithubReadTaskInput, type ItemId, type ProfileDto, type TaskDto } from "@/shared/api";
 import { FolderReadError, type PublicRemote } from "../adapters/folder-read";
-import { GithubError } from "../adapters/github";
+import { GithubError, type OpenCommitSource } from "../adapters/github";
+import { CLONE_SHOW_TIMEOUT_MS, CloneError, MAX_CLONE_KB } from "../adapters/temp-clone";
 import { facts, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
@@ -238,11 +239,16 @@ async function runRead(
     bundle = await readFolder(deps, ctx, { path: source.path, who: folderUser, complete: complete("github") });
   } else {
     await ctx.step(`Reading github.com/${githubLabel(source.link)} as ${who.user}`);
+    const emails = new Set(await deps.folders.emails());
+    const isMine = (email: string) => isOwnEmail({ email, emails, githubUser: who.user });
     try {
       bundle = await deps.github.read({
         link: source.link,
         user: who.user,
         pick: aiPick(complete("github")),
+        choose: aiChoose(complete("github")),
+        isMine,
+        source: openCommitSource(deps, ctx, isMine),
         step: ctx.step,
       });
     } catch (err) {
@@ -279,8 +285,43 @@ async function runRead(
     commitsRead: bundle.commits.length,
     features: bundle.features.map((f) => f.name),
     share: bundle.share,
+    commitsFrom: bundle.kind === "folder" ? "folder" : bundle.kind === "repo" ? bundle.commitsFrom : null,
     ...applied.counts,
     dropped: extraction.dropped,
+  };
+}
+
+/**
+ * Where a GitHub repo read's commits and hunks come from (decision 81): a clone in the projects
+ * folder (free, and has unpushed work); else, with gh or fixtures, the API; else a blob-less temp
+ * clone of a repo up to 500 MB; else, or when the clone fails, the API for 10 commits.
+ */
+function openCommitSource(deps: Deps, ctx: TaskContext, isMine: (email: string) => boolean): OpenCommitSource {
+  return async ({ owner, repo, branch, sizeKb, api }): Promise<CommitSource> => {
+    const local = deps.projects ? await deps.projects.findClone({ owner, repo }).catch(() => null) : null;
+    if (local) {
+      await ctx.step(`Reading your commits from your clone in ${local}`);
+      return deps.folders.commits({ path: local, isMine, from: "local clone" });
+    }
+    if (deps.github.mode !== "public") return api({ maxPatchCommits: Number.POSITIVE_INFINITY });
+    if (deps.cloner && sizeKb <= MAX_CLONE_KB) {
+      await ctx.step(`Cloning ${owner}/${repo} without file contents, to read your changes`);
+      try {
+        const clone = await deps.cloner.clone({ owner, repo, branch });
+        return deps.folders.commits({
+          path: clone.path,
+          isMine,
+          from: "temp clone",
+          sized: false,
+          showLimits: { timeoutMs: CLONE_SHOW_TIMEOUT_MS },
+          close: clone.close,
+        });
+      } catch (err) {
+        if (!(err instanceof CloneError)) throw err;
+        await ctx.step(`${err.message} Reading ${API_PATCH_COMMITS} commits through the API instead`);
+      }
+    }
+    return api({ maxPatchCommits: API_PATCH_COMMITS });
   };
 }
 
