@@ -1,13 +1,13 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { parseGithubLink } from "@/domain/github-link";
 import type { DroppedGithubFact, GithubProposal } from "@/domain/github-read";
 import type { Prompt } from "@/domain/prompts";
 import { normalize } from "@/domain/text";
 import { createReader } from "@/server/adapters/github";
 import { createFixtureTransport, GithubSnapshot } from "@/server/adapters/github-fixture";
 import { aiPick, extractGithubFacts } from "@/server/services/github-extract";
+import { parseGithubLink } from "@/shared/github-link";
 
 /*
  * The GitHub set (decision 55, PLAN.md slice 14): recorded repos read by the app's own reader

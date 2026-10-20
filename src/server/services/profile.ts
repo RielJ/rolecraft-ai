@@ -4,7 +4,6 @@ import { factKey } from "@/domain/citations";
 import { contactFromCv, fillContact } from "@/domain/contact";
 import { diffFacts } from "@/domain/facts-diff";
 import { SKILLS, skillsInFacts } from "@/domain/features";
-import { githubLabel, parseGithubLink } from "@/domain/github-link";
 import {
   buildSplitPrompt,
   buildSplitRetryPrompt,
@@ -41,6 +40,7 @@ import {
   type UserId,
 } from "@/shared/api";
 import { type FactOrigin, hasRoles, type ProfileItemKind } from "@/shared/enums";
+import { githubLabel, parseGithubLink } from "@/shared/github-link";
 import { itemKindLabel } from "@/shared/labels";
 import { extractCvText } from "../adapters/extract";
 import type { Db, Tx } from "../db/client";
@@ -370,22 +370,35 @@ function evidenceOf(row: Pick<ItemRow, "kind" | "title" | "body">): string {
  */
 async function checkSplitCap(
   deps: Deps,
-  { item, kind, confirmOverCap }: { item: SplitItem; kind: ProfileItemKind; confirmOverCap: boolean },
+  {
+    item,
+    kind,
+    confirmOverCap,
+    extraUsd = 0,
+  }: { item: SplitItem; kind: ProfileItemKind; confirmOverCap: boolean; extraUsd?: number },
 ): Promise<void> {
-  await checkSplitsCap(deps, { splits: [{ item, kind }], confirmOverCap });
+  await checkSplitsCap(deps, { splits: [{ item, kind }], confirmOverCap, extraUsd });
 }
 
-/** The same for several splits started together: one check against their summed estimate. */
+/**
+ * The same for several splits started together: one check against their summed estimate, plus
+ * `extraUsd` for work started with them, such as reads for facts (decision 81).
+ */
 async function checkSplitsCap(
   deps: Deps,
   {
     splits,
     confirmOverCap,
-  }: { splits: readonly { item: SplitItem; kind: ProfileItemKind }[]; confirmOverCap: boolean },
+    extraUsd = 0,
+  }: {
+    splits: readonly { item: SplitItem; kind: ProfileItemKind }[];
+    confirmOverCap: boolean;
+    extraUsd?: number;
+  },
 ): Promise<void> {
   const config = await loadAiConfig(deps);
   if (!config) return;
-  let total = 0;
+  let total = extraUsd;
   for (const { item, kind } of splits) {
     const prompt = buildSplitPrompt({ item });
     // A CV or experience add-on also has its roles read in the same task (decision 71).
@@ -860,17 +873,26 @@ async function resolveFolder(deps: Deps, raw: string): Promise<string> {
 
 /** Save a new add-on and split it into pending facts. */
 export async function createAddon(deps: Deps, input: AddonInput): Promise<ProfileDto> {
+  await saveAddon(deps, input);
+  return getProfile(deps);
+}
+
+/**
+ * Save one typed add-on and start its split; returns its id. `extraUsd` joins the split's cap
+ * check, for a read started with it.
+ */
+export async function saveAddon(deps: Deps, input: AddonInput, { extraUsd = 0 } = {}): Promise<ItemId> {
   const values = addonValues(input);
   const confirmOverCap = input.confirmOverCap ?? false;
   const folder = input.folder ? await resolveFolder(deps, input.folder) : null;
-  await checkSplitCap(deps, { item: splitItem(values, []), kind: values.kind, confirmOverCap });
+  await checkSplitCap(deps, { item: splitItem(values, []), kind: values.kind, confirmOverCap, extraUsd });
   const [created] = await deps.db
     .insert(profileItems)
     .values({ userId: deps.userId, ...values, folder, githubPrivate: input.linkPrivate ? true : null })
     .returning({ id: profileItems.id });
   if (!created) throw new Error("Could not save the add-on.");
   await startSplit(deps, { itemId: created.id, confirmOverCap });
-  return getProfile(deps);
+  return created.id;
 }
 
 /** An add-on created by the app rather than typed (decision 78), with its repo's visibility. */
@@ -887,13 +909,26 @@ export type NewAddon = Omit<AddonInput, "confirmOverCap" | "folder"> & {
  */
 export async function createAddons(
   deps: Deps,
-  { addons, confirmOverCap }: { addons: readonly NewAddon[]; confirmOverCap: boolean },
+  input: { addons: readonly NewAddon[]; confirmOverCap: boolean },
 ): Promise<ProfileDto> {
-  if (addons.length === 0) return getProfile(deps);
+  await saveAddons(deps, input);
+  return getProfile(deps);
+}
+
+/**
+ * The same, returning the new ids in the order given. `extraUsd` joins the one cap check, for
+ * reads started with the add-ons.
+ */
+export async function saveAddons(
+  deps: Deps,
+  { addons, confirmOverCap, extraUsd = 0 }: { addons: readonly NewAddon[]; confirmOverCap: boolean; extraUsd?: number },
+): Promise<ItemId[]> {
+  if (addons.length === 0) return [];
   const rows = addons.map((a) => ({ ...addonValues(a), githubPrivate: a.githubPrivate, folder: a.folder ?? null }));
   await checkSplitsCap(deps, {
     splits: rows.map((values) => ({ item: splitItem(values, []), kind: values.kind })),
     confirmOverCap,
+    extraUsd,
   });
   const now = Date.now();
   const created = await deps.db
@@ -903,7 +938,7 @@ export async function createAddons(
     .values(rows.map((values, i) => ({ userId: deps.userId, ...values, createdAt: new Date(now + i) })))
     .returning({ id: profileItems.id });
   for (const { id } of created) await startSplit(deps, { itemId: id, confirmOverCap });
-  return getProfile(deps);
+  return created.map((c) => c.id);
 }
 
 /**

@@ -2,13 +2,6 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { diffFacts } from "@/domain/facts-diff";
 import {
-  type GithubLink,
-  type GithubRepoRef,
-  githubLabel,
-  githubProfileUser,
-  parseGithubLink,
-} from "@/domain/github-link";
-import {
   type AcceptedGithubFact,
   GITHUB_SECTION_TOKENS,
   GITHUB_TOKEN_CAP,
@@ -20,15 +13,29 @@ import { parseProjectSource } from "@/domain/project-source";
 import { FEATURE_MAX_TOKENS, GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
 import { normalize } from "@/domain/text";
-import { type GithubReadSummary, GithubReadTaskInput, type ItemId, type ProfileDto, type TaskDto } from "@/shared/api";
+import {
+  type AddonInput,
+  type GithubReadSummary,
+  GithubReadTaskInput,
+  type ItemId,
+  type ProfileDto,
+  type TaskDto,
+} from "@/shared/api";
+import {
+  type GithubLink,
+  type GithubRepoRef,
+  githubLabel,
+  githubProfileUser,
+  parseGithubLink,
+} from "@/shared/github-link";
 import { FolderReadError, type PublicRemote } from "../adapters/folder-read";
 import { GithubError, type OpenCommitSource } from "../adapters/github";
 import { CLONE_SHOW_TIMEOUT_MS, CloneError, MAX_CLONE_KB } from "../adapters/temp-clone";
 import { facts, profileItems } from "../db/schema";
-import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
+import { type AiConfig, checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { aiChoose, aiPick, extractGithubFacts, type LightComplete } from "./github-extract";
-import { getProfile, loadContact } from "./profile";
+import { createAddon, getProfile, loadContact, saveAddon } from "./profile";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 
 /**
@@ -134,11 +141,20 @@ export function worstCasePrompts(): { prompt: Prompt; maxOutputTokens: number }[
   ];
 }
 
+function oneReadUsd(config: AiConfig): number {
+  return worstCasePrompts().reduce((sum, p) => sum + estimateUsd({ model: config.models.light, ...p }), 0);
+}
+
+/** One read's worst-case cost with the user's light model; null without an AI key. */
+export async function readEstimateUsd(deps: Deps): Promise<number | null> {
+  const config = await loadAiConfig(deps);
+  return config ? oneReadUsd(config) : null;
+}
+
 async function checkReadCap(deps: Deps, { confirmOverCap }: { confirmOverCap: boolean }): Promise<void> {
   const config = await loadAiConfig(deps);
   if (!config) return;
-  const estimate = worstCasePrompts().reduce((sum, p) => sum + estimateUsd({ model: config.models.light, ...p }), 0);
-  await checkCap(deps, { capUsd: config.capUsd, estimateUsd: estimate, confirmOverCap });
+  await checkCap(deps, { capUsd: config.capUsd, estimateUsd: oneReadUsd(config), confirmOverCap });
 }
 
 // ---------- Start ----------
@@ -197,6 +213,87 @@ export async function readGithub(
   { itemId, confirmOverCap = false }: { itemId: ItemId; confirmOverCap?: boolean | undefined },
 ): Promise<ProfileDto> {
   await startRead(deps, { itemId, confirmOverCap });
+  return getProfile(deps);
+}
+
+// ---------- Reads started with new add-ons ----------
+
+/** What reads started with new add-ons need, found before anything is saved. */
+export type ReadPlan = { estimateUsd: number; who: { github: GithubUser | null; folder: FolderUser | null } };
+
+export const NO_READS: ReadPlan = { estimateUsd: 0, who: { github: null, folder: null } };
+
+/**
+ * Check what `github` repo reads and `folder` reads need (an AI key, and who the user is) and
+ * estimate their worst-case cost, which joins the add-ons' own cap check: one check for the batch.
+ */
+export async function planReads(deps: Deps, { github, folder }: { github: number; folder: number }): Promise<ReadPlan> {
+  if (github + folder === 0) return NO_READS;
+  const config = await requireAiConfig(deps);
+  return {
+    estimateUsd: (github + folder) * oneReadUsd(config),
+    who: {
+      github: github > 0 ? await requireGithubUser(deps) : null,
+      folder: folder > 0 ? await requireFolderUser(deps) : null,
+    },
+  };
+}
+
+/**
+ * Read new add-ons for facts one at a time, in the order given (decision 81). Each gets its own
+ * task at once, so each add-on shows its progress; a task waits for the one before it to finish,
+ * however that ends. The cap was checked for the batch, so the reads don't stop at it.
+ */
+export async function queueReads(
+  deps: Deps,
+  { items, plan }: { items: readonly { itemId: ItemId; source: "github" | "folder" }[]; plan: ReadPlan },
+): Promise<void> {
+  let previous: Promise<void> = Promise.resolve();
+  for (const [i, { itemId, source }] of items.entries()) {
+    const who = plan.who[source];
+    if (!who) throw new Error(`No ${source} user planned for this read.`);
+    const before = previous;
+    let release = () => {};
+    previous = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const input: GithubReadTaskInput = { itemId };
+    try {
+      await startTask(deps, {
+        kind: "github_read",
+        input,
+        run: async (ctx) => {
+          try {
+            if (i > 0) {
+              await ctx.step(i === 1 ? "Waiting for the read before it" : `Waiting for the ${i} reads before it`);
+              await before;
+            }
+            return await runRead(deps, ctx, { itemId, who, confirmOverCap: true });
+          } finally {
+            release();
+          }
+        },
+      });
+    } catch (err) {
+      release();
+      throw err;
+    }
+  }
+}
+
+/** Save a typed add-on; with `read`, also read it for facts once saved (decision 81). */
+export async function addAddon(deps: Deps, input: AddonInput): Promise<ProfileDto> {
+  if (!input.read) return createAddon(deps, input);
+  const source = input.folder ? "folder" : input.link && parseGithubLink(input.link) ? "github" : null;
+  if (!source) {
+    throw new AppError({
+      code: "invalid_input",
+      message: "Only a GitHub repo or pull request link, or a folder on this machine, can be read for facts.",
+    });
+  }
+  const plan = await planReads(deps, { github: source === "github" ? 1 : 0, folder: source === "folder" ? 1 : 0 });
+  const itemId = await saveAddon(deps, input, { extraUsd: plan.estimateUsd });
+  await queueReads(deps, { items: [{ itemId, source }], plan });
   return getProfile(deps);
 }
 

@@ -1,4 +1,4 @@
-import type { GithubRepoRef } from "./github-link";
+import type { GithubRepoRef } from "@/shared/github-link";
 
 /**
  * Finding the user's own GitHub repos (decision 78). Rules only, no AI: forks, the profile README

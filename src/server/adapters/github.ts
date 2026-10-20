@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { type GithubLink, githubLabel } from "@/domain/github-link";
 import {
   createTokenBudget,
   GITHUB_SECTION_TOKENS,
@@ -31,6 +30,7 @@ import {
 import type { GithubAbout } from "@/domain/project-source";
 import { estimateTokens } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
+import { type GithubLink, githubLabel } from "@/shared/github-link";
 import { readCommitEvidence } from "./commit-evidence";
 import { type HttpClient, HttpError, MAX_BYTES } from "./http";
 

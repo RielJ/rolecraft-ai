@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseGithubLink } from "@/domain/github-link";
 import type { CommitSource, UserCommit } from "@/domain/project-read";
 import { buildGithubFactsPrompt } from "@/domain/prompts";
 import { createReader, type GithubReadInput } from "@/server/adapters/github";
 import { createFixtureTransport, type GithubSnapshotInput } from "@/server/adapters/github-fixture";
+import { parseGithubLink } from "@/shared/github-link";
 
 /*
  * GitHub repo reads with commit evidence (decision 81): the user's commits from the API, the

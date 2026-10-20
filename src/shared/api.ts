@@ -453,6 +453,8 @@ export const ProjectScanDto = z.object({
       ScanFailed,
     ])
     .nullable(),
+  /** One read for facts at most costs this with the light model; null without an AI key. */
+  readEstimateUsd: z.number().nullable().default(null),
 });
 export type ProjectScanDto = z.infer<typeof ProjectScanDto>;
 
@@ -463,7 +465,13 @@ const names = z.array(z.string().trim().min(1).max(255)).max(MAX_PROJECTS_PER_AD
 
 /** Repo names and folder names to add; the server scans again and adds only names it finds. */
 export const AddProjectsInput = z
-  .object({ repos: names.default([]), folders: names.default([]), confirmOverCap: z.boolean().optional() })
+  .object({
+    repos: names.default([]),
+    folders: names.default([]),
+    /** Read each repo and git folder for facts, one at a time, once added (decision 81). */
+    read: z.boolean().default(false),
+    confirmOverCap: z.boolean().optional(),
+  })
   .refine((v) => v.repos.length + v.folders.length > 0, { message: "Pick at least one project." })
   .refine((v) => v.repos.length + v.folders.length <= MAX_PROJECTS_PER_ADD, {
     message: `Add at most ${MAX_PROJECTS_PER_ADD} projects at once.`,
@@ -524,6 +532,8 @@ export const AddonInput = z.object({
    * Read on create only; the server resolves it again and refuses a path that isn't a folder.
    */
   folder: z.string().trim().min(1).max(2000).nullable().optional(),
+  /** Read the new add-on's GitHub link or folder for facts once saved (decision 81). Create only. */
+  read: z.boolean().optional(),
   confirmOverCap: z.boolean().optional(),
 });
 export type AddonInput = z.infer<typeof AddonInput>;

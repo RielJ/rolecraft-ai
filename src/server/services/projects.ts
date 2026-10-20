@@ -5,8 +5,8 @@ import { type OwnedRepo, type RepoScan, repoAddon, repoKey, type ScannedRepo, sc
 import type { AddProjectsInput, ProfileDto, ProjectScanDto, ScannedFolderDto, ScannedRepoDto } from "@/shared/api";
 import { profileItems } from "../db/schema";
 import { AppError, type Deps } from "./context";
-import { githubUserFor, linkedRepos, listOwned } from "./github";
-import { createAddons, loadContact } from "./profile";
+import { githubUserFor, linkedRepos, listOwned, NO_READS, planReads, queueReads, readEstimateUsd } from "./github";
+import { getProfile, loadContact, saveAddons } from "./profile";
 
 /**
  * "Find my projects" (decision 78): the user's GitHub repos through gh, and the folders in
@@ -139,6 +139,7 @@ export async function scanProjects(deps: Deps): Promise<ProjectScanDto> {
             onGithub: local.scan.onGithub,
           }
         : local,
+    readEstimateUsd: await readEstimateUsd(deps),
   };
 }
 
@@ -186,11 +187,31 @@ export async function addProjects(deps: Deps, input: AddProjectsInput): Promise<
       folder: await folderPath(repo),
     })),
   );
-  return createAddons(deps, {
+  // Repos are read from GitHub, folders with git; a folder that isn't a git repo is only split.
+  const sources: ("github" | "folder" | null)[] = [
+    ...pickedRepos.map(() => "github" as const),
+    ...folderAddons.map((a) => (a.folder ? ("folder" as const) : null)),
+  ];
+  const plan = input.read
+    ? await planReads(deps, {
+        github: sources.filter((s) => s === "github").length,
+        folder: sources.filter((s) => s === "folder").length,
+      })
+    : NO_READS;
+  const ids = await saveAddons(deps, {
     addons: [
       ...pickedRepos.map((repo) => ({ kind: "open_source" as const, ...repoAddon(repo), githubPrivate: repo.private })),
       ...folderAddons,
     ],
     confirmOverCap: input.confirmOverCap ?? false,
+    extraUsd: plan.estimateUsd,
   });
+  if (input.read) {
+    const items = ids.flatMap((itemId, i) => {
+      const source = sources[i];
+      return source ? [{ itemId, source }] : [];
+    });
+    await queueReads(deps, { items, plan });
+  }
+  return getProfile(deps);
 }

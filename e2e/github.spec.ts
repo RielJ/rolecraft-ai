@@ -5,7 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 import { ProfileDto } from "@/shared/api";
 import { E2E_DATABASE_URL, E2E_GIT_EMAIL, E2E_GITHUB_DIR, E2E_PROJECTS_DIR } from "../playwright.config";
-import { makeRepo } from "../test/git-repos";
+import { makeFileRepo, makeRepo } from "../test/git-repos";
 import { resetTables } from "../test/reset";
 
 /*
@@ -247,8 +247,76 @@ test("fill the add-on form from a private repo link and a folder path; save keep
     expect(problems, scheme).toEqual([]);
   }
 
+  // A fill turns on Read for facts; without it the add-on is only split.
+  const read = dialog.getByRole("checkbox", { name: "Read for facts" });
+  await expect(read).toBeChecked();
+  await read.uncheck();
   await dialog.getByRole("button", { name: "Save and split into facts" }).click();
   await expect(dialog).toBeHidden();
   const addon = page.getByRole("list", { name: "Add-ons" }).getByRole("listitem").filter({ hasText: "sari-ledger" });
   await expect(addon.getByText("Private repo")).toBeVisible();
+});
+
+test("find my projects with Read each project for facts → a repo and a folder are read, one at a time", async ({
+  page,
+}) => {
+  await makeFileRepo(join(E2E_PROJECTS_DIR, "kain-tayo"), {
+    commits: [
+      {
+        email: E2E_GIT_EMAIL,
+        subject: "feat: weekly menu",
+        files: { "README.md": "# Kain Tayo\n\nRecipe planner for carinderias.", "menu.go": "package main\n" },
+      },
+      {
+        email: E2E_GIT_EMAIL,
+        subject: "feat: shopping list",
+        files: { "list.go": "package main\n\nfunc List() {}\n" },
+      },
+      // Five commits of the user's, so the scan shows it.
+      ...["prices", "servings", "leftovers"].map((what) => ({
+        email: E2E_GIT_EMAIL,
+        subject: `feat: ${what}`,
+        files: { [`${what}.go`]: `package main\n\n// ${what}\n` },
+      })),
+    ],
+  });
+  const ok = await page.request.put("/api/settings/ai-key", {
+    data: { provider: "anthropic", key: "sk-ant-github-key-ABCD" },
+  });
+  expect(ok.ok()).toBe(true);
+  await api(page, "PUT", "/profile", {
+    contact: { fullName: "Juan Dela Cruz", email: "", phone: "", location: "", links: ["https://github.com/juandc"] },
+  });
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Find my projects" }).click();
+  const dialog = page.getByRole("dialog", { name: "Find my projects" });
+  await dialog.getByRole("checkbox", { name: "jeep-route" }).check();
+  await dialog.getByRole("checkbox", { name: "kain-tayo" }).check();
+
+  const read = dialog.getByRole("checkbox", { name: "Read each project for facts" });
+  await expect(read).not.toBeChecked();
+  await read.check();
+  await expect(dialog).toContainText(/2 reads, at most \$\d+\.\d\d with AI\. They run one at a time after adding\./);
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    const result = await new AxeBuilder({ page })
+      .include('[role="dialog"]')
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    const problems = result.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
+    expect(problems, scheme).toEqual([]);
+  }
+  await dialog.getByRole("button", { name: "Add 2 projects" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Added 2 projects. Reading 2 projects for facts, one at a time.")).toBeVisible();
+
+  // Each add-on shows its own read, and ends ready to re-read.
+  const addons = page.getByRole("list", { name: "Add-ons" });
+  for (const name of ["jeep-route", "kain-tayo"]) {
+    const item = addons.getByRole("listitem").filter({ hasText: name });
+    await expect(item.getByRole("button", { name: "Re-read" })).toBeVisible({ timeout: 20_000 });
+  }
+  const folder = addons.getByRole("listitem").filter({ hasText: "kain-tayo" });
+  await expect(folder).toContainText(E2E_PROJECTS_DIR);
+  await expect(page.getByRole("list", { name: "Facts to review" })).toContainText("feat: shopping list");
 });

@@ -1,6 +1,5 @@
 import { and, eq, gt } from "drizzle-orm";
 import { findPlaceholders, stripMarkers } from "@/domain/citations";
-import { type GithubRepoRef, isPrivateGithubUrl, stripPrivateGithubUrls } from "@/domain/github-link";
 import { matchPrefill, type PrefillAnswer } from "@/domain/prefill";
 import {
   type DraftInput,
@@ -21,6 +20,7 @@ import type {
   PrefillRequest,
   PrefillResponse,
 } from "@/shared/extension";
+import { type GithubRepoRef, isPrivateGithubUrl, stripPrivateGithubUrls } from "@/shared/github-link";
 import { applicationSessions, tasks } from "../db/schema";
 import { type Deps, notFound } from "./context";
 import { preferencesFor } from "./extension-preferences";

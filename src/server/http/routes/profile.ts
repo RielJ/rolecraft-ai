@@ -18,12 +18,11 @@ import {
   UploadCvForm,
 } from "@/shared/api";
 import { AppError, type Deps } from "../../services/context";
-import { readGithub } from "../../services/github";
+import { addAddon, readGithub } from "../../services/github";
 import { prefillAddon } from "../../services/prefill";
 import {
   confirmAllFacts,
   confirmFact,
-  createAddon,
   deleteAddon,
   deleteFact,
   getProfile,
@@ -100,7 +99,7 @@ export function profileRoutes(deps: Deps) {
         c.json(await addProjects(deps, c.req.valid("json"))),
       )
       .post("/profile/addons", validate("json", AddonInput), async (c) =>
-        c.json(await createAddon(deps, c.req.valid("json")), 201),
+        c.json(await addAddon(deps, c.req.valid("json")), 201),
       )
       .put("/profile/addons/:id", validate("param", ItemParam), validate("json", AddonInput), async (c) =>
         c.json(await updateAddon(deps, { itemId: c.req.valid("param").id, ...c.req.valid("json") })),

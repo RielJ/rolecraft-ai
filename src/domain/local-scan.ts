@@ -1,4 +1,4 @@
-import type { GithubRepoRef } from "./github-link";
+import type { GithubRepoRef } from "@/shared/github-link";
 import { type CloneInfo, MIN_OWN_COMMITS, repoKey } from "./repo-scan";
 
 /**

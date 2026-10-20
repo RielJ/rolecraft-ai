@@ -1022,7 +1022,7 @@ The invariant test is written first, fails, and then the code makes it pass.
 
 ### Slice 14. GitHub add-ons
 
-- **Files owned**: `src/server/adapters/github.ts` (public API and `gh` readers behind one interface), `src/domain/github-link.ts`, the repo reading prompt in `src/domain/prompts.ts`, add-on reading in `src/server/services/profile.ts`, evidence links and the lock badge in `src/web/routes/profile.tsx`, the private-URL filter on export in `src/server/services/workspace.ts`, `eval/github/*.json`, `test/github.test.ts`.
+- **Files owned**: `src/server/adapters/github.ts` (public API and `gh` readers behind one interface), `src/shared/github-link.ts`, the repo reading prompt in `src/domain/prompts.ts`, add-on reading in `src/server/services/profile.ts`, evidence links and the lock badge in `src/web/routes/profile.tsx`, the private-URL filter on export in `src/server/services/workspace.ts`, `eval/github/*.json`, `test/github.test.ts`.
 - **Depends on**: slice 3.
 - **Acceptance**:
   - Repo and pull request links parse; other links stay stored only.

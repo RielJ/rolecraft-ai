@@ -1,5 +1,5 @@
 import type { FactEvidence } from "@/shared/api";
-import { commitUrl, fileUrl, type GithubRepoRef } from "./github-link";
+import { commitUrl, fileUrl, type GithubRepoRef } from "@/shared/github-link";
 import type { CommitPatch, CommitsFrom, Feature, Framing } from "./project-read";
 import { isSecretPath } from "./project-read";
 import { estimateTokens } from "./prompts";

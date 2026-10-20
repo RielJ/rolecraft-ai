@@ -3,7 +3,6 @@ import { cp, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText, getDocumentProxy } from "unpdf";
-import { parseGithubLink } from "@/domain/github-link";
 import { GITHUB_TOKEN_CAP, MAX_GITHUB_COMMITS } from "@/domain/github-read";
 import { buildGithubFactsPrompt, estimateTokens } from "@/domain/prompts";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
@@ -37,6 +36,7 @@ import {
   TextExport,
   WorkspaceDto,
 } from "@/shared/api";
+import { parseGithubLink } from "@/shared/github-link";
 import { githubExitCode, runGithubEval } from "../eval/run";
 import { makeRepo } from "./git-repos";
 import { resetDb, testDeps, testSql, waitForGithubReads, waitForSplits } from "./setup";

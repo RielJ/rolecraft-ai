@@ -1,4 +1,4 @@
-import { type GithubLink, parseGithubLink, pullUrl, repoUrl } from "./github-link";
+import { type GithubLink, parseGithubLink, pullUrl, repoUrl } from "@/shared/github-link";
 import {
   type LocalFolder,
   type LocalHideReason,

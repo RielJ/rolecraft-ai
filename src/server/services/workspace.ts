@@ -11,7 +11,6 @@ import {
 } from "@/domain/citations";
 import { cleanForEdit, fillBlanks, restoreMarkers, stripLeadingName, toPlainText } from "@/domain/file-text";
 import { checkGate, type GateOutput } from "@/domain/gate";
-import { type GithubRepoRef, isPrivateGithubUrl, stripPrivateGithubUrls } from "@/domain/github-link";
 import { classifyQuestion } from "@/domain/must-answer";
 import {
   allowedFacts,
@@ -80,6 +79,7 @@ import {
   type OutputKind,
   PDF_KINDS,
 } from "@/shared/enums";
+import { type GithubRepoRef, isPrivateGithubUrl, stripPrivateGithubUrls } from "@/shared/github-link";
 import { outputKindLabel } from "@/shared/labels";
 import type { PdfDocument } from "../adapters/pdf";
 import type { DbOrTx } from "../db/client";

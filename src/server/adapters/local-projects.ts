@@ -1,10 +1,10 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { GithubRepoRef } from "@/domain/github-link";
 import type { FolderBundle } from "@/domain/github-read";
 import { type LocalFolder, parseGithubRemote } from "@/domain/local-scan";
 import type { CommitSource } from "@/domain/project-read";
+import type { GithubRepoRef } from "@/shared/github-link";
 import { type FolderReadInput, gitCommitSource, readFolderProject } from "./folder-read";
 import { createGit, type GitSpawn } from "./git";
 

@@ -36,6 +36,7 @@ import {
   USER_SENIORITIES,
   UserSeniority,
 } from "@/shared/enums";
+import { parseGithubLink } from "@/shared/github-link";
 import {
   itemKindLabel,
   itemUsageLabel,
@@ -456,6 +457,22 @@ const ADD_PROJECTS_WORDS: OverCapWords = {
   noun: "These splits",
   action: "Add anyway",
 };
+const ADD_AND_READ_WORDS: OverCapWords = {
+  doing: "Splitting these projects into facts and reading them with AI",
+  noun: "The splits and reads",
+  action: "Add anyway",
+};
+const ADD_AND_READ_ONE_WORDS: OverCapWords = {
+  doing: "Splitting this add-on into facts and reading it with AI",
+  noun: "The split and read",
+  action: "Save anyway",
+};
+
+/** A GitHub repo or pull request link, which can be read for facts. */
+const isGithubLink = (link: string) => link.trim() !== "" && parseGithubLink(link.trim()) !== null;
+
+/** A worst-case estimate, never shown as $0.00. */
+const atMost = (n: number) => `at most ${n < 0.01 ? "$0.01" : usd(n)}`;
 const READ_WORDS: OverCapWords = {
   doing: "Reading this link from GitHub with AI",
   noun: "This read",
@@ -1356,6 +1373,11 @@ function AddonDialog({
   const [privateLink, setPrivateLink] = useState<string | null>(null);
   /** The folder the last fill read; saved with the add-on so it can be read for facts (decision 81). */
   const [folder, setFolder] = useState<string | null>(null);
+  /** Read the filled GitHub link or folder for facts once saved; on by default after a fill (decision 81). */
+  const [readAfter, setReadAfter] = useState(false);
+  const readable = !item && (folder !== null || isGithubLink(form.link));
+  const reading = readable && readAfter;
+  const readOverCap = useOverCap(ADD_AND_READ_ONE_WORDS);
   const busy = create.isPending || update.isPending;
   const set = (field: keyof AddonForm) => (value: string) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -1373,6 +1395,7 @@ function AddonDialog({
       usage: form.usage,
       ...(!item && privateLink !== null && form.link.trim() === privateLink ? { linkPrivate: true } : {}),
       ...(!item && folder ? { folder } : {}),
+      ...(reading ? { read: true } : {}),
       confirmOverCap,
     });
     if (!parsed.success) {
@@ -1382,10 +1405,16 @@ function AddonDialog({
     setProblem(null);
     const done = {
       onSuccess: () => {
-        toast(item ? "Add-on saved." : "Add-on saved. Its facts appear under Facts to review.");
+        toast(
+          item
+            ? "Add-on saved."
+            : reading
+              ? "Add-on saved. Reading it for facts now."
+              : "Add-on saved. Its facts appear under Facts to review.",
+        );
         onOpenChange(false);
       },
-      onError: overCap.onError(() => save(true)),
+      onError: (reading ? readOverCap : overCap).onError(() => save(true)),
     };
     if (item) update.mutate({ id: item.id, ...parsed.data }, done);
     else create.mutate(parsed.data, done);
@@ -1421,6 +1450,7 @@ function AddonDialog({
                 }));
                 setPrivateLink(p.linkPrivate && p.link ? p.link : null);
                 setFolder(p.folder);
+                setReadAfter(true);
                 setProblem(null);
               }}
             />
@@ -1514,6 +1544,25 @@ function AddonDialog({
               ))}
             </RadioGroup>
           </fieldset>
+          {readable && (
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id={`${id}-read`}
+                className="mt-0.5"
+                checked={readAfter}
+                onCheckedChange={(value) => setReadAfter(value === true)}
+                aria-describedby={`${id}-read-hint`}
+              />
+              <div className="grid gap-0.5">
+                <Label htmlFor={`${id}-read`}>Read for facts</Label>
+                <p id={`${id}-read-hint`} className="text-muted-foreground text-xs">
+                  {folder !== null
+                    ? "After saving, read this folder's commits and the code they changed for more facts."
+                    : "After saving, read this repo's commits and the code they changed for more facts."}
+                </p>
+              </div>
+            </div>
+          )}
           {problem && (
             <p role="alert" className="text-destructive text-sm">
               {problem}
@@ -1525,10 +1574,17 @@ function AddonDialog({
             Cancel
           </Button>
           <Button type="submit" form={id} disabled={busy}>
-            {busy ? "Saving…" : item ? "Save add-on" : "Save and split into facts"}
+            {busy
+              ? "Saving…"
+              : item
+                ? "Save add-on"
+                : reading
+                  ? "Save and read for facts"
+                  : "Save and split into facts"}
           </Button>
         </DialogFooter>
         {overCap.dialog}
+        {readOverCap.dialog}
       </DialogContent>
     </Dialog>
   );
@@ -1834,7 +1890,9 @@ type PickKey = `repo:${string}` | `folder:${string}`;
 function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const scan = useProjectScan({ enabled: open });
   const add = useAddProjects();
-  const overCap = useOverCap(ADD_PROJECTS_WORDS);
+  const readId = useId();
+  const [read, setRead] = useState(false);
+  const overCap = useOverCap(read ? ADD_AND_READ_WORDS : ADD_PROJECTS_WORDS);
   const [picked, setPicked] = useState<ReadonlySet<PickKey>>(new Set());
   const toggle = (key: PickKey) => (checked: boolean) =>
     setPicked((prev) => {
@@ -1845,6 +1903,14 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     });
   const tooMany = picked.size > MAX_PROJECTS_PER_ADD;
   const count = plural(picked.size, "project");
+  const readEstimate = scan.data?.readEstimateUsd ?? null;
+  const notGit = new Set(
+    (scan.data?.local?.status === "ok" ? [...scan.data.local.shown, ...scan.data.local.hidden] : [])
+      .filter((f) => f.hiddenBy === "not_git")
+      .map((f) => f.folder),
+  );
+  /** Repos, and folders that are git repos: the picks a read can cover. */
+  const readable = [...picked].filter((key) => key.startsWith("repo:") || !notGit.has(key.slice(7))).length;
 
   function submit(confirmOverCap: boolean) {
     const repos: string[] = [];
@@ -1853,11 +1919,16 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       if (key.startsWith("repo:")) repos.push(key.slice(5));
       else folders.push(key.slice(7));
     }
+    const reading = read && readable > 0;
     add.mutate(
-      { repos, folders, confirmOverCap },
+      { repos, folders, read: reading, confirmOverCap },
       {
         onSuccess: () => {
-          toast(`Added ${count}. Their facts appear under Facts to review.`);
+          toast(
+            reading
+              ? `Added ${count}. Reading ${plural(readable, "project")} for facts, one at a time.`
+              : `Added ${count}. Their facts appear under Facts to review.`,
+          );
           onOpenChange(false);
         },
         onError: overCap.onError(() => submit(true)),
@@ -1909,8 +1980,8 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         <DialogHeader>
           <DialogTitle>Find my projects</DialogTitle>
           <DialogDescription>
-            Each project you add becomes an add-on, split into facts for you to confirm. A repo on GitHub can also be
-            read for facts from its code.
+            Each project you add becomes an add-on, split into facts for you to confirm. Repos and git folders can also
+            be read for facts from your commits.
           </DialogDescription>
         </DialogHeader>
         <div className="-mx-6 min-h-0 flex-1 divide-y overflow-y-auto overscroll-contain border-y px-6">
@@ -1961,6 +2032,25 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             />
           )}
         </div>
+        {readEstimate !== null && (
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id={readId}
+              className="mt-0.5"
+              checked={read}
+              onCheckedChange={(value) => setRead(value === true)}
+              aria-describedby={`${readId}-cost`}
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor={readId}>Read each project for facts</Label>
+              <p id={`${readId}-cost`} className="text-muted-foreground text-xs tabular-nums">
+                {read && readable > 0
+                  ? `${plural(readable, "read")}, ${atMost(readable * readEstimate)} with AI. They run one at a time after adding.`
+                  : `Reads your commits and the code they changed, ${atMost(readEstimate)} a project. Folders that aren't git repos are only split.`}
+              </p>
+            </div>
+          </div>
+        )}
         <DialogFooter className="items-center">
           <p
             className={cn("mr-auto text-sm tabular-nums", tooMany ? "text-destructive" : "text-muted-foreground")}
