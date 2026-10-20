@@ -1,5 +1,6 @@
 import { type Contact, FactKey } from "@/shared/api";
-import { PROJECT_TOKEN, projectSectionOf } from "./draft-projects";
+import type { ProjectRole } from "@/shared/enums";
+import { ownershipClaim, PROJECT_TOKEN, projectSectionOf } from "./draft-projects";
 import { sentenceSpans } from "./text";
 import { ROLE_TOKEN } from "./work-roles";
 
@@ -56,7 +57,12 @@ export type DraftViolation =
   | (Span & { kind: "unknown_role"; roleKey: string })
   | (Span & { kind: "wrong_role"; roleKey: string | null; factKeys: string[] })
   | (Span & { kind: "unknown_project"; projectKey: string })
-  | (Span & { kind: "wrong_project"; projectKey: string | null; factKeys: string[] });
+  | (Span & { kind: "wrong_project"; projectKey: string | null; factKeys: string[] })
+  /** Says the candidate made or owns a project they only contributed to: `words` is the claim. */
+  | (Span & { kind: "claims_contribution"; projectKey: string; name: string; words: string });
+
+/** A project as the checks know it: its key, the name files call it by, and whose it is. */
+export type ProjectName = { key: string; name: string; role: ProjectRole };
 
 /** A `##` section that holds roles. Anything cited in it must sit under its own role's header. */
 const EXPERIENCE_HEADING = /^#{1,2}\s+.*\b(?:experience|employment|work history)\b/i;
@@ -376,6 +382,7 @@ export function checkDraft({
   contact,
   roles = [],
   projects = [],
+  projectNames = [],
 }: {
   body: string;
   facts: readonly DraftFact[];
@@ -383,12 +390,20 @@ export function checkDraft({
   posting: { company: string; title: string };
   contact: Contact;
   roles?: readonly DraftRoleHeader[];
+  /** A resume's project heads, which its facts must sit under. */
   projects?: readonly DraftRoleHeader[];
+  /**
+   * Every project the facts come from, in any kind of file. A sentence citing a project's fact may
+   * say its name, and none may claim a contribution as the candidate's own (decision 82).
+   */
+  projectNames?: readonly ProjectName[];
 }): DraftCheck {
   const allowed = new Set<string>(allowedKeys);
   const byKey = new Map<string, string>(facts.map((f) => [f.key, f.text]));
   const roleOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.roleKey ?? null]));
   const projectOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.projectKey ?? null]));
+  const nameOf = new Map(projectNames.map((p) => [p.key, p.name]));
+  const contributions = projectNames.filter((p) => p.role === "contribution");
   const names = evidenceOf([
     posting.company,
     posting.title,
@@ -415,7 +430,11 @@ export function checkDraft({
     for (const key of keys) {
       const text = byKey.get(key);
       if (text === undefined || !allowed.has(key)) violations.push({ ...base, kind: "unknown_fact", factKey: key });
-      else cited.push(text);
+      else cited.push(text, nameOf.get(projectOfFact.get(key) ?? "") ?? "");
+    }
+    for (const p of contributions) {
+      const words = ownershipClaim({ sentence: claimText(span.text), name: p.name });
+      if (words) violations.push({ ...base, kind: "claims_contribution", projectKey: p.key, name: p.name, words });
     }
     const where = context[span.line];
     if (where && keys.length > 0 && (where.role !== null || where.experience)) {

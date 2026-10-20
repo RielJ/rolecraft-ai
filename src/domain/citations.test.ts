@@ -429,6 +429,41 @@ describe("checkDraft with projects (decision 82)", () => {
     expect(noProjects).toEqual({ ok: true });
   });
 
+  test("a contribution claimed as the candidate's own is flagged, cited or not; their own project is not", () => {
+    const letter = (body: string) =>
+      checkDraft({
+        body,
+        facts,
+        allowedKeys: [k(1), k(2), k(3)],
+        posting,
+        contact,
+        projectNames: [
+          { key: "PROJECT-1", name: "Nyx", role: "own" },
+          { key: "PROJECT-2", name: "Viem", role: "contribution" },
+        ],
+      });
+    expect(letter("I built Viem, adding value support to deployContract [FACT-2].")).toMatchObject({
+      ok: false,
+      violations: [{ kind: "claims_contribution", projectKey: "PROJECT-2", name: "Viem", words: "built Viem" }],
+    });
+    expect(letter("I contributed value support to deployContract in Viem [FACT-2].")).toEqual({ ok: true });
+    expect(letter("I built Nyx, a CLI that sorts Tailwind classes [FACT-1].")).toEqual({ ok: true });
+  });
+
+  test("citing a project's fact lets the sentence name the project", () => {
+    const named = (projectNames: { key: string; name: string; role: "own" | "contribution" }[]) =>
+      checkDraft({
+        body: "I wrote the billing service for Acme Ledger [FACT-4].",
+        facts: [{ key: k(4), text: "Wrote the billing service.", projectKey: "PROJECT-1" }],
+        allowedKeys: [k(4)],
+        posting,
+        contact,
+        projectNames,
+      });
+    expect(named([{ key: "PROJECT-1", name: "Acme Ledger", role: "own" }])).toEqual({ ok: true });
+    expect(named([])).toMatchObject({ ok: false, violations: [{ kind: "unsupported_token" }] });
+  });
+
   test("a [PROJECT-n] left in the body is an unknown project", () => {
     expect(run(["## Projects", "[PROJECT-9]", "See [PROJECT-1] for more."])).toMatchObject({
       ok: false,

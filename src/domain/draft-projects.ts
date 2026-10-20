@@ -1,10 +1,11 @@
 import type { ProjectRole } from "@/shared/enums";
 
 /*
- * Projects in a drafted resume (decision 82). Like roles (decision 71), the drafter never types a
- * project's name, link or stack: it writes `[PROJECT-n]` alone on a line, and the server writes the
- * head `#### Name | https://link | Go, TypeScript`. The server also moves each project to its
- * section: your own under `## Projects`, contributions under `## Open Source Contributions`.
+ * Projects in drafted files (decision 82). In a resume, like roles (decision 71), the drafter never
+ * types a project's name, link or stack: it writes `[PROJECT-n]` alone on a line, and the server
+ * writes the head `#### Name | https://link | Go, TypeScript`. The server also moves each project to
+ * its section: your own under `## Projects`, contributions under `## Open Source Contributions`.
+ * Other files name projects as listed, and never claim a contribution as the candidate's own.
  */
 
 /** A project offered to a resume draft, under the key the model writes. */
@@ -94,6 +95,36 @@ export function projectHeadPlain(head: ParsedProjectHead): string {
 export function projectPromptLine(project: DraftProject): string {
   const what = project.role === "own" ? "your own project" : "a contribution to someone else's project";
   return `${project.key}: ${squash(project.name)} (${what})`;
+}
+
+/** Words that may sit between a claim and the project's name: "built the open-source Viem". */
+const FILLER = String.raw`(?:(?:the|a|an|own|open[- ]source|side|whole|entire|project|library|tool|app|framework|cli)\s+)*`;
+const KIND = String.raw`(?:project|library|tool|app|framework|cli)`;
+
+/**
+ * The words in `sentence` that say the candidate made or owns `name`, or null (decision 82): "built
+ * Viem", "created the Viem library", "my project Viem", "Viem, my side project", "creator of Viem".
+ * A contribution must say what they did in it instead, so "built value support in Viem" passes.
+ */
+export function ownershipClaim({ sentence, name }: { sentence: string; name: string }): string | null {
+  const trimmed = name.trim();
+  if (trimmed === "") return null;
+  const n = String.raw`(?<![\w-])${trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\w-])`;
+  // The name ends the thing claimed: "built Viem's docs" and "built Next.js routing" are work in it.
+  const end = String.raw`(?:\s+${KIND})?(?=\s*$|\s*[.,;:!?)\u2013\u2014]|\s+(?:from|in|at|for|with|to|and|as|on|which|that|when|while|by|alone|myself|i|we)\b)`;
+  const patterns = [
+    String.raw`\b(?:built|build|building|created|create|creating|founded|wrote|authored|developed|launched|own|owns)\s+${FILLER}${n}${end}`,
+    String.raw`\b(?:my|our)\s+${FILLER}${n}${end}`,
+    // "my project Viem": a kind word before the name is a claim whatever follows.
+    String.raw`\b(?:my|our)\s+(?:(?:own|open[- ]source|side)\s+)*${KIND}\s+${n}(?!['\u2019]s\b)`,
+    String.raw`${n}\s*[,(\u2013\u2014-]\s*(?:which\s+is\s+)?(?:my|our)\s+${FILLER}${KIND}\b`,
+    String.raw`\b(?:creator|author|founder|owner)\s+of\s+(?:the\s+)?${n}${end}`,
+  ];
+  for (const pattern of patterns) {
+    const match = new RegExp(pattern, "i").exec(sentence);
+    if (match) return match[0];
+  }
+  return null;
 }
 
 /** A `[PROJECT-n]` line the model wrote, alone or after a heading mark. */

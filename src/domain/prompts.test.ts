@@ -196,10 +196,14 @@ describe("buildDraftPrompt with projects (decision 82)", () => {
     expect(text).not.toContain("github.com/rielj/nyx");
   });
 
-  test("a letter gets no projects block and no project marks", () => {
+  test("a letter gets the projects and marks, and a rule to name them, but no heads", () => {
     const text = withProjects("letter");
-    expect(text).not.toContain("PROJECT-1");
+    expect(text).toContain("PROJECTS\nPROJECT-1: Nyx (your own project)\n");
+    expect(text).toContain("FACT-2: Added value support to Viem (PROJECT-2)");
+    expect(text).toContain("Call a project only by its name there.");
+    expect(text).toContain("never write that they built, created, founded or own it, or call it my or our project");
     expect(text).not.toContain("[PROJECT-n]");
+    expect(text).not.toContain("## Open Source Contributions");
   });
 });
 
@@ -230,6 +234,19 @@ describe("describeViolation for projects", () => {
     expect(text([{ kind: "unknown_project", projectKey: "PROJECT-9", sentence, start: 0, end: 10 }])).toContain(
       "Write only a PROJECT-n from the PROJECTS list",
     );
+    expect(
+      text([
+        {
+          kind: "claims_contribution",
+          projectKey: "PROJECT-2",
+          name: "Viem",
+          words: "built Viem",
+          sentence,
+          start: 0,
+          end: 10,
+        },
+      ]),
+    ).toContain('says "built Viem", but Viem is someone else\'s project the candidate contributed to.');
   });
 });
 

@@ -12,7 +12,7 @@ import { type DraftRole, rolePromptLine } from "./work-roles";
 
 /**
  * A confirmed fact as drafting sees it. `roleKey` is the `ROLE-n` of the role it sits under, and
- * `projectKey` the `PROJECT-n` of its project, in a resume prompt only (decisions 71 and 82).
+ * `projectKey` the `PROJECT-n` of its project, in any prompt (decisions 71 and 82).
  */
 export type PromptFact = {
   key: FactKey;
@@ -135,6 +135,13 @@ const ROLE_TASK =
 const PROJECT_TASK =
   "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects: one sentence that says what it is, plus at most 2 bullets, only for facts that prove a requirement of this posting. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name, link or skills yourself: the [PROJECT-n] line becomes the project's head. Leave out projects that prove nothing this posting asks for.";
 
+/**
+ * Every other kind's project rule (decision 82): no heads, so the drafter names projects itself,
+ * as listed. The ownership check catches a contribution claimed as the candidate's own.
+ */
+const PROJECT_NAME_TASK =
+  'Facts marked (PROJECT-n) come from that project in the PROJECTS list. Call a project only by its name there. For a contribution, say what the candidate did in it, for example "contributed value support to Viem"; never write that they built, created, founded or own it, or call it my or our project.';
+
 /** Who the text speaks as. Resumes leave the subject out; everything else is the candidate's voice. */
 function voiceFor(kind: OutputKind): string {
   return kind === "resume"
@@ -184,7 +191,7 @@ export function buildDraftPrompt({
   question?: string | null;
   /** The candidate's roles, for a resume only. Fact lines name theirs with `(ROLE-n)`. */
   roles?: readonly DraftRole[];
-  /** The candidate's projects, for a resume only. Fact lines name theirs with `(PROJECT-n)`. */
+  /** The candidate's projects. Fact lines name theirs with `(PROJECT-n)`; a resume also gets heads. */
   projects?: readonly DraftProject[];
   /** What the posting requires and which facts prove it (decision 73). Null drafts from the facts alone. */
   map?: RequirementMap | null;
@@ -192,7 +199,7 @@ export function buildDraftPrompt({
   required?: readonly FactKey[];
 }): Prompt {
   const withRoles = kind === "resume" && roles.length > 0;
-  const withProjects = kind === "resume" && projects.length > 0;
+  const withProjects = projects.length > 0;
   const withMap = map !== null && map.requirements.length > 0;
   const user = [
     "JOB POSTING",
@@ -220,7 +227,7 @@ export function buildDraftPrompt({
     taskFor({ kind, opportunityType, question }),
     ...(withMap ? (kind === "resume" ? resumeMapTask({ map, required }) : [MAP_TASK]) : []),
     ...(withRoles ? [ROLE_TASK] : []),
-    ...(withProjects ? [PROJECT_TASK] : []),
+    ...(withProjects ? [kind === "resume" ? PROJECT_TASK : PROJECT_NAME_TASK] : []),
     "Return only the text.",
   ].join("\n");
   return { system: systemPrompt({ kind, opportunityType }), messages: [{ role: "user", content: user }] };
@@ -242,6 +249,8 @@ function describeViolation(v: DraftViolation): string {
       return v.projectKey === null
         ? `"${v.sentence}" cites ${v.factKeys.join(", ")} before any [PROJECT-n] line. Write the [PROJECT-n] line its facts are marked with first.`
         : `"${v.sentence}" is under [${v.projectKey}] but cites ${v.factKeys.join(", ")}, which ${v.factKeys.length === 1 ? "is" : "are"} not marked (${v.projectKey}). Put it under its own project.`;
+    case "claims_contribution":
+      return `"${v.sentence}" says "${v.words}", but ${v.name} is someone else's project the candidate contributed to. Say what they did in it, for example "contributed X to ${v.name}".`;
     case "wrong_role":
       return v.roleKey === null
         ? `"${v.sentence}" is under ## Experience before any [ROLE-n] line. Put it under the role its facts are marked with, or in another section.`

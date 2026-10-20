@@ -958,7 +958,7 @@ async function draftContext(
     kind: output.kind,
     allowed: allowedFacts({ kind: output.kind, facts: all }),
   });
-  const info = output.kind === "resume" ? await loadProjectInfo(deps, { facts: roleFacts, contact }) : new Map();
+  const info = await loadProjectInfo(deps, { facts: roleFacts, contact });
   const kindFacts = keyProjects({ facts: roleFacts, info }).facts;
   const map =
     requirements.map &&
@@ -983,7 +983,8 @@ async function draftContext(
     required,
   });
   const roleHeaders = roles.map((r) => ({ key: r.key, header: roleHeader(r) }));
-  const projectHeads = projects.map((p) => ({ key: p.key, header: projectHead(p) }));
+  // Only a resume has heads; other files name projects themselves, so any [PROJECT-n] is unknown.
+  const projectHeads = output.kind === "resume" ? projects.map((p) => ({ key: p.key, header: projectHead(p) })) : [];
   const check = (body: string) =>
     checkDraft({
       body,
@@ -993,15 +994,17 @@ async function draftContext(
       contact,
       roles: roleHeaders,
       projects: projectHeads,
+      projectNames: projects,
     });
   /**
    * The model writes `[ROLE-n]` and `[PROJECT-n]`; the server writes the heads, so their words are
    * the role's and the project's own, and moves each project to its section (decision 82).
    */
+  const heads = output.kind === "resume" ? projects : [];
   const expand = (text: string) =>
     placeProjects({
-      body: expandProjects({ body: expandRoles({ body: cleanModelText(text), roles }), projects }),
-      projects,
+      body: expandProjects({ body: expandRoles({ body: cleanModelText(text), roles }), projects: heads }),
+      projects: heads,
     });
   return { opportunity, allowed, prompt, check, expand, requirements, required };
 }

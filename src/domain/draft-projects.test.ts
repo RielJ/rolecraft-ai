@@ -3,6 +3,7 @@ import {
   type DraftProject,
   expandProjects,
   keyProjects,
+  ownershipClaim,
   parseProjectHead,
   placeProjects,
   projectHead,
@@ -141,5 +142,36 @@ describe("keyProjects", () => {
     const first = keyProjects({ facts: [fact("viem", null), fact("nyx", null)], info });
     const again = keyProjects({ facts: first.facts.filter((f) => f.itemId === "nyx"), info });
     expect(again.facts.map((f) => f.projectKey)).toEqual(["PROJECT-1"]);
+  });
+});
+
+describe("ownershipClaim", () => {
+  const claim = (sentence: string, name = "Viem") => ownershipClaim({ sentence, name });
+
+  test("saying the candidate made or owns the project is a claim", () => {
+    expect(claim("I built Viem from scratch.")).toBe("built Viem");
+    expect(claim("I built Viem and shipped it.")).toBe("built Viem");
+    expect(claim("Created the open-source Viem library.")).toBe("Created the open-source Viem library");
+    expect(claim("I own Viem.")).toBe("own Viem");
+    expect(claim("Built my Viem alone.")).toBe("my Viem");
+    expect(claim("Our Viem library \u2013 fast.")).toBe("Our Viem library");
+    expect(claim("My project Viem sorts things.")).toBe("My project Viem");
+    expect(claim("Viem, my side project, is fast.")).toBe("Viem, my side project");
+    expect(claim("As the creator of Viem I ship.")).toBe("creator of Viem");
+  });
+
+  test("saying what the candidate did in it is not", () => {
+    expect(claim("I built value support in Viem.")).toBeNull();
+    expect(claim("I started contributing to Viem.")).toBeNull();
+    expect(claim("Contributed deployContract value support to Viem.")).toBeNull();
+    expect(claim("Built Viem's docs.")).toBeNull();
+    expect(claim("Built the Viem CLI tool support.")).toBeNull();
+    expect(claim("Built Next.js routing.", "Next.js")).toBeNull();
+  });
+
+  test("the name must stand alone, and an empty name never matches", () => {
+    expect(claim("I built Viemish.")).toBeNull();
+    expect(claim("Built my-viem.")).toBeNull();
+    expect(claim("I built it.", "  ")).toBeNull();
   });
 });

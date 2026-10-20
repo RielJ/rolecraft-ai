@@ -307,6 +307,8 @@ function violationText(v: DraftViolation): string {
       return `writes ${v.projectKey}, which is not a project here: ${quote(v.sentence)}`;
     case "wrong_project":
       return `${v.factKeys.join(", ")} under ${v.projectKey ?? "a project section, before any project"}: ${quote(v.sentence)}`;
+    case "claims_contribution":
+      return `claims ${v.name} (a contribution) with "${v.words}": ${quote(v.sentence)}`;
     default:
       return `${v.tokens.join(", ")} in ${quote(v.sentence)}`;
   }

@@ -171,7 +171,9 @@ export function checkCandidates({
             ? [v.projectKey]
             : v.kind === "wrong_role" || v.kind === "wrong_project"
               ? v.factKeys
-              : v.tokens,
+              : v.kind === "claims_contribution"
+                ? [v.words]
+                : v.tokens,
     );
     result.dropped.push({ text, tokens: [...new Set(tokens)] });
   }

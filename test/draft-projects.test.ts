@@ -77,16 +77,20 @@ async function setup(options: { nyxPrivate?: boolean } = {}): Promise<WorkspaceD
 }
 
 async function draftResume(ws: WorkspaceDto) {
+  return draft(ws, "resume");
+}
+
+async function draft(ws: WorkspaceDto, kind: "resume" | "letter") {
   const task = await json(
-    await call("POST", `/opportunities/${ws.opportunity.id}/draft`, { kinds: ["resume"] }),
+    await call("POST", `/opportunities/${ws.opportunity.id}/draft`, { kinds: [kind] }),
     TaskDto,
     202,
   );
   await waitForTask(task.id);
   const done = await json(await call("GET", `/tasks/${task.id}`), TaskDto);
   const after = await json(await call("GET", `/opportunities/${ws.opportunity.id}`), WorkspaceDto);
-  const resume = after.files.find((f) => f.kind === "resume");
-  if (!resume) throw new Error("no resume");
+  const resume = after.files.find((f) => f.kind === kind);
+  if (!resume) throw new Error(`no ${kind}`);
   return { task: done, resume, ws: after };
 }
 
@@ -161,5 +165,45 @@ describe("resume drafting with projects", () => {
     expect(task.status).toBe("done");
     expect(deps.fake.calls).toHaveLength(2);
     expect(deps.fake.calls[1]?.messages[2]?.content).toContain(`is under [PROJECT-1] but cites ${viem}`);
+  });
+});
+
+describe("letters with projects", () => {
+  test("the prompt lists projects by name with the naming rule; a claimed contribution is retried", async () => {
+    const ws = await setup();
+    const profile = ProfileDto.parse(await (await call("GET", "/profile")).json());
+    const viem = profile.facts.find((f) => f.text.startsWith("Added value"))?.key;
+    deps.fake.queue(`Dear Stripe,\n\nI built Viem, adding value support to deployContract [${viem}].`);
+    const { task, resume: letter } = await draft(ws, "letter");
+    expect(task.status).toBe("done");
+
+    const first = prompt(0);
+    expect(first).toContain("PROJECT-2: Viem (a contribution to someone else's project)");
+    expect(first).toContain("Call a project only by its name there.");
+    expect(first).not.toContain("[PROJECT-n]");
+
+    expect(deps.fake.calls).toHaveLength(2);
+    expect(deps.fake.calls[1]?.messages[2]?.content).toContain(
+      'says "built Viem", but Viem is someone else\'s project the candidate contributed to.',
+    );
+    expect(letter.body).not.toContain("built Viem");
+  });
+
+  test("a letter's own Projects heading doesn't make it put facts under heads", async () => {
+    const ws = await setup();
+    const profile = ProfileDto.parse(await (await call("GET", "/profile")).json());
+    const viem = profile.facts.find((f) => f.text.startsWith("Added value"))?.key;
+    deps.fake.queue(`## Projects\nI contributed value support to deployContract in Viem [${viem}].`);
+    const { task } = await draft(ws, "letter");
+    expect(task.status).toBe("done");
+    expect(deps.fake.calls).toHaveLength(1);
+  });
+
+  test("a [PROJECT-n] in a letter is not expanded and is retried", async () => {
+    const ws = await setup();
+    deps.fake.queue("Dear Stripe,\n\n[PROJECT-1]");
+    await draft(ws, "letter");
+    expect(deps.fake.calls).toHaveLength(2);
+    expect(deps.fake.calls[1]?.messages[2]?.content).toContain("writes [PROJECT-1].");
   });
 });
