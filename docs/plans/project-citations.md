@@ -14,12 +14,10 @@ Drafts receive project facts as bare lines (`FACT-n: text (repo link)`). Nothing
 Own projects go under `## Projects`, contributions under `## Open Source Contributions`, which follows Projects. The drafter writes `[PROJECT-n]` alone on a line and the server replaces it with the head:
 
 ```
-**Nyx**
-https://github.com/rielj/nyx
-Go · TypeScript
+#### Nyx | https://github.com/rielj/nyx | Go, TypeScript
 ```
 
-The name is the add-on title. The link line is left out for a private project. The stack line lists up to 3 of the add-on's skills and is left out when it has none. An own project then gets one line saying what it is, and at most 2 bullets, only for facts that prove a requirement of this posting. A contribution gets bullets saying what the user did.
+The name is the add-on title. The link is left out for a private project, and when any of the project's facts had its link withheld. The skills are up to 3 of the add-on's skills, left out when it has none. The PDF shows the head like a role: the name in bold, then the link without its scheme and the skills on the line below. Copy text reads it as one line: `Nyx · github.com/rielj/nyx · Go, TypeScript`. An own project then gets one line saying what it is, and at most 2 bullets, only for facts that prove a requirement of this posting. A contribution gets bullets saying what the user did.
 
 ## Slices
 
