@@ -11,6 +11,7 @@ import {
   MIN_FILE_TOKENS,
   manifestPaths,
   type PullBundle,
+  type PullStatus,
   type RepoBundle,
   type TokenBudget,
   validatePicks,
@@ -244,7 +245,15 @@ const Pull = z.object({
   user: Login,
   head: z.object({ sha: z.string() }),
   changed_files: z.number().int().nonnegative(),
+  state: z.enum(["open", "closed"]),
+  merged_at: z.string().nullable(),
 });
+
+/** A pull request's status from its `state` and `merged_at`. */
+function pullStatus(pull: { state: "open" | "closed"; merged_at: string | null }): PullStatus {
+  if (pull.merged_at !== null) return "merged";
+  return pull.state;
+}
 const PullFile = z.object({ filename: z.string(), additions: z.number(), deletions: z.number() });
 const Comment = z.object({ user: Login, body: z.string().nullable().default(null) });
 
@@ -704,6 +713,7 @@ export function createReader({
       owner,
       repo,
       number: n,
+      status: pullStatus(pull),
       user: input.user,
       private: info.private,
       description,

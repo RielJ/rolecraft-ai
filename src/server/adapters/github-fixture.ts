@@ -47,6 +47,7 @@ export const GithubSnapshot = z.object({
         body: z.string().nullable().default(null),
         author: z.string(),
         headSha: z.string(),
+        status: z.enum(["merged", "open", "closed"]).default("merged"),
         files: z.array(z.object({ path: z.string(), additions: z.number(), deletions: z.number() })),
         commits: z.array(FixtureCommit).default([]),
         comments: z.array(FixtureComment).default([]),
@@ -140,6 +141,8 @@ function answer(snapshot: GithubSnapshot, rest: string, query: URLSearchParams):
         user: { login: pull.author },
         head: { sha: pull.headSha },
         changed_files: pull.files.length,
+        state: pull.status === "open" ? "open" : "closed",
+        merged_at: pull.status === "merged" ? "2026-01-01T00:00:00Z" : null,
       };
     case "files":
       return pull.files.map((f) => ({ filename: f.path, additions: f.additions, deletions: f.deletions }));

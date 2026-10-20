@@ -141,6 +141,7 @@ describe("evidence", () => {
       owner: "acme",
       repo: "api",
       number: 9,
+      status: "merged",
       user: "juandc",
       private: true,
       description: "",
@@ -186,6 +187,43 @@ describe("prompts", () => {
     expect(content.match(/^<<< /gm)).toHaveLength(4);
     expect(content.match(/^>>>$/gm)).toHaveLength(4);
     expect(content).toContain(`${SHA_A.slice(0, 12)} Add fare calculator`);
+  });
+
+  test("a pull request's status says whether its facts may call the work merged", () => {
+    const base: PullBundle = {
+      kind: "pull",
+      owner: "acme",
+      repo: "api",
+      number: 9,
+      status: "merged",
+      user: "juandc",
+      private: false,
+      description: "",
+      at: SHA_B,
+      title: "Retry failed webhooks",
+      body: "",
+      author: "juandc",
+      changed: [],
+      changedTotal: 0,
+      commits: [],
+      discussion: [],
+      tokens: 0,
+      framing: "contribution",
+      share: null,
+      features: [],
+      patches: [],
+    };
+    const text = (status: PullBundle["status"]) => {
+      const prompt = buildGithubFactsPrompt({ bundle: { ...base, status } });
+      return { system: prompt.system, content: prompt.messages[0].content };
+    };
+    expect(text("merged").content).toContain("STATUS: merged.");
+    expect(text("merged").system).toContain("The first fact says whether the pull request was merged");
+    for (const status of ["open", "closed"] as const) {
+      expect(text(status).content).toContain("not merged");
+      expect(text(status).content).toContain("Never say the work was merged, shipped or released.");
+    }
+    expect(buildGithubFactsPrompt({ bundle: repo }).system).not.toContain("STATUS line");
   });
 
   test("the pick prompt lists the tree as data and asks for JSON", () => {

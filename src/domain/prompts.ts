@@ -3,7 +3,7 @@ import type { ItemUsage, OpportunityType, OutputKind } from "@/shared/enums";
 import { type BaseLine, projectEntries } from "./base-cv";
 import type { DraftViolation } from "./citations";
 import { type DraftProject, projectPromptLine } from "./draft-projects";
-import { bundleName, type ProjectBundle } from "./github-read";
+import { bundleName, type ProjectBundle, type PullStatus } from "./github-read";
 import { guideFor, tailorGuide } from "./guide";
 import { requirementLines, requirementsByFact } from "./requirements";
 import { styleHitLabel, VOICE_RULES } from "./style";
@@ -133,7 +133,7 @@ const ROLE_TASK =
  * in their own sections. The server moves a project to its section, so this saves a retry, not a leak.
  */
 const PROJECT_TASK =
-  "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects as one paragraph of 2 to 4 sentences and no bullets: what it is, what it does, and what it is built with, naming only skills from its facts or the stack its PROJECTS line lists. Every sentence cites that project's facts. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name or link yourself: the [PROJECT-n] line becomes the project's head. Leave out projects that prove nothing this posting asks for.";
+  "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects as one paragraph of 2 to 4 sentences and no bullets: what it is, what it does, and what it is built with, naming only skills from its facts or the stack its PROJECTS line lists. Every sentence cites that project's facts. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name or link yourself: the [PROJECT-n] line becomes the project's head. Include a project only when it adds something the roles don't: proof of a requirement no role proves, or better proof of the main requirement than any role gives.";
 
 /**
  * Every other kind's project rule (decision 82): no heads, so the drafter names projects itself,
@@ -341,7 +341,7 @@ const TAILOR_TASK = [
   `reword: new text for one bullet or Skills line. Keep its numbers, tools and names; cite a fact of the same role in "facts" only to use something the line doesn't say. At most ${MAX_REWORDS}.`,
   "remove: drop one bullet or Skills line. Never a line marked (keep), and never every bullet of a project: each project keeps its name, link and at least one line saying what it is.",
   `add: a new bullet after a role line or one of its bullets, from facts of that role marked "not in the CV". At most ${MAX_ADDS}.`,
-  `project: add one project from the PROJECTS list, which the CV lacks, as 1 to ${MAX_PROJECT_LINES} lines from facts marked with its PROJECT-n. For your own project the lines are the sentences of one paragraph: what it is, what it does and what it is built with, naming only skills from its facts or its PROJECTS line's stack. For a contribution each line says what the candidate did in it, never that they built or own it. Name and link are added for you, in the right section. Only for a project that serves a requirement. At most ${MAX_PROJECTS}.`,
+  `project: add one project from the PROJECTS list, which the CV lacks, as 1 to ${MAX_PROJECT_LINES} lines from facts marked with its PROJECT-n. For your own project the lines are the sentences of one paragraph: what it is, what it does and what it is built with, naming only skills from its facts or its PROJECTS line's stack. For a contribution each line says what the candidate did in it, never that they built or own it. Name and link are added for you, in the right section. Only for a project that adds something the CV's roles don't prove: a requirement no role proves, or better proof of the main one. At most ${MAX_PROJECTS}.`,
   'Each line gets at most one edit. "reasons" holds the REQUIREMENTS ids the edit serves; "note" is null or a few words for the candidate.',
   "Write text without [FACT-n] markers, ids or Markdown. No pronouns.",
 ];
@@ -812,13 +812,21 @@ export function buildGithubPickPrompt({
 const GITHUB_FACTS_REPLY =
   'Reply with JSON only: {"facts": [{"text": "...", "evidence": "file path or commit sha"}, ...]}';
 
+/** What a pull request's facts may say about whether the work landed (decision 84). */
+const PULL_STATUS_LINE: Record<PullStatus, string> = {
+  merged: "STATUS: merged.",
+  open: "STATUS: still open, not merged. Never say the work was merged, shipped or released.",
+  closed: "STATUS: closed, not merged. Never say the work was merged, shipped or released.",
+};
+
 /** Who did what: the pull request's author, or the user's share of the commits (decision 81). */
 function ownershipLine(bundle: ProjectBundle): string {
   if (bundle.kind === "pull") {
     const opened = bundle.author.toLowerCase() === bundle.user.toLowerCase();
-    return opened
+    const who = opened
       ? `${bundle.user} opened this pull request. Its commits listed below are theirs.`
       : `${bundle.author} opened this pull request, not ${bundle.user}. Only the commits listed below are ${bundle.user}'s work.`;
+    return `${who} ${PULL_STATUS_LINE[bundle.status]}`;
   }
   const share = bundle.share ? `${bundle.share.mine} of its ${bundle.share.total} commits are ${bundle.user}'s` : null;
   if (bundle.framing === "own") {
@@ -936,6 +944,11 @@ export function buildGithubFactsPrompt({ bundle }: { bundle: ProjectBundle }): P
     "- Do not claim other people's work. Reviews and comments by others are context, not their work.",
     `- Every fact has an "evidence" value: ${evidence}. Use only paths and shas that appear in the data.`,
     "- Write each fact as a plain sentence or phrase in the past tense, without bullets.",
+    ...(bundle.kind === "pull"
+      ? [
+          "- The first fact says whether the pull request was merged, as its STATUS line says, and names the repository.",
+        ]
+      : []),
     ...(bundle.patches.length
       ? [
           "- CHANGE blocks are the diffs of their own commits. Read them for what the code does; a commit subject alone can undersell or oversell the work.",

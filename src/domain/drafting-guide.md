@@ -63,8 +63,8 @@ Use these `##` sections, in this order, with these names so applicant tracking s
 1. `## Summary`: 2 to 3 sentences, under 50 words. Start with the role noun that fits this posting and the facts, for example "Backend engineer with 7+ years …". Say why the candidate fits this posting, using its main requirements. ([TIH][tih])
 2. `## Skills`: 2 to 4 lines, each `- **Category:** a, b, c`. Put the posting's stack first. Leave out categories this posting doesn't touch. Only skills that appear in facts. No soft skills. ([TIH][tih], [ResumeMate][rm])
 3. `## Experience`: every role, in the order given.
-4. `## Projects`: the candidate's own projects that prove something this posting asks for. Each one is its head, then one paragraph of 2 to 4 sentences and no bullets: what it is, what it does, and what it is built with. ([TIH][tih], [LockedIn][li])
-5. `## Open Source Contributions`: work on other people's projects that proves something this posting asks for. Each one is its head, then 1 to 3 bullets about what the candidate did in it. Never say the candidate built, created or owns the project.
+4. `## Projects`: the candidate's own projects that add something the roles don't: proof of a requirement no role proves, or better proof of the posting's main requirement than any role gives. When the roles already prove everything a project proves, leave the project out. ([techinterview.org][tio], [interviewing.io][iio24]) Each one is its head, then one paragraph of 2 to 4 sentences and no bullets: what it is, what it does, and what it is built with. ([TIH][tih], [LockedIn][li])
+5. `## Open Source Contributions`: work on other people's projects that proves something this posting asks for. Each one is its head, then 1 to 3 bullets about what the candidate did in it. Never say the candidate built, created or owns the project. See "Contributions" below.
 6. `## Education`: only if a fact gives it.
 
 Leave out: an objective statement, "references available", hobbies, photos and age. ([TIH][tih], [Remoote][remoote])
@@ -88,6 +88,12 @@ Leave out: an objective statement, "references available", hobbies, photos and a
 
 Bad: `I was responsible for improving performance and worked on backend features.`
 Good: `Rewrote core database queries and removed expensive UNION queries, cutting query time by 40-66%.`
+
+### Contributions
+
+- **Give the status the facts give.** Write "merged", "shipped" or "released" only when a fact says the change was merged. Otherwise say what was done: "wrote a fix", "proposed", "opened". ([CreateResume][cr])
+- **The project's results are not the candidate's.** Never give the project's stars, downloads, users or speedups as something the candidate achieved. ([CreateResume][cr], [techinterview.org][tio])
+- **No borrowed titles.** Never write "maintainer", "core contributor" or "member of the team" unless a fact says so. ([CreateResume][cr])
 
 ### Length
 
@@ -115,6 +121,8 @@ Write in first person, as the candidate. 250 to 350 words, in 3 to 4 short parag
 2. **Opening, 1 to 2 sentences:** name the role and the company. Connect the posting's most important requirement to the candidate's most relevant work. Don't open with excitement or by praising the company. ([Ryser][ryser], [CareerKit][ck])
 3. **Proof, 2 to 3 sentences:** one story that answers the posting's main need: what was done, how, and the result the fact gives. Don't repeat the resume line for line. ([Ryser][ryser], [CareerKit][ck])
 4. **Fit, 1 to 2 sentences:** why this role, from something specific in the posting. ([Resumize][resumize])
+
+A letter names at most one project, and only for one of two reasons: it is the proof story for the posting's main need, or it shows real interest in the company's field or stack, such as something built on the company's API or in its problem space. Call it by the name the facts give it, as the resume does.
 5. **Close, 1 to 2 sentences:** a short thanks and a direct ask for a conversation. Then "Best regards," and the full name. ([Ryser][ryser])
 
 Openers and closers to avoid: "I am writing to express my interest", "I have long admired", "I am confident I would be a valuable asset", "I thrive in", "I look forward to the opportunity to discuss". ([Job200][j200], [Ryser][ryser])
@@ -150,6 +158,8 @@ An answer to one question on the application form, in first person.
 - Answer the question in the first sentence. Then give the one or two facts that back the answer.
 - When the question asks about something this posting requires, use the posting's words for it.
 - No greeting and no sign-off.
+- **A question about a project** ("a project you're proud of", "the hardest thing you've built"): pick the one project or piece of work that best fits this posting, and write about only that one. Open with its result or scope. Then give the choices the candidate made and why, and one problem they hit and how they solved it, when facts give them. End with the number or scope the facts give. Never invent a problem or a choice. ([datarekha][dr], [techinterview.org][tio])
+- **A question asking for a link** to something the candidate built: the link of the most relevant project from the facts, never a profile page, and one sentence on what it is. ([CreateResume][cr])
 
 ## Disagreements and our picks
 
@@ -162,14 +172,19 @@ An answer to one question on the application form, in first person.
 | Price in a proposal | Name a number ([proposaldraft][pd]) vs use the bid field ([UIC][uic]) | Never in the text |
 | Cold message length | ≤150 words ([getinterview][gi]) vs 200–300 ([Algocademy][algo]) | Under 120 for job messages |
 | Irrelevant roles | Drop them vs keep the timeline whole | Keep every role; one bullet that explains it (user, 2026-10-19) |
+| Projects for experienced candidates | At least 2 always ([TIH][tih]) vs usually none for seniors ([techinterview.org][tio]) | Only a project that adds something the roles don't prove (user, 2026-10-20). Research in `docs/research/projects.md` |
 
 ## Sources
 
 Credibility, high to low. "Vendor" means a company that sells resume, recruiting or proposal tools, so it has a commercial interest.
 
+- [iio24]: https://interviewing.io/blog/are-recruiters-better-than-a-coin-flip-at-judging-resumes 76 recruiters, about 2,200 judgments, against interview outcomes. "Missing skill" is the reason recruiters give most for a rejection. Read 2026-10-20.
 - [tih]: https://www.techinterviewhandbook.org/resume/ Yangshun Tay, ex-Meta staff engineer and interviewer. Checked directly on 2026-10-18.
 - [pe]: https://blog.pragmaticengineer.com/the-pragmatic-engineers-resume-template/ Gergely Orosz, author of *The Tech Resume Inside Out*.
 - [aam]: https://www.askamanager.org/category/cover-letters Alison Green, a hiring practitioner with no product to sell.
+- [tio]: https://www.techinterview.org/post/3233474610/side-projects-open-source-engineering-resume/ When to include side projects and contributions, by career stage. No named author, but the most complete framework found. Read 2026-10-20.
+- [cr]: https://createresume.io/blog/open-source-contributions-on-resume/ Contribution status, borrowed results and links. Vendor. Read 2026-10-20.
+- [dr]: https://datarekha.com/interview/case-study/tell-me-about-a-project/ Answering "a project you're proud of". No named author. Read 2026-10-20.
 - [hn]: https://news.ycombinator.com/item?id=46429025 Engineering hiring managers, first-hand. A single thread.
 - [ck]: https://www.careerkit.me/blog/cover-letter-reddit An analysis of 126 top-voted Reddit comments. Vendor, but the method is stated.
 - [hfai]: https://hireflow.net/blog/how-recruiters-spot-ai-resumes Reviewed by a corporate recruiter. Uniform bullets, inflated verbs, generic summaries, orphaned skills, transition words. Vendor. Read 2026-10-19.
@@ -193,6 +208,10 @@ Credibility, high to low. "Vendor" means a company that sells resume, recruiting
 - [fl]: https://freeltools.com/blog/freelance-proposal-template Vendor.
 - [uic]: https://www.upworkincomeclub.com/free-resources/how-to-follow-up-on-a-proposal Freelancer community resource.
 
+[iio24]: https://interviewing.io/blog/are-recruiters-better-than-a-coin-flip-at-judging-resumes
+[tio]: https://www.techinterview.org/post/3233474610/side-projects-open-source-engineering-resume/
+[cr]: https://createresume.io/blog/open-source-contributions-on-resume/
+[dr]: https://datarekha.com/interview/case-study/tell-me-about-a-project/
 [tih]: https://www.techinterviewhandbook.org/resume/
 [pe]: https://blog.pragmaticengineer.com/the-pragmatic-engineers-resume-template/
 [aam]: https://www.askamanager.org/category/cover-letters

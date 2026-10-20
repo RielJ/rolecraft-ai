@@ -150,9 +150,13 @@ export type RepoBundle = BundleBase &
     commitsFrom: CommitsFrom;
   };
 
+/** Whether a pull request was merged, is still open, or was closed without merging. */
+export type PullStatus = "merged" | "open" | "closed";
+
 export type PullBundle = BundleBase & {
   kind: "pull";
   number: number;
+  status: PullStatus;
   title: string;
   body: string;
   /** Who opened it. */

@@ -347,6 +347,7 @@ describe("public reader", () => {
     expect(bundle).toMatchObject({
       kind: "pull",
       number: 7,
+      status: "merged",
       private: true,
       title: "Retry failed webhooks",
       body: "Adds retries with exponential backoff.",
@@ -361,6 +362,34 @@ describe("public reader", () => {
       "Approved.",
     ]);
   });
+});
+
+test("a pull request's status is merged, open or closed without merging", async () => {
+  const statuses = ["merged", "open", "closed"] as const;
+  const snapshot: GithubSnapshotInput = {
+    owner: "acme",
+    repo: "api",
+    private: false,
+    description: "",
+    defaultBranch: "main",
+    files: {},
+    commits: [],
+    pulls: statuses.map((status, i) => ({
+      number: i + 1,
+      title: `PR ${status}`,
+      author: "juandc",
+      headSha: "a".repeat(40),
+      status,
+      files: [],
+      commits: [],
+    })),
+  };
+  const { http } = githubFetch([snapshot]);
+  const reader = createPublicReader({ http, user: null });
+  const read = async (n: number) =>
+    reader.read({ link: repoLink(`https://github.com/acme/api/pull/${n}`), user: "juandc", pick: noPick });
+  const got = await Promise.all([1, 2, 3].map(read));
+  expect(got.map((b) => b.kind === "pull" && b.status)).toEqual([...statuses]);
 });
 
 // ---------- Limits ----------
