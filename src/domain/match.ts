@@ -4,7 +4,7 @@ import { type JobSeniority, seniority as titleSeniority } from "./features";
 import { convert, type FxRates, type Pay, toMonthly } from "./pay";
 
 /**
- * Match rules (PLAN.md section 3.7). The level is computed on read from the job's stored
+ * Match rules (docs/ARCHITECTURE.md, "Match rules"). The level is computed on read from the job's stored
  * features and the user's confirmed facts and preferences, so it never goes stale.
  */
 

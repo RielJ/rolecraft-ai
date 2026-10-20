@@ -3,7 +3,7 @@ import { roleFamilyLabel } from "@/shared/labels";
 import { normalize } from "./text";
 
 /**
- * The role filter (PLAN.md section 3.7a). A typed rule table says, for each family, which role
+ * The role filter (decision 44). A typed rule table says, for each family, which role
  * nouns decide it (`heads`) and which core words name it (`words`). The head noun, the last role
  * word in the title, picks the job's family, so "Design Systems Engineer" is engineering and
  * "Frontend Designer" is design. Every word of every family counts toward "the title mixes

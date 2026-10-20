@@ -10,7 +10,7 @@ import {
   type PrefillCategory,
 } from "@shared/extension";
 
-// Generic form scan (docs/plans/chrome-extension.md, "Content script"). Top frame only. Reports
+// Generic form scan (docs/EXTENSION.md). Top frame only. Reports
 // visible, editable controls as `FieldDescriptor`s keyed by a per-scan random id. The id → element
 // map stays in this content script's memory: no selector, path or element reference ever leaves.
 

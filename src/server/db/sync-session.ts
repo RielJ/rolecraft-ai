@@ -3,7 +3,7 @@ import type { Db } from "./client";
 import { MERGE_SYNC_LOCK } from "./locks";
 
 /**
- * The only way sync touches the database (PLAN.md section 2, "What sync may write"). `fn` runs
+ * The only way sync touches the database (docs/ARCHITECTURE.md, "What sync may write"). `fn` runs
  * in a transaction whose first statement is `SET LOCAL ROLE hb_sync`, so every statement in it
  * is checked against the grants in drizzle/0004_sync_role.sql and any write to a user table
  * fails with SQLSTATE 42501. `SET LOCAL` ends with the transaction, commit or rollback, so the

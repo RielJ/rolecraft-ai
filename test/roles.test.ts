@@ -7,7 +7,7 @@ import { ApiErrorBody, ProfileDto, type ProfileItemDto, type RoleDto, TaskDto } 
 import { COMMA_CV, PAREN_CV, PAREN_ROLES } from "./fixtures/roles-cv";
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
-/* Roles (decision 71, docs/plans/roles.md): read in the split, linked by section, read again, saved. */
+/* Roles (decision 71): read in the split, linked by section, read again, saved. */
 
 let deps: Deps & { fake: FakeAi };
 let app: ReturnType<typeof createApp>;

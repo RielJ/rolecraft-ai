@@ -2,8 +2,8 @@ import { type AttachRejectReason, type FieldId, MAX_ATTACHMENT_BYTES, type ScanN
 import { type AttachMessage, type AttachResultMessage, base64ToBytes, isPdf } from "../messages-attach";
 import { type Measure, type ScannedField, signatureOf, targetState } from "./scan";
 
-// Puts one PDF the worker fetched into one file input of the current scan (docs/plans/
-// chrome-extension.md, "Files"). Only the exact input the scan gave this field id, only while it
+// Puts one PDF the worker fetched into one file input of the current scan (docs/EXTENSION.md,
+// "Attach files"). Only the exact input the scan gave this field id, only while it
 // is still present, visible, enabled, unchanged, empty and accepts PDF. Sets the file through
 // DataTransfer, fires `input` and `change`, and never clicks or submits. Keeps no reference to
 // the bytes or the File after it returns.

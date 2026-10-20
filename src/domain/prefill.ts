@@ -22,7 +22,7 @@ import {
 } from "@/shared/extension";
 
 /**
- * The prefill matcher (docs/plans/chrome-extension.md, "Precedence and eligibility"). Pure: the
+ * The prefill matcher (docs/EXTENSION.md). Pure: the
  * service loads the layers, this decides which value, if any, each scanned field gets.
  *
  * Per field: a salary label or a file control is never filled; the category comes from an adapter

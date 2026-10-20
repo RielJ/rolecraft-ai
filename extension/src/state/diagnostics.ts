@@ -11,7 +11,7 @@ import type { FailureCode } from "../api/client";
 import { type PanelRefusal, type PanelReply, PanelRequest, type Routed } from "../messages";
 import type { KeyValueArea } from "./storage";
 
-// Local diagnostics (docs/plans/chrome-extension.md, "Diagnostics"): a ring buffer of the last 50
+// Local diagnostics (docs/EXTENSION.md): a ring buffer of the last 50
 // `DiagnosticEntry` records in chrome.storage.session, so it is gone when the browser closes. The
 // worker records one entry after each panel request and each message it refuses to hear. Entries
 // are metadata only: request kind, outcome code, adapter, counts and an origin with no path.

@@ -19,7 +19,7 @@ import {
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Task 4 of docs/plans/chrome-extension.md: the workspace Apply handoff. The SPA creates a
+ * Chrome extension (docs/EXTENSION.md): the workspace Apply handoff. The SPA creates a
  * short-lived session; the paired extension finds it with GET sessions/active and claims it for
  * a tab whose URL key matches (or after the user confirms a mismatch).
  */

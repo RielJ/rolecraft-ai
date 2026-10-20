@@ -2,7 +2,7 @@ import type { JobId } from "@/shared/api";
 import { isAutoMerge, type MergeKeys } from "./dedup";
 
 /**
- * What one source run does (PLAN.md section 3.1, steps 5 to 7), decided without the database.
+ * What one source run does (docs/ARCHITECTURE.md, "Refresh (sync)"), decided without the database.
  * The service loads the source's listings and the jobs that could be the same posting, calls
  * `planSourceRun`, and applies the plan in one `asSync` transaction.
  */

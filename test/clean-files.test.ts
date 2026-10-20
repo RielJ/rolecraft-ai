@@ -6,7 +6,7 @@ import { AddJobResult, ApiErrorBody, ProfileDto, TextExport, WorkspaceDto } from
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 /*
- * Slice A of docs/plans/clean-files.md on the server: the preview PDF, clean copy text, the page
+ * Clean files (decision 70) on the server: the preview PDF, clean copy text, the page
  * count, the clean edit that keeps markers, and the "Needs your input" fill.
  */
 

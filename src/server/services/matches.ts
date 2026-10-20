@@ -32,7 +32,7 @@ import { jobFacts } from "./jobs";
 import { loadUserSkillRows } from "./user-skills";
 
 /**
- * Matches (PLAN.md sections 3.7, 3.7a and 4). The level and the "Role unclear" tag are computed
+ * Matches (docs/ARCHITECTURE.md, "Match rules"; decision 44). The level and the "Role unclear" tag are computed
  * on every read from the job's stored features and the user's confirmed facts and targeting, so a
  * confirmed fact or a changed role family shows on the next request with nothing stored to update.
  */

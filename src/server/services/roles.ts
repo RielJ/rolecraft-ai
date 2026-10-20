@@ -17,7 +17,7 @@ import { AppError, type Deps } from "./context";
 import type { TaskContext } from "./tasks";
 
 /*
- * Roles (decision 71, docs/plans/roles.md): read from a CV or experience add-on in the split task
+ * Roles (decision 71): read from a CV or experience add-on in the split task
  * or a "Read roles" task, kept only where every field is in the text, and editable on Profile.
  * Facts link to a role when their section names exactly one role's company.
  */

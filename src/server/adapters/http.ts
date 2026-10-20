@@ -1,5 +1,5 @@
 /**
- * The only `fetch` in the server (PLAN.md section 1, "Polite fetching"): user agent
+ * The only `fetch` in the server (docs/ARCHITECTURE.md, "Refresh (sync)"): user agent
  * `hanapbuhay/0.1 (personal use)`, at most 2 requests at a time per host, 400 to 900 ms between
  * requests to the same host, a 10 s timeout, `Retry-After` honored, at most 3 attempts with
  * exponential backoff, and a 2 MB response cap. Everything that varies (fetch, sleep, the clock,

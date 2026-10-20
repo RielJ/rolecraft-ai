@@ -7,7 +7,7 @@ import { ClaimPairingResult, CreatePairingResult, LookupResult } from "@/shared/
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Task 7 of docs/plans/chrome-extension.md: the extension asks whether the visible page is a
+ * Chrome extension (docs/EXTENSION.md): the extension asks whether the visible page is a
  * known job (read-only, by apply URL key) and imports it through the paste path.
  */
 

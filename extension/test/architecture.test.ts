@@ -3,8 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { DiagnosticEntry } from "@shared/extension";
 import { z } from "zod";
 
-// Rules the extension's safety depends on (docs/plans/chrome-extension.md, "Extension runtime" and
-// "Diagnostics"), checked by reading the source and the built package. Each check names the file
+// Rules the extension's safety depends on (docs/EXTENSION.md, "Threat model"), checked by reading the source and the built package. Each check names the file
 // and line that broke it.
 
 const EXTENSION = resolve(import.meta.dir, "..");

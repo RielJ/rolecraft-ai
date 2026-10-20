@@ -17,7 +17,7 @@ import {
 import { APPROVED_ORIGIN, type ExtensionHarness, expect, test, UNAPPROVED_ORIGIN } from "./fixtures";
 import { EXTENSION_E2E_PORT, STOPPABLE_SERVER_PORT } from "./server-env";
 
-// Task 16 of docs/plans/chrome-extension.md: the built extension, end to end, against the real
+// Chrome extension (docs/EXTENSION.md): the built extension, end to end, against the real
 // server. The panel is panel.html in a tab beside the job (see fixtures.ts for why), and the job
 // site is a fixture served by a Playwright route.
 

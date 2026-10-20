@@ -8,7 +8,7 @@ import { APPLICATION_SESSION_STATUSES, PREFILL_CATEGORY_KEYS } from "@/shared/ex
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Task 2 of docs/plans/chrome-extension.md: migration 0008 adds extension_pairings,
+ * Chrome extension (docs/EXTENSION.md): migration 0008 adds extension_pairings,
  * application_sessions, application_preferences and outputs.reviewed_at. These tests pin the
  * constraints the services rely on, and that sync (hb_sync) gets no grant on the new tables.
  */

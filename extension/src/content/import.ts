@@ -3,7 +3,7 @@ import { z } from "zod";
 import { IMPORT_LIMITS, ImportContentReply, type ImportDraft } from "../messages-import";
 import type { Box, Measure } from "./scan";
 
-// Read the visible job page for "Import this page" (docs/plans/chrome-extension.md, Task 14). Runs
+// Read the visible job page for "Import this page" (docs/EXTENSION.md). Runs
 // only when the worker asks, which it does only after the user's click. Visible text only: hidden
 // elements, scripts, forms, navigation and footers never reach the preview. A JobPosting JSON-LD
 // block is used only when the page visibly shows the same title.

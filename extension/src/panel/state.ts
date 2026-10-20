@@ -25,7 +25,7 @@ import type { OriginAccess } from "../background/permissions";
 import type { PanelRefusal, PanelReply, PanelRequest } from "../messages";
 import type { AppliedWatch } from "./AppliedPrompt";
 
-// The Application screen as a pure state machine (docs/plans/chrome-extension.md, Task 12).
+// The Application screen as a pure state machine (docs/EXTENSION.md).
 // `transition` returns the next state and the worker requests to send; the UI only renders state,
 // runs those requests and feeds the replies back through `replyToEvent`. Safety rules live here,
 // where panel-state.test.ts can check them:

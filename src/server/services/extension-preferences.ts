@@ -11,7 +11,7 @@ import {
 import { applicationPreferences, opportunities } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 
-// Saved prefill answers (docs/plans/chrome-extension.md, Task 6): one global default and one
+// Saved prefill answers (docs/EXTENSION.md): one global default and one
 // per-job override per category. Written only on an explicit save from the panel. There is no
 // salary category: PrefillCategory has none and a CHECK on the table mirrors it.
 

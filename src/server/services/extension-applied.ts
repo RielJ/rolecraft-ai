@@ -6,7 +6,7 @@ import { changeStatus } from "./board";
 import { AppError, type Deps, notFound } from "./context";
 import { completeSession, requireClaimedSession } from "./extension-sessions";
 
-// confirm-applied (docs/plans/chrome-extension.md, Task 7). The panel calls it only after the
+// confirm-applied (docs/EXTENSION.md). The panel calls it only after the
 // user answers Yes to "Did you submit this application?". It moves the opportunity to Applied
 // through the board's `changeStatus` (history, applied snapshot, frozen standard answers) and
 // completes the session in one transaction: `changeStatus` runs on the transaction handle, so its

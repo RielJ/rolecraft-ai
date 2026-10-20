@@ -30,7 +30,7 @@ import {
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 /*
- * Task 6 of docs/plans/chrome-extension.md: saved preferences, the prefill payload for a claimed
+ * Chrome extension (docs/EXTENSION.md): saved preferences, the prefill payload for a claimed
  * session, and the materials routes (outputs without bodies, mark reviewed, draft, task poll, PDF).
  * Everything goes through createApp, as the extension and the SPA would call it.
  */

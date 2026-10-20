@@ -25,7 +25,7 @@ import type { SourceKind } from "@/shared/enums";
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Likely duplicates and merge (PLAN.md section 3.8 and slice 9). Jobs are stored the way sync
+ * Likely duplicates and merge (decisions 10 and 46). Jobs are stored the way sync
  * stores them (the same `derive`), with listings on built-in boards; one test runs a real refresh
  * through the Greenhouse fixture to show sync after a merge.
  */

@@ -1,5 +1,5 @@
 /*
- * CV texts with role headers, in the two shapes real CVs use (docs/plans/roles.md). Each role is a
+ * CV texts with role headers, in the two shapes real CVs use (decision 71). Each role is a
  * "Title  Start – End" line followed by a company line. Fictional people; the shapes are copied
  * from real CVs read by the app's own extractor.
  */

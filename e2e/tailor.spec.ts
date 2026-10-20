@@ -7,7 +7,7 @@ import { E2E_DATABASE_URL } from "../playwright.config";
 import { PAREN_CV } from "../test/fixtures/roles-cv";
 import { resetTables } from "../test/reset";
 
-// Tailor from the base CV (decision 75, docs/plans/base-cv-tailoring.md): a resume drafted from a
+// Tailor from the base CV (decision 75): a resume drafted from a
 // CV with roles lists its changes under the card; Undo puts the CV's version back in the resume.
 // The fake AI's default tailor reply reverses the first role's bullets and shortens Tala's bullet.
 // Screenshots land in test-results/tailor/ for a human look.

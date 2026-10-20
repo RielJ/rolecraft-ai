@@ -8,7 +8,7 @@ import { E2E_DATABASE_URL } from "../playwright.config";
 import { PAREN_CV } from "../test/fixtures/roles-cv";
 import { resetTables } from "../test/reset";
 
-// Roles (decision 71, docs/plans/roles.md): Read roles for a CV split before roles existed, edit
+// Roles (decision 71): Read roles for a CV split before roles existed, edit
 // and save them, then draft a resume whose job headers come from them. Screenshots land in
 // test-results/roles/ for a human look.
 

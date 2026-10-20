@@ -15,7 +15,7 @@ import {
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Task 3 of docs/plans/chrome-extension.md: the extension router skeleton, its bearer guard,
+ * Chrome extension (docs/EXTENSION.md): the extension router skeleton, its bearer guard,
  * route-local CORS and pairing. Iterates EXTENSION_AUTH_MATRIX so a route added to the contract
  * without the matching guard fails here.
  */

@@ -261,7 +261,7 @@ describe("payBelow: the Matches pay filter (decision 20)", () => {
   });
 });
 
-test("a 20k-job list scores well under a second (PLAN.md section 6 risk)", () => {
+test("a 20k-job list scores well under a second (an open risk in ARCHITECTURE.md)", () => {
   const score = matcher(PROFILE);
   const jobs: MatchJob[] = Array.from({ length: 20_000 }, (_, i) => ({
     ...JOB,

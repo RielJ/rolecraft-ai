@@ -3,7 +3,7 @@ import { ExtensionOrigin, PairingToken } from "@/shared/extension";
 import { AppError, type Deps } from "../services/context";
 import { type AuthedPairing, authenticatePairing, isPairedOrigin } from "../services/extension-pairing";
 
-// Auth and CORS for /api/extension/* (docs/plans/chrome-extension.md, "Auth matrix"). Everything
+// Auth and CORS for /api/extension/* (docs/EXTENSION.md). Everything
 // here is mounted inside the router at `.route("/extension", ...)`, so none of it reaches other
 // /api routes. localGuard skips its Origin rules for this prefix; these take over:
 // - pair/claim: the request Origin must be a chrome-extension:// origin; it is bound on claim.

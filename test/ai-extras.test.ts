@@ -16,7 +16,7 @@ import { type DraftingCase, type EligibilityCase, exitCode, loadSets, main, piPr
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Slice 10 (PLAN.md section 5): suggested questions, the AI eligibility pass during Refresh, and
+ * AI extras: suggested questions, the AI eligibility pass during Refresh, and
  * the evaluation set's scorer. Every AI call goes to a fake; nothing reaches the network.
  */
 

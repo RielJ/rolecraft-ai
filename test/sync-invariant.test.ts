@@ -22,7 +22,7 @@ import {
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 /*
- * Sync never writes user data (PLAN.md section 2, "What sync may write"). Three parts:
+ * Sync never writes user data (docs/ARCHITECTURE.md, "What sync may write"). Three parts:
  *  (a) the grants of `hb_sync` are exactly the table in the plan, so a sloppy grant fails the build;
  *  (b) as `hb_sync`, every write outside that table fails with SQLSTATE 42501;
  *  (c) refresh runs through fixture sources in six scenarios, and every row of every table outside

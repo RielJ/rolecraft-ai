@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { z } from "zod";
 
-// The manifest is the extension's permission surface (docs/plans/chrome-extension.md, "Extension runtime").
+// The manifest is the extension's permission surface (docs/EXTENSION.md).
 
 const Manifest = z.looseObject({
   manifest_version: z.literal(3),

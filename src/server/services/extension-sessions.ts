@@ -17,7 +17,7 @@ import { applicationSessions, jobs, opportunities, users } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 import type { AuthedPairing } from "./extension-pairing";
 
-// The workspace Apply handoff (docs/plans/chrome-extension.md, Task 4). Apply records a pending
+// The workspace Apply handoff (docs/EXTENSION.md). Apply records a pending
 // session and the SPA opens the job's apply URL unchanged: nothing about the session travels in
 // the URL. The paired extension finds the session with `activeSession` and binds it to a tab with
 // `claimSession`. At most one session per user is live (pending or claimed); the partial unique

@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { ApiErrorBody } from "@/shared/api";
 import { AppError } from "../services/context";
 
-// Local server hardening (docs/plans/chrome-extension.md, Task 0). The app has no login, so any
+// Local server hardening (docs/EXTENSION.md). The app has no login, so any
 // web page the user visits could otherwise talk to it:
 // - Host check: a DNS-rebinding page reaches 127.0.0.1 under its own name, and the browser then
 //   sends that name as Host. Only loopback names (any port) and HB_ALLOWED_HOSTS pass.

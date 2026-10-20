@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Kbd } from "../ui/kbd";
 
-/** The Matches keyboard model, worded as in PLAN.md section 4. */
+/** The Matches keyboard model. */
 const SHORTCUTS: readonly { keys: readonly (readonly string[])[]; action: string }[] = [
   { keys: [["j"], ["↓"], ["→"]], action: "Next job" },
   { keys: [["k"], ["↑"], ["←"]], action: "Previous job" },

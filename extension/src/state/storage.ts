@@ -2,7 +2,7 @@ import { OpportunityId } from "@shared/api";
 import { ApplicationSessionId, ExtensionEndpoint, PairingId, PairingToken } from "@shared/extension";
 import { z } from "zod";
 
-// What the extension keeps (docs/plans/chrome-extension.md, "Storage"):
+// What the extension keeps (docs/EXTENSION.md):
 // chrome.storage.local: endpoint, pairing token, granted origins, UI settings.
 // chrome.storage.session: the application session bound to a tab.
 // No answers, page text or files, ever. Every read is parsed; a value that does not parse reads

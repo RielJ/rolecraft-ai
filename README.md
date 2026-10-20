@@ -78,7 +78,7 @@ The extension adds a side panel that fills empty fields on a job's application f
 2. In `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select `dist-extension/`.
 3. Pair it with a code from **Settings** > **Chrome extension**.
 
-[docs/extension-guide.md](docs/extension-guide.md) walks through the setup, what to prepare in your profile, each step of an application, and troubleshooting. [docs/EXTENSION.md](docs/EXTENSION.md) covers permissions, stored data, the threat model, the limits, and the manual checks.
+[docs/EXTENSION.md](docs/EXTENSION.md) walks through the setup, what to prepare in your profile, each step of an application, and troubleshooting. It also covers permissions, stored data, the threat model, the limits, and the manual checks.
 
 ## Environment variables
 
@@ -145,6 +145,13 @@ The recorded run of that command reported 0 missed exclusions and 0 invented cla
 
 ## Architecture
 
+The docs in `docs/`:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the app is built. Layers, data model, the main flows, and open work.
+- [docs/DECISIONS.md](docs/DECISIONS.md): the rules the app follows and why, numbered. Code comments cite them as "decision N".
+- [docs/EXTENSION.md](docs/EXTENSION.md): the Chrome extension, from setup to its threat model.
+- [docs/research/](docs/research/): the sources behind job-source and project rules.
+
 The server and the SPA share one TypeScript codebase, split into layers. `test/architecture.test.ts` scans every import and fails the build when a layer imports something it may not.
 
 | Layer | Folder | Holds | May import |
@@ -174,8 +181,8 @@ Domain code may not read the clock or use randomness. Callers pass `now`.
 |---|---|
 | `bun run check` | Biome, `tsc --noEmit` for the app and the extension, `bun test`, and the extension's unit tests. The unit tests and the service tests run against a real Postgres database, `hanapbuhay_test`. |
 | `bun run check:changed` | Biome and both `tsc` runs, then only the tests your uncommitted changes reach: `bun test --changed`, `bun run build`, and `scripts/e2e-changed.ts`. That script runs every e2e spec when the app changed, and `playwright test --only-changed` otherwise. |
-| `bun run e2e` | Playwright specs in `e2e/`. Run `bun run build` first. The suite starts the server on port 3100 with `HB_AI=fake`, `HB_SOURCES=fixture` and `HB_FX=fixture`, against `hanapbuhay_e2e`. |
-| `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. Run `bun run build` first. See [docs/EXTENSION.md](docs/EXTENSION.md). |
+| `bun run e2e` | Playwright specs in `e2e/`. It builds `dist/` first, since the server serves the built app. The suite starts the server on port 3100 with `HB_AI=fake`, `HB_SOURCES=fixture` and `HB_FX=fixture`, against `hanapbuhay_e2e`. |
+| `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist/` and `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. See [docs/EXTENSION.md](docs/EXTENSION.md). |
 | `bun run eval ...` | The evaluation set. It makes real AI calls, so it costs money. |
 
 Start Postgres with `bun run db:up` before `bun run check` or `bun run e2e`.

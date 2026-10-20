@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { E2E_DATABASE_URL } from "../playwright.config";
 import { resetTables } from "../test/reset";
 
-// Matches from the keyboard (PLAN.md section 4, keyboard model). Jobs are seeded in SQL as sync
+// Matches from the keyboard. Jobs are seeded in SQL as sync
 // stores them, newest first: Alpha, Bravo, Charlie, Delta, Echo, plus one that excludes the PH.
 
 async function withSql<T>(run: (sql: postgres.Sql) => Promise<T>): Promise<T> {

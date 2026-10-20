@@ -23,7 +23,7 @@ import {
 
 const API = "https://api.smartrecruiters.com/v1/companies";
 const NAME = "SmartRecruiters";
-/** PLAN.md section 1, polite fetching: at most 50 detail fetches of new postings per run. */
+/** Polite fetching: at most 50 detail fetches of new postings per run. */
 export const SMARTRECRUITERS_DETAIL_BUDGET = 50;
 const PAGE = 100;
 /** Ten pages: boards of up to 1,000 postings. */

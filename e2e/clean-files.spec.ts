@@ -6,7 +6,7 @@ import { AddJobResult, ProfileDto, WorkspaceDto } from "@/shared/api";
 import { E2E_DATABASE_URL } from "../playwright.config";
 import { resetTables } from "../test/reset";
 
-// Clean files (docs/plans/clean-files.md, slice A): the file card, the PDF preview, the blanks
+// Clean files (decision 70): the file card, the PDF preview, the blanks
 // form, clean copy text, and a view-only applied job.
 
 test.use({ viewport: { width: 1280, height: 900 } });

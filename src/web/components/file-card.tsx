@@ -24,7 +24,7 @@ import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 
 /*
- * How a file shows on the job page (docs/plans/clean-files.md, slice A): a summary card with the
+ * How a file shows on the job page (decision 70): a summary card with the
  * PDF one click away, clean copy text, the blanks as their own inputs, and an inline text editor.
  * No fact keys, Markdown marks or markers reach the screen.
  */

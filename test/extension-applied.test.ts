@@ -12,7 +12,7 @@ import {
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Task 7 of docs/plans/chrome-extension.md: POST sessions/:id/confirm-applied. Only the user's
+ * Chrome extension (docs/EXTENSION.md): POST sessions/:id/confirm-applied. Only the user's
  * Yes calls it. It moves the opportunity to Applied the way the board does (history, snapshot,
  * frozen standard answers) and completes the session, in one transaction. A repeat for the same
  * session answers the already-applied result instead of an error.

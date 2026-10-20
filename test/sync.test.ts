@@ -13,7 +13,7 @@ import { AddJobResult, ApiErrorBody, MatchList, RefreshDto, SourceDto, TaskDto, 
 import { resetDb, testDeps, testSql } from "./setup";
 
 /*
- * Refresh behaviour per source (PLAN.md section 3.1 and slice 6 acceptance). The network is a
+ * Refresh behaviour per source (docs/ARCHITECTURE.md, "Refresh (sync)"). The network is a
  * map of fixture payloads keyed by host and path; a test changes an entry to change what a board
  * says on the next run.
  */

@@ -9,7 +9,7 @@ import {
 } from "@shared/extension";
 import { z } from "zod";
 
-// File attachment messages (docs/plans/chrome-extension.md, Task 13). messages.ts spreads
+// File attachment messages (docs/EXTENSION.md). messages.ts spreads
 // `ATTACH_PANEL_REQUESTS` into `PanelRequest` and `ATTACH_PANEL_RESULTS` into `PanelResult`. This module must not import values from ./messages: messages.ts imports this
 // one, and a cycle would leave these schemas undefined at load.
 //

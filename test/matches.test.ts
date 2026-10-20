@@ -20,7 +20,7 @@ import {
 import { resetDb, testDeps, testSql, waitForSplits } from "./setup";
 
 /*
- * Matches (PLAN.md slice 7): levels and the "Role unclear" tag are computed on every read, search
+ * Matches (docs/ARCHITECTURE.md, "Match rules"): levels and the "Role unclear" tag are computed on every read, search
  * ranks within a level, the excluded and pay filters, and save, dismiss and undo.
  */
 

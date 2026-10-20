@@ -666,7 +666,7 @@ export const aiCalls = pgTable(
   ],
 );
 
-// ---------- Chrome extension (docs/plans/chrome-extension.md, migration 0008) ----------
+// ---------- Chrome extension (docs/EXTENSION.md) ----------
 // None of these tables get an hb_sync grant: sync can neither read nor write them.
 
 /**

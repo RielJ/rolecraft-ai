@@ -10,7 +10,7 @@ import { aiPick, extractGithubFacts } from "@/server/services/github-extract";
 import { parseGithubLink } from "@/shared/github-link";
 
 /*
- * The GitHub set (decision 55, PLAN.md slice 14): recorded repos read by the app's own reader
+ * The GitHub set (decision 55): recorded repos read by the app's own reader
  * (token cap, picks validated against the tree, the user's commits only) over a fixture transport,
  * then the app's own extraction and evidence check.
  *

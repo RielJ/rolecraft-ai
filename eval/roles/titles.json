@@ -1,5 +1,5 @@
 {
-  "about": "Job titles as boards publish them, with the role-filter level expected for each family pick (PLAN.md section 3.7a). src/domain/roles.test.ts runs every case.",
+  "about": "Job titles as boards publish them, with the role-filter level expected for each family pick (decision 44). src/domain/roles.test.ts runs every case.",
   "cases": [
     { "title": "Senior Frontend Engineer", "families": ["engineering"], "fit": "keep", "family": "engineering" },
     {

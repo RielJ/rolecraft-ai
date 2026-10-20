@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { TabRefusal } from "./background/content";
 import type { ConnectionStatus } from "./messages";
 
-// Import-this-page and success-detection messages (docs/plans/chrome-extension.md, Task 14).
+// Import-this-page and success-detection messages (docs/EXTENSION.md).
 // messages.ts spreads `IMPORT_PANEL_REQUESTS` into `PanelRequest` and `IMPORT_PANEL_RESULTS` into
 // `PanelResult`; content/index.ts answers the `ImportContentRequest` kinds. This module must not
 // import messages.ts at runtime (only types): messages.ts imports it, and a runtime cycle would

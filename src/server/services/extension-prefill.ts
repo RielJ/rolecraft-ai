@@ -30,7 +30,7 @@ import { loadContact } from "./profile";
 import { getTask } from "./tasks";
 import { draft, exportPdf, listOutputs, markReviewed, outputOpportunity, updateOutput } from "./workspace";
 
-// The prefill payload and the panel's materials (docs/plans/chrome-extension.md, Task 6). Every
+// The prefill payload and the panel's materials (docs/EXTENSION.md). Every
 // call starts from a session the calling pairing has claimed (`requireClaimedSession`), and
 // everything it reads or changes belongs to that session's opportunity; anything else is 404.
 //

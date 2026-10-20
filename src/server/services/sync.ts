@@ -18,7 +18,7 @@ import { AppError, type Deps } from "./context";
 import type { TaskContext } from "./tasks";
 
 /**
- * The refresh pipeline (PLAN.md section 3.1). Every statement runs as `hb_sync` through
+ * The refresh pipeline (docs/ARCHITECTURE.md, "Refresh (sync)"). Every statement runs as `hb_sync` through
  * `asSync`, which may write only jobs, listings, role drops and the `last_*` columns of sources
  * (section 2, drizzle/0006_filtered_sync_grants.sql).
  * This module may not import the app-role client (architecture test); task progress goes

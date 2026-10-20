@@ -141,7 +141,7 @@ The proposals as first written:
 3. **Application answer: a project question gets one project.** Lead with the result, give the choices made and one problem, and end with the scope or number from the facts. (Section 9.)
 4. **Cover letter: a project only as the proof story or as domain interest.** At most one, using the same name as the resume. (Section 8.)
 
-Changes to the GitHub profile scan plan (`docs/plans/github-profile-scan.md`):
+Changes to the GitHub profile scan (built as decision 86, see [ARCHITECTURE.md](../ARCHITECTURE.md#projects-find-read-and-cite)):
 
 5. **Flag repos that would hurt when linked:** no README, archived, or no push in 18 months. Show them, but say why before the user picks one. The repo listing already returns `archived`, `pushed_at` and the description, at no extra cost. Checking for a README takes one more call per repo, so it can wait until the repo is read. (Sections 2 and 7.)
 6. **Show stars in each row, but don't sort by them.** Stars mean something only next to similar projects, so a ranking by stars would mislead. The planned sort (by the candidate's commits, then size) stays. Adding stars next to the commit share and the last push gives the user the adoption signal. (Section 2.)

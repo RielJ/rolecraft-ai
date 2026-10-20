@@ -428,7 +428,7 @@ export async function updateOutput(
     if (next !== undefined) {
       patch.body = next;
       patch.editedAt = deps.clock.now();
-      // A new body has not been reviewed (Task 6, docs/plans/chrome-extension.md).
+      // A new body has not been reviewed (decision 58).
       patch.reviewedAt = null;
       // Edits re-run the style check without AI so the warnings stay current (section 3.4, step 4a).
       patch.styleHits = next === null ? [] : checkStyle({ body: next, kind: output.kind });

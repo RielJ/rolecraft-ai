@@ -88,7 +88,7 @@ export const ERROR_CODES = [
   /** gh is signed in as someone other than HB_GITHUB_USER. */
   "github_account",
   "github_unavailable",
-  /** Extension call without a valid bearer token or pairing code (docs/plans/chrome-extension.md). */
+  /** Extension call without a valid bearer token or pairing code (docs/EXTENSION.md). */
   "unauthorized",
   /** Request `Origin` is not the app (SPA routes) or not the paired extension (extension routes). */
   "forbidden_origin",
@@ -326,7 +326,7 @@ export const CurrencyCode = z
   .toUpperCase()
   .regex(/^[A-Z]{3}$/, "Use a three-letter currency code, such as PHP or USD.");
 
-/** `users.min_pay` (PLAN.md section 2): an amount per period in one currency. */
+/** `users.min_pay` (docs/ARCHITECTURE.md, "Data model"): an amount per period in one currency. */
 export const Money = z.object({
   amount: z.number().positive("Minimum pay must be more than zero.").max(1e9, "That amount is too large."),
   currency: CurrencyCode,

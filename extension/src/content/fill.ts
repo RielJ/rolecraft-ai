@@ -12,7 +12,7 @@ import {
   targetState,
 } from "./scan";
 
-// Writes a fill plan into the fields of the current scan. Rules (docs/plans/chrome-extension.md):
+// Writes a fill plan into the fields of the current scan. Rules (docs/EXTENSION.md):
 // rescan each field and compare its signature first; never touch file inputs, salary fields,
 // non-empty, hidden, disabled or read-only controls; never click buttons or submit. Values go
 // through the native setter plus `input`/`change`, so React-controlled inputs see the change.

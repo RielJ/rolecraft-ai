@@ -26,7 +26,7 @@ import { AiTier, Eligibility, ItemUsage, OpportunityType, OutputKind } from "@/s
 import { type GithubOutcome, githubLine, loadGithubCases, runGithubCase } from "./github";
 
 /*
- * The evaluation set (decision 30, PLAN.md slice 10). Usage:
+ * The evaluation set (decision 30). Usage:
  *
  *   bun run eval --tier light --model <id> [--via key|pi]
  *   bun run eval --tier light --github [--model <id>] [--via key|pi]

@@ -5,7 +5,7 @@ import { parseRoleHeader, roleHeaderPlain } from "./work-roles";
 
 /*
  * How a stored body (Markdown subset with `[FACT-n]` markers and `[[...]]` blanks) becomes what the
- * user reads, copies and edits (docs/plans/clean-files.md, slice A).
+ * user reads, copies and edits (decision 70).
  */
 
 const HEADING = /^\s*#{1,6}\s+(.*)$/;

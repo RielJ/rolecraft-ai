@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join, relative } from "node:path";
 import { Glob } from "bun";
 
-// Layer rules from docs/PLAN.md section 1. `scanImports` drops type-only imports, so
+// Layer rules from docs/ARCHITECTURE.md, "Layers". `scanImports` drops type-only imports, so
 // `import type { AppType }` in the SPA passes while any value import from the server fails.
 
 const ROOT = join(import.meta.dir, "..");

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ERROR_CODES, OpportunityId, OutputId, PasteJobInput } from "./api";
 import { MustAnswer, OpportunityStatus, OutputKind } from "./enums";
 
-// Contracts shared by the server, the SPA and the Chrome extension (docs/plans/chrome-extension.md).
+// Contracts shared by the server, the SPA and the Chrome extension (docs/EXTENSION.md).
 // Every string and array is capped; test/extension-contracts.test.ts walks the exports to enforce it.
 // Schemas that cross the content-script boundary are strict, so an unknown key (a selector, a
 // script) is a parse error rather than silently dropped.

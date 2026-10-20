@@ -6,7 +6,7 @@ import { jobs, opportunities } from "../db/schema";
 import { AppError, type Deps } from "./context";
 import { addPastedJob } from "./jobs";
 
-// Lookup and import for the extension panel (docs/plans/chrome-extension.md, Task 7). The panel
+// Lookup and import for the extension panel (docs/EXTENSION.md). The panel
 // asks whether the visible page is a known job before it offers to import it. Lookup only reads;
 // import is the web app's paste path, origin `paste`.
 

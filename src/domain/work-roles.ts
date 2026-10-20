@@ -1,5 +1,5 @@
 /*
- * Resume roles (decision 71, docs/plans/roles.md): a title, an employer, a location and dates read
+ * Resume roles (decision 71): a title, an employer, a location and dates read
  * from a CV or an experience add-on. Every field read by AI must appear in the item's text. Drafts
  * never type a header: the model writes `[ROLE-n]` and the server puts the saved role there.
  */

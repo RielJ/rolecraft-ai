@@ -1,7 +1,7 @@
 import { blockedSite } from "@shared/hosts";
 import type { GrantedOrigins, Store } from "../state/storage";
 
-// Per-origin approval for prefill (docs/plans/chrome-extension.md, "Permissions"). The manifest
+// Per-origin approval for prefill (docs/EXTENSION.md). The manifest
 // lists `https://*/*` as an optional host permission; the user grants one origin at a time.
 // `chrome.permissions.request` needs a user gesture, which the worker never has, so the panel
 // calls `requestOriginAccess` from the click handler before any other await (as Pairing.tsx does

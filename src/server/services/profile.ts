@@ -994,7 +994,7 @@ export async function updateAddon(
   return getProfile(deps);
 }
 
-/** The `other` add-on that keeps answers typed into a draft's blanks (docs/plans/clean-files.md). */
+/** The `other` add-on that keeps answers typed into a draft's blanks (docs/ARCHITECTURE.md, "Drafting with citations"). */
 export const DRAFTING_ADDON_TITLE = "Filled in while drafting";
 
 /**

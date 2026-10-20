@@ -3,8 +3,7 @@ import type { ImportContentReply } from "../messages-import";
 import { byHint, isVisible, visibleText } from "./import";
 import type { Measure } from "./scan";
 
-// Success detection on the bound application tab (docs/plans/chrome-extension.md, "Success
-// detection"). The worker asks only after the user filled or attached on that tab. The answer is a
+// Success detection on the bound application tab (docs/EXTENSION.md). The worker asks only after the user filled or attached on that tab. The answer is a
 // reason code or null, never page text, and it never marks anything applied: the panel asks the
 // user, and only their Yes calls confirm-applied.
 

@@ -19,7 +19,7 @@ import {
 } from "./content";
 import type { PairingDeps } from "./pairing";
 
-// Worker side of import and success detection (docs/plans/chrome-extension.md, Task 14).
+// Worker side of import and success detection (docs/EXTENSION.md).
 // - `job_extract` and `success_check` only read the tab; neither calls the server.
 // - `job_lookup` is a read-only server call.
 // - `job_import` and `confirm_applied` are the only writes. The panel sends them only from the

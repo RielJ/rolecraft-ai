@@ -172,7 +172,7 @@ export const OUTDATED_REASONS = ["edited", "deleted", "unconfirmed", "letters_on
 export const OutdatedReason = z.enum(OUTDATED_REASONS);
 export type OutdatedReason = z.infer<typeof OutdatedReason>;
 
-// ---------- Sources and sync (PLAN.md section 2, `sources`; section 3.1) ----------
+// ---------- Sources and sync (docs/ARCHITECTURE.md, "Refresh (sync)") ----------
 
 /** Built-in boards: keyword boards and feeds that return a window of recent postings. */
 export const BUILTIN_SOURCE_KINDS = ["jobicy", "himalayas", "remoteok", "weworkremotely", "remotive"] as const;

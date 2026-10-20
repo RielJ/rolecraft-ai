@@ -13,7 +13,7 @@ import type { SessionBinding, Store } from "../state/storage";
 import { type ContentDeps, checkTab, type TabRefusal } from "./content";
 import type { PairingDeps } from "./pairing";
 
-// Worker side of file attachment (docs/plans/chrome-extension.md, "Files"). On an Attach click:
+// Worker side of file attachment (docs/EXTENSION.md). On an Attach click:
 // check the session-to-tab binding and the tab, fetch the output's PDF with the bearer token,
 // check it is application/pdf, starts with %PDF- and is at most 10 MB, then hand the bytes to the
 // content script of the bound tab as base64. The bytes live in this call only: never in

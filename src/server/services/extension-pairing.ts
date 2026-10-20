@@ -16,7 +16,7 @@ import {
 import { extensionPairings } from "../db/schema";
 import { AppError, type Deps, notFound } from "./context";
 
-// Pairing the Chrome extension (docs/plans/chrome-extension.md, Task 3). The SPA creates a
+// Pairing the Chrome extension (docs/EXTENSION.md). The SPA creates a
 // one-time code; the extension claims it with its chrome-extension:// Origin and gets a bearer
 // token once. Only SHA-256 digests of the code and token are stored, and neither is ever logged.
 

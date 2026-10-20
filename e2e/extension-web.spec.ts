@@ -6,7 +6,7 @@ import { ActiveSessionResponse, ClaimPairingResult } from "@/shared/extension";
 import { E2E_DATABASE_URL } from "../playwright.config";
 import { resetTables } from "../test/reset";
 
-// Task 8 of docs/plans/chrome-extension.md: pairing in Settings, Apply in the workspace, and
+// Chrome extension (docs/EXTENSION.md): pairing in Settings, Apply in the workspace, and
 // Mark reviewed. The job site is never reached: a context route answers for it.
 
 test.beforeEach(async () => {
