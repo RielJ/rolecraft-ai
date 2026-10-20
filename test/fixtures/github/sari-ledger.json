@@ -4,6 +4,9 @@
   "private": true,
   "description": "Offline inventory and credit ledger for sari-sari stores",
   "defaultBranch": "main",
+  "language": "Go",
+  "pushedAt": "2026-08-15T08:00:00Z",
+  "sizeKb": 180,
   "files": {
     "README.md": "# sari-ledger\n\nAn offline-first inventory and credit (utang) ledger for neighborhood sari-sari stores. Runs on a cheap Android phone through Termux and syncs to a small server when there is signal.\n\nRecords sales, restocks and customer credit, and prints a daily summary in Tagalog or English.\n",
     "go.mod": "module github.com/juandc/sari-ledger\n\ngo 1.23\n\nrequire (\n\tmodernc.org/sqlite v1.33.1\n\tgithub.com/go-chi/chi/v5 v5.1.0\n)\n",

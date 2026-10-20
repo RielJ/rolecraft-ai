@@ -4,6 +4,10 @@
   "private": false,
   "description": "Jeepney route planner for Cebu City",
   "defaultBranch": "main",
+  "language": "TypeScript",
+  "pushedAt": "2026-09-02T08:00:00Z",
+  "stars": 3,
+  "sizeKb": 240,
   "files": {
     "README.md": "# jeep-route\n\nPlans jeepney trips across Cebu City using 42 routes from the city's open data. Give it two places and it returns the fewest transfers and the fare.\n\n## Stack\n\n- TypeScript on Bun\n- Hono for the HTTP API\n- SQLite for route data\n\n## Run\n\n```\nbun install\nbun run dev\n```\n",
     "package.json": "{\n  \"name\": \"jeep-route\",\n  \"type\": \"module\",\n  \"scripts\": { \"dev\": \"bun --watch src/server.ts\", \"test\": \"bun test\" },\n  \"dependencies\": { \"hono\": \"^4.6.0\" },\n  \"devDependencies\": { \"typescript\": \"^5.6.0\" }\n}\n",

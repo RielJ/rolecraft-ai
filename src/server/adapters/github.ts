@@ -17,6 +17,7 @@ import {
   validatePicks,
 } from "@/domain/github-read";
 import { estimateTokens } from "@/domain/prompts";
+import type { OwnedRepo } from "@/domain/repo-scan";
 import { type HttpClient, HttpError, MAX_BYTES } from "./http";
 
 /**
@@ -30,6 +31,9 @@ import { type HttpClient, HttpError, MAX_BYTES } from "./http";
  *   and never changes gh's state: switching accounts is the user's job.
  *
  * Both run the same read over a `GithubTransport`, so what is read and the token cap are the same.
+ *
+ * Listing the user's own repos (decision 78) is gh only: `user/repos` lists the signed-in account,
+ * and only gh is pinned to `HB_GITHUB_USER`. The public reader's `list` is null.
  */
 
 // ---------- Errors ----------
@@ -242,7 +246,62 @@ export type GithubReader = {
   /** `HB_GITHUB_USER`, when set. With gh it is required and is the only account gh may be. */
   readonly user: string | null;
   read(input: GithubReadInput): Promise<GithubBundle>;
+  /** The repos `user` owns, organizations' excluded (decision 78). Null when this reader can't list. */
+  readonly list: ((input: { user: string }) => Promise<OwnedRepo[]>) | null;
 };
+
+// ---------- Listing owned repos ----------
+
+/** At most this many pages of 100 repos per listing. */
+export const MAX_REPO_PAGES = 3;
+
+const ListedRepo = z.object({
+  name: z.string(),
+  owner: z.object({ login: z.string() }),
+  private: z.boolean(),
+  fork: z.boolean(),
+  archived: z.boolean().default(false),
+  size: z.number().nonnegative(),
+  language: z.string().nullable().default(null),
+  stargazers_count: z.number().int().nonnegative().default(0),
+  pushed_at: z.string().nullable().default(null),
+  description: z.string().nullable().default(null),
+});
+
+/**
+ * The signed-in account's own repos: `user/repos?affiliation=owner`, newest push first, 100 a page,
+ * up to `MAX_REPO_PAGES` pages. Repos owned by anyone but `user` are dropped as a second guard.
+ */
+export async function listOwnedRepos({
+  get,
+  user,
+}: {
+  get: GithubTransport["get"];
+  user: string;
+}): Promise<OwnedRepo[]> {
+  const repos: OwnedRepo[] = [];
+  for (let page = 1; page <= MAX_REPO_PAGES; page++) {
+    const body = await get(`user/repos?affiliation=owner&sort=pushed&per_page=100&page=${page}`);
+    const listed = parse(z.array(ListedRepo), body, "your repos");
+    for (const r of listed) {
+      if (r.owner.login.toLowerCase() !== user.toLowerCase()) continue;
+      repos.push({
+        owner: r.owner.login,
+        name: r.name,
+        private: r.private,
+        fork: r.fork,
+        archived: r.archived,
+        sizeKb: r.size,
+        language: r.language,
+        stars: r.stargazers_count,
+        pushedAt: r.pushed_at,
+        description: r.description,
+      });
+    }
+    if (listed.length < 100) break;
+  }
+  return repos;
+}
 
 const repoPath = ({ owner, repo }: { owner: string; repo: string }) =>
   `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -519,6 +578,7 @@ export function createReader({
       const { link } = input;
       return link.kind === "pull" ? readPull({ ...input, link }) : readRepo({ ...input, link });
     },
+    list: null,
   };
 }
 
@@ -538,18 +598,22 @@ export async function ghLogin(gh: ReturnType<typeof createGhRunner>): Promise<st
  */
 export function createGhReader({ user, ...options }: GhOptions & { user: string }): GithubReader {
   const gh = createGhRunner(options);
-  return createReader({
-    mode: "gh",
-    user,
-    transport: createGhTransport(gh),
-    async beforeRead() {
-      const login = await ghLogin(gh);
-      if (login.toLowerCase() !== user.toLowerCase()) {
-        throw new GithubError({
-          kind: "account_mismatch",
-          message: `gh is signed in as "${login || "nobody"}", but HB_GITHUB_USER is "${user}". Switch gh to ${user} yourself (hanapbuhay never changes gh's account), or change HB_GITHUB_USER.`,
-        });
-      }
+  const transport = createGhTransport(gh);
+  async function checkAccount() {
+    const login = await ghLogin(gh);
+    if (login.toLowerCase() !== user.toLowerCase()) {
+      throw new GithubError({
+        kind: "account_mismatch",
+        message: `gh is signed in as "${login || "nobody"}", but HB_GITHUB_USER is "${user}". Switch gh to ${user} yourself (hanapbuhay never changes gh's account), or change HB_GITHUB_USER.`,
+      });
+    }
+  }
+  return {
+    ...createReader({ mode: "gh", user, transport, beforeRead: checkAccount }),
+    // gh lists only as HB_GITHUB_USER, whatever account the caller names.
+    async list() {
+      await checkAccount();
+      return listOwnedRepos({ get: transport.get, user });
     },
-  });
+  };
 }

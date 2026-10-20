@@ -350,8 +350,49 @@ export const ProfileDto = z.object({
   cvFile: z.object({ fileName: z.string(), size: z.number().int(), uploadedAt: z.string() }).nullable(),
   /** Whether an AI key is saved, so the split uses AI instead of the rule splitter. */
   aiReady: z.boolean(),
+  /** Whether "Find my GitHub repos" works: only with `HB_GITHUB=gh` (decision 78). */
+  githubScan: z.boolean(),
 });
 export type ProfileDto = z.infer<typeof ProfileDto>;
+
+// ---------- Finding GitHub repos (decision 78) ----------
+
+/** Why the rules put a repo in the collapsed "Hidden by rules" group. */
+export const RepoHideReason = z.enum(["fork", "profile", "small"]);
+export type RepoHideReason = z.infer<typeof RepoHideReason>;
+
+export const ScannedRepoDto = z.object({
+  name: z.string(),
+  url: z.string(),
+  private: z.boolean(),
+  archived: z.boolean(),
+  language: z.string().nullable(),
+  stars: z.number().int(),
+  pushedAt: z.string().nullable(),
+  description: z.string().nullable(),
+  /** An add-on already links this repo. */
+  added: z.boolean(),
+  hiddenBy: RepoHideReason.nullable(),
+});
+export type ScannedRepoDto = z.infer<typeof ScannedRepoDto>;
+
+export const RepoScanDto = z.object({
+  /** The account listed. */
+  user: z.string(),
+  shown: z.array(ScannedRepoDto),
+  hidden: z.array(ScannedRepoDto),
+});
+export type RepoScanDto = z.infer<typeof RepoScanDto>;
+
+/** The most repos one Add creates, so the splits started at once stay few. */
+export const MAX_REPOS_PER_ADD = 20;
+
+/** Repo names to add; the server lists again and adds only names it finds. */
+export const AddReposInput = z.object({
+  names: z.array(z.string().trim().min(1).max(100)).min(1).max(MAX_REPOS_PER_ADD),
+  confirmOverCap: z.boolean().optional(),
+});
+export type AddReposInput = z.infer<typeof AddReposInput>;
 
 export const UpdateProfileInput = z.object({
   contact: Contact.optional(),

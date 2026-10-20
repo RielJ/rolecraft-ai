@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import type { OwnedRepo } from "@/domain/repo-scan";
 import { createReader, GithubError, type GithubReader, type GithubTransport } from "./github";
 
 /**
@@ -18,6 +19,13 @@ export const GithubSnapshot = z.object({
   private: z.boolean().default(false),
   description: z.string().nullable().default(null),
   defaultBranch: z.string().default("main"),
+  /** What the owned-repos listing reports (decision 78). */
+  fork: z.boolean().default(false),
+  archived: z.boolean().default(false),
+  sizeKb: z.number().nonnegative().default(100),
+  language: z.string().nullable().default(null),
+  stars: z.number().int().nonnegative().default(0),
+  pushedAt: z.string().nullable().default(null),
   /** Path to text. Every path is in the tree. */
   files: z.record(z.string(), z.string()),
   /** Newest first, like the commits API. */
@@ -40,6 +48,8 @@ export const GithubSnapshot = z.object({
     .default([]),
 });
 export type GithubSnapshot = z.infer<typeof GithubSnapshot>;
+/** A snapshot as written, before defaults. */
+export type GithubSnapshotInput = z.input<typeof GithubSnapshot>;
 
 const notFound = () => new GithubError({ kind: "not_found", message: "Not in the fixtures." });
 const base64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
@@ -122,9 +132,10 @@ export function createFixtureTransport({
   snapshots,
   log,
 }: {
-  snapshots: readonly GithubSnapshot[];
+  snapshots: readonly GithubSnapshotInput[];
   log?: string[];
 }): GithubTransport {
+  const parsed = snapshots.map((s) => GithubSnapshot.parse(s));
   return {
     async get(path) {
       await Promise.resolve();
@@ -133,7 +144,7 @@ export function createFixtureTransport({
       const match = /^\/repos\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
       if (!match) throw notFound();
       const [, owner = "", repo = "", rest = ""] = match;
-      const snapshot = snapshots.find(
+      const snapshot = parsed.find(
         (s) =>
           s.owner.toLowerCase() === decodeURIComponent(owner).toLowerCase() &&
           s.repo.toLowerCase() === decodeURIComponent(repo).toLowerCase(),
@@ -150,6 +161,30 @@ export async function loadSnapshots(dir: string): Promise<GithubSnapshot[]> {
   return Promise.all(names.map(async (n) => GithubSnapshot.parse(await Bun.file(join(dir, n)).json())));
 }
 
+/** The snapshots `user` owns, as the owned-repos listing would report them. */
+export function ownedSnapshots({
+  snapshots,
+  user,
+}: {
+  snapshots: readonly GithubSnapshot[];
+  user: string;
+}): OwnedRepo[] {
+  return snapshots
+    .filter((s) => s.owner.toLowerCase() === user.toLowerCase())
+    .map((s) => ({
+      owner: s.owner,
+      name: s.repo,
+      private: s.private,
+      fork: s.fork,
+      archived: s.archived,
+      sizeKb: s.sizeKb,
+      language: s.language,
+      stars: s.stars,
+      pushedAt: s.pushedAt,
+      description: s.description,
+    }));
+}
+
 /** The reader over the snapshots in `dir`, loaded on each read so edits show up without a restart. */
 export function createFixtureReader({ dir, user }: { dir: string; user: string | null }): GithubReader {
   return {
@@ -158,6 +193,9 @@ export function createFixtureReader({ dir, user }: { dir: string; user: string |
     async read(input) {
       const transport = createFixtureTransport({ snapshots: await loadSnapshots(dir) });
       return createReader({ mode: "fixture", user, transport }).read(input);
+    },
+    async list({ user: owner }) {
+      return ownedSnapshots({ snapshots: await loadSnapshots(dir), user: owner });
     },
   };
 }

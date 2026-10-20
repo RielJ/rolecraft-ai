@@ -112,3 +112,64 @@ test("a private repo's facts carry a lock badge", async ({ page }) => {
     expect(problems, scheme).toEqual([]);
   }
 });
+
+test("find my GitHub repos → pick a shown and a hidden one → both become add-ons", async ({ page }) => {
+  // A fork the rules hide, and the user's profile README repo.
+  await writeFile(
+    join(E2E_GITHUB_DIR, "forked-lib.json"),
+    JSON.stringify({ owner: "juandc", repo: "forked-lib", fork: true, description: "A fork", files: {} }),
+  );
+  await writeFile(
+    join(E2E_GITHUB_DIR, "juandc.json"),
+    JSON.stringify({ owner: "juandc", repo: "juandc", sizeKb: 2, files: {} }),
+  );
+  const ok = await page.request.put("/api/settings/ai-key", {
+    data: { provider: "anthropic", key: "sk-ant-github-key-ABCD" },
+  });
+  expect(ok.ok()).toBe(true);
+  await api(page, "PUT", "/profile", {
+    contact: { fullName: "Juan Dela Cruz", email: "", phone: "", location: "", links: ["https://github.com/juandc"] },
+  });
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Find my GitHub repos" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Find my GitHub repos" });
+  const shown = dialog.getByRole("list", { name: "Your repos" });
+  await expect(shown.getByRole("listitem")).toHaveCount(2);
+  await expect(shown.getByRole("listitem").first()).toContainText("jeep-route");
+  await expect(shown.getByRole("listitem").filter({ hasText: "sari-ledger" })).toContainText("Private");
+  await expect(dialog.getByRole("list", { name: "Hidden by rules" })).toBeHidden();
+
+  // The hidden group opens, and a hidden repo can still be picked.
+  await dialog.getByText("Hidden by rules: 1 fork, your profile README").click();
+  const hidden = dialog.getByRole("list", { name: "Hidden by rules" });
+  await expect(hidden.getByRole("listitem").filter({ hasText: "forked-lib" })).toContainText("Fork");
+
+  // The rules, the badges and the hidden group pass axe in both themes.
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    const result = await new AxeBuilder({ page })
+      .include('[role="dialog"]')
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    const problems = result.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
+    expect(problems, scheme).toEqual([]);
+  }
+
+  await dialog.getByRole("checkbox", { name: "jeep-route" }).check();
+  await dialog.getByRole("checkbox", { name: "forked-lib" }).check();
+  await expect(dialog).toContainText("2 picked");
+  await dialog.getByRole("button", { name: "Add 2 repos" }).click();
+  await expect(dialog).toBeHidden();
+
+  const addons = page.getByRole("list", { name: "Add-ons" });
+  await expect(addons.getByRole("listitem").filter({ hasText: "jeep-route" })).toContainText("github.com");
+  await expect(addons.getByRole("listitem").filter({ hasText: "forked-lib" })).toBeVisible();
+  const review = page.getByRole("list", { name: "Facts to review" });
+  await expect(review).toContainText("Jeepney route planner for Cebu City", { timeout: 15_000 });
+
+  // Reopening marks both as added; they can't be picked again.
+  await page.getByRole("button", { name: "Find my GitHub repos" }).click();
+  await expect(dialog.getByRole("checkbox", { name: "jeep-route" })).toBeDisabled();
+  await expect(shown.getByRole("listitem").filter({ hasText: "jeep-route" })).toContainText("Added");
+});

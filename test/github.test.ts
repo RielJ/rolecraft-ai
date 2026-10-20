@@ -16,26 +16,26 @@ import {
   GithubError,
   type GithubReader,
 } from "@/server/adapters/github";
-import { createFixtureReader, createFixtureTransport, type GithubSnapshot } from "@/server/adapters/github-fixture";
+import {
+  createFixtureReader,
+  createFixtureTransport,
+  GithubSnapshot,
+  type GithubSnapshotInput,
+} from "@/server/adapters/github-fixture";
 import { createHttpClient } from "@/server/adapters/http";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
-import { githubAppError, githubUserFor } from "@/server/services/github";
+import { githubAppError, githubUserFor, privateGithubRepos } from "@/server/services/github";
 import { waitForTask } from "@/server/services/tasks";
-import { AddJobResult, ApiErrorBody, ProfileDto, TaskDto, TextExport, WorkspaceDto } from "@/shared/api";
+import { AddJobResult, ApiErrorBody, ProfileDto, RepoScanDto, TaskDto, TextExport, WorkspaceDto } from "@/shared/api";
 import { githubExitCode, runGithubEval } from "../eval/run";
 import { resetDb, testDeps, testSql, waitForGithubReads, waitForSplits } from "./setup";
 
 const FIXTURES = join(import.meta.dir, "fixtures", "github");
-const JEEP: GithubSnapshot = await Bun.file(join(FIXTURES, "jeep-route.json")).json();
-const SARI: GithubSnapshot = await Bun.file(join(FIXTURES, "sari-ledger.json")).json();
+const JEEP = GithubSnapshot.parse(await Bun.file(join(FIXTURES, "jeep-route.json")).json());
 const noPick = async () => [];
 
 // ---------- A fake gh ----------
-
-function stream(text: string): ReadableStream<Uint8Array> {
-  return new Blob([text]).stream();
-}
 
 type GhAnswer = { stdout?: string; stderr?: string; exit?: number };
 
@@ -68,7 +68,7 @@ function fakeGh({ login, answer }: { login: string; answer: (path: string) => Pr
   return { spawn, argvs };
 }
 
-const fromSnapshots = (snapshots: GithubSnapshot[]) => {
+const fromSnapshots = (snapshots: GithubSnapshotInput[]) => {
   const transport = createFixtureTransport({ snapshots });
   return async (path: string): Promise<GhAnswer> => {
     try {
@@ -152,10 +152,85 @@ describe("gh reader", () => {
   });
 });
 
+// ---------- Listing owned repos (decision 78) ----------
+
+/** One repo as `user/repos` sends it. */
+const listed = (name: string, over: Record<string, unknown> = {}) => ({
+  name,
+  owner: { login: "juandc" },
+  private: false,
+  fork: false,
+  archived: false,
+  size: 120,
+  language: "Go",
+  stargazers_count: 2,
+  pushed_at: "2026-09-01T00:00:00Z",
+  description: `${name} description`,
+  ...over,
+});
+
+describe("listing owned repos", () => {
+  test("gh checks the account first, then lists the owner's repos page by page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => listed(`r${i}`));
+    const page2 = [listed("secret", { private: true }), listed("org-repo", { owner: { login: "acme" } })];
+    const gh = fakeGh({
+      login: "JuanDC",
+      answer: async (path) => ({ stdout: JSON.stringify(path.endsWith("page=1") ? page1 : page2) }),
+    });
+    const reader = createGhReader({ user: "juandc", spawn: gh.spawn });
+    const repos = (await reader.list?.({ user: "someone-else" })) ?? [];
+    expect(gh.argvs.map((a) => a[6])).toEqual([
+      "user",
+      "user/repos?affiliation=owner&sort=pushed&per_page=100&page=1",
+      "user/repos?affiliation=owner&sort=pushed&per_page=100&page=2",
+    ]);
+    // 100 + the private one; a repo owned by anyone else is dropped even if GitHub sends it.
+    expect(repos).toHaveLength(101);
+    expect(repos.at(-1)).toEqual({
+      owner: "juandc",
+      name: "secret",
+      private: true,
+      fork: false,
+      archived: false,
+      sizeKb: 120,
+      language: "Go",
+      stars: 2,
+      pushedAt: "2026-09-01T00:00:00Z",
+      description: "secret description",
+    });
+  });
+
+  test("stops after three pages", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => listed(`r${i}`));
+    const gh = fakeGh({ login: "juandc", answer: async () => ({ stdout: JSON.stringify(full) }) });
+    const repos = (await createGhReader({ user: "juandc", spawn: gh.spawn }).list?.({ user: "juandc" })) ?? [];
+    expect(repos).toHaveLength(300);
+    expect(gh.argvs).toHaveLength(4);
+  });
+
+  test("refuses on the wrong gh account before listing anything", async () => {
+    const gh = fakeGh({ login: "rielj-work", answer: async () => ({ stdout: "[]" }) });
+    const list = createGhReader({ user: "juandc", spawn: gh.spawn }).list?.({ user: "juandc" });
+    await expect(list ?? Promise.resolve()).rejects.toMatchObject({ kind: "account_mismatch" });
+    expect(gh.argvs).toHaveLength(1);
+  });
+
+  test("the public reader can't list", () => {
+    expect(createPublicReader({ http: createHttpClient({}), user: "juandc" }).list).toBeNull();
+  });
+
+  test("the fixture reader lists the snapshots the user owns", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hb-gh-list-"));
+    await cp(FIXTURES, dir, { recursive: true });
+    const repos = (await createFixtureReader({ dir, user: null }).list?.({ user: "JUANDC" })) ?? [];
+    expect(repos.map((r) => r.name).sort()).toEqual(["jeep-route", "sari-ledger"]);
+  });
+});
+
 // ---------- The public reader over a fake fetch ----------
 
 /** A fetch that serves api.github.com from snapshots, recording each URL and its User-Agent. */
-function githubFetch(snapshots: GithubSnapshot[], override?: (url: URL) => Response | null) {
+function githubFetch(snapshots: GithubSnapshotInput[], override?: (url: URL) => Response | null) {
   const transport = createFixtureTransport({ snapshots });
   const seen: { url: string; agent: string | null }[] = [];
   const fetch = async (input: string, init: RequestInit) => {
@@ -226,7 +301,7 @@ describe("public reader", () => {
 
   test("a pull request reads title, body, diff stat, the user's commits on it and the review discussion", async () => {
     const sha = (n: number) => String(n).repeat(40).slice(0, 40);
-    const snapshot: GithubSnapshot = {
+    const snapshot: GithubSnapshotInput = {
       owner: "acme",
       repo: "api",
       private: true,
@@ -282,7 +357,7 @@ describe("public reader", () => {
 describe("read limits", () => {
   const big = (n: number) => `${"const x = 1; // filler line for the cap\n".repeat(n)}`;
   const shaOf = (i: number) => i.toString(16).padStart(40, "0");
-  const busy: GithubSnapshot = {
+  const busy: GithubSnapshotInput = {
     owner: "juandc",
     repo: "busy",
     private: false,
@@ -336,11 +411,11 @@ describe("read limits", () => {
   });
 
   test("with room left, at most five picks are read", async () => {
-    const small: GithubSnapshot = {
+    const small: GithubSnapshotInput = {
       ...busy,
       files: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`src/f${i}.ts`, "export {}"])),
       pulls: [],
-      commits: busy.commits.slice(0, 3),
+      commits: (busy.commits ?? []).slice(0, 3),
     };
     const log: string[] = [];
     const reader = createReader({
@@ -674,6 +749,110 @@ describe("export filter", () => {
     expect((await extractText(previewDoc, { mergePages: true })).text).not.toMatch(/sari-ledger/i);
     const after = await json(await call("GET", `/opportunities/${added.opportunityId}`), WorkspaceDto);
     for (const f of after.files) expect(f.plain ?? "").not.toMatch(/sari-ledger/i);
+  });
+});
+
+// ---------- Finding repos (decision 78) ----------
+
+/** A minimal snapshot for the listing; it has no files, so it is never read in these tests. */
+const listedOnly = (repo: string, over: Partial<GithubSnapshotInput> = {}): GithubSnapshotInput => ({
+  owner: "juandc",
+  repo,
+  private: false,
+  description: null,
+  files: {},
+  ...over,
+});
+
+async function listingDir(extra: GithubSnapshotInput[]): Promise<string> {
+  const dir = await fixtureDir();
+  for (const snapshot of extra) await Bun.write(join(dir, `${snapshot.repo}.json`), JSON.stringify(snapshot));
+  return dir;
+}
+
+const scan = async (status = 200) => json(await call("GET", "/profile/github/repos"), RepoScanDto, status);
+
+describe("Find my GitHub repos", () => {
+  beforeEach(async () => {
+    const dir = await listingDir([
+      listedOnly("forked-lib", { fork: true, pushedAt: "2026-10-01T00:00:00Z" }),
+      listedOnly("juandc", { sizeKb: 3 }),
+      listedOnly("empty", { sizeKb: 1, pushedAt: "2026-07-01T00:00:00Z" }),
+      listedOnly("org-thing", { owner: "acme" }),
+    ]);
+    await setup(createFixtureReader({ dir, user: null }));
+  });
+
+  test("lists the user's repos; rules move forks, the profile repo and tiny repos to a hidden group", async () => {
+    expect((await json(await call("GET", "/profile"), ProfileDto)).githubScan).toBe(true);
+    const result = await scan();
+    expect(result.user).toBe("juandc");
+    expect(result.shown.map((r) => [r.name, r.private, r.language, r.added])).toEqual([
+      ["jeep-route", false, "TypeScript", false],
+      ["sari-ledger", true, "Go", false],
+    ]);
+    expect(result.shown[0]?.url).toBe("https://github.com/juandc/jeep-route");
+    expect(result.hidden.map((r) => [r.name, r.hiddenBy])).toEqual([
+      ["forked-lib", "fork"],
+      ["empty", "small"],
+      ["juandc", "profile"],
+    ]);
+    // Another owner's repo is never listed.
+    expect([...result.shown, ...result.hidden].map((r) => r.name)).not.toContain("org-thing");
+  });
+
+  test("adds picked repos, hidden ones included, as open-source add-ons split into facts", async () => {
+    const profile = await settle(
+      await call("POST", "/profile/github/repos", { names: ["jeep-route", "forked-lib", "org-thing", "nope"] }),
+    );
+    expect(
+      profile.addons.map((a) => ({ kind: a.kind, title: a.title, body: a.body, link: a.link, skills: a.skills })),
+    ).toEqual([
+      {
+        kind: "open_source",
+        title: "forked-lib",
+        body: "forked-lib, a repository on GitHub.",
+        link: "https://github.com/juandc/forked-lib",
+        skills: [],
+      },
+      {
+        kind: "open_source",
+        title: "jeep-route",
+        body: "Jeepney route planner for Cebu City",
+        link: "https://github.com/juandc/jeep-route",
+        skills: ["TypeScript"],
+      },
+    ]);
+    // Each add-on's text was split; nothing was read from GitHub yet.
+    expect(profile.facts.some((f) => f.text === "Jeepney route planner for Cebu City")).toBe(true);
+    expect(profile.facts.some((f) => f.origin === "github")).toBe(false);
+    expect(profile.addons.every((a) => a.github?.readTask === null)).toBe(true);
+
+    // A rescan marks them added, and adding them again is refused.
+    const after = await scan();
+    expect(after.shown.find((r) => r.name === "jeep-route")?.added).toBe(true);
+    expect(after.hidden.find((r) => r.name === "forked-lib")?.added).toBe(true);
+    const again = await call("POST", "/profile/github/repos", { names: ["jeep-route"] });
+    expect(again.status).toBe(409);
+  });
+
+  test("a private repo is marked private when added, before any read", async () => {
+    const profile = await settle(await call("POST", "/profile/github/repos", { names: ["sari-ledger"] }));
+    expect(profile.addons[0]?.github?.private).toBe(true);
+    expect(profile.addons[0]?.github?.lastRead).toBeNull();
+    expect(await privateGithubRepos(deps)).toEqual([{ owner: "juandc", repo: "sari-ledger" }]);
+  });
+
+  test("rejects more than 20 names at once", async () => {
+    const names = Array.from({ length: 21 }, (_, i) => `r${i}`);
+    expect((await call("POST", "/profile/github/repos", { names })).status).toBe(400);
+  });
+
+  test("without gh, the option is off and the routes answer 409", async () => {
+    await setup(createPublicReader({ http: createHttpClient({}), user: null }));
+    expect((await json(await call("GET", "/profile"), ProfileDto)).githubScan).toBe(false);
+    expect((await call("GET", "/profile/github/repos")).status).toBe(409);
+    expect((await call("POST", "/profile/github/repos", { names: ["jeep-route"] })).status).toBe(409);
   });
 });
 

@@ -9,14 +9,24 @@ import {
 } from "@/domain/github-link";
 import { type AcceptedGithubFact, GITHUB_SECTION_TOKENS, GITHUB_TOKEN_CAP } from "@/domain/github-read";
 import { GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
+import { type OwnedRepo, repoAddon, type ScannedRepo, scanRepos } from "@/domain/repo-scan";
 import { normalize } from "@/domain/text";
-import { type GithubReadSummary, GithubReadTaskInput, type ItemId, type ProfileDto, type TaskDto } from "@/shared/api";
+import {
+  type AddReposInput,
+  type GithubReadSummary,
+  GithubReadTaskInput,
+  type ItemId,
+  type ProfileDto,
+  type RepoScanDto,
+  type ScannedRepoDto,
+  type TaskDto,
+} from "@/shared/api";
 import { GithubError } from "../adapters/github";
 import { facts, profileItems } from "../db/schema";
 import { checkCap, estimateUsd, loadAiConfig, requireAiConfig, runAi } from "./ai";
 import { AppError, type Deps, notFound } from "./context";
 import { aiPick, extractGithubFacts, type LightComplete } from "./github-extract";
-import { getProfile, loadContact } from "./profile";
+import { createAddons, getProfile, loadContact } from "./profile";
 import { latestTask, startTask, type TaskContext } from "./tasks";
 
 /**
@@ -283,6 +293,86 @@ async function applyRead(
         vanished: diff.vanished.length,
       },
     } as const;
+  });
+}
+
+// ---------- Finding the user's repos (decision 78) ----------
+
+/** The reader's listing, or 409 when it can't list (anything but gh, or the fixture in tests). */
+async function listOwned(deps: Deps): Promise<{ user: string; repos: OwnedRepo[] }> {
+  const list = deps.github.list;
+  if (!list) {
+    throw new AppError({
+      code: "needs_input",
+      message: "Finding your repos needs the gh CLI. Set HB_GITHUB=gh and HB_GITHUB_USER, then restart the app.",
+    });
+  }
+  const { user } = await requireGithubUser(deps);
+  try {
+    return { user, repos: await list({ user }) };
+  } catch (err) {
+    if (err instanceof GithubError) throw githubAppError(err);
+    throw err;
+  }
+}
+
+/** Repos the user's add-ons already link (repo links only; a pull request link is a contribution). */
+async function linkedRepos(deps: Pick<Deps, "db" | "userId">): Promise<GithubRepoRef[]> {
+  const rows = await deps.db
+    .select({ link: profileItems.link })
+    .from(profileItems)
+    .where(eq(profileItems.userId, deps.userId));
+  return rows.flatMap(({ link }) => {
+    const parsed = link ? parseGithubLink(link) : null;
+    return parsed?.kind === "repo" ? [{ owner: parsed.owner, repo: parsed.repo }] : [];
+  });
+}
+
+function scannedDto(repo: ScannedRepo): ScannedRepoDto {
+  return {
+    name: repo.name,
+    url: repoAddon(repo).link,
+    private: repo.private,
+    archived: repo.archived,
+    language: repo.language,
+    stars: repo.stars,
+    pushedAt: repo.pushedAt,
+    description: repo.description,
+    added: repo.added,
+    hiddenBy: repo.hiddenBy,
+  };
+}
+
+/** List the repos the user owns: rules split them into shown and hidden; nothing is saved. */
+export async function scanGithubRepos(deps: Deps): Promise<RepoScanDto> {
+  const [{ user, repos }, linked] = await Promise.all([listOwned(deps), linkedRepos(deps)]);
+  const scan = scanRepos({ user, repos, linked });
+  return { user, shown: scan.shown.map(scannedDto), hidden: scan.hidden.map(scannedDto) };
+}
+
+/**
+ * Add picked repos as `open_source` add-ons. The repos are listed again and only names found
+ * there are added, so the text and link come from GitHub, never from the request. Names already
+ * linked by an add-on are skipped.
+ */
+export async function addGithubRepos(deps: Deps, input: AddReposInput): Promise<ProfileDto> {
+  const [{ user, repos }, linked] = await Promise.all([listOwned(deps), linkedRepos(deps)]);
+  const scan = scanRepos({ user, repos, linked });
+  const wanted = new Set(input.names.map((n) => n.toLowerCase()));
+  const picked = [...scan.shown, ...scan.hidden].filter((r) => wanted.has(r.name.toLowerCase()) && !r.added);
+  if (picked.length === 0) {
+    throw new AppError({
+      code: "needs_input",
+      message: "None of those repos can be added: they are already add-ons, or your GitHub account no longer has them.",
+    });
+  }
+  return createAddons(deps, {
+    addons: picked.map((repo) => ({
+      kind: "open_source",
+      ...repoAddon(repo),
+      githubPrivate: repo.private,
+    })),
+    confirmOverCap: input.confirmOverCap ?? false,
   });
 }
 

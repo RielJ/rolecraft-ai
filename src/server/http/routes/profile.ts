@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
   AddonInput,
+  AddReposInput,
   type ApiErrorBody,
   ConfirmOverCapInput,
   FactId,
@@ -16,7 +17,7 @@ import {
   UploadCvForm,
 } from "@/shared/api";
 import { AppError, type Deps } from "../../services/context";
-import { readGithub } from "../../services/github";
+import { addGithubRepos, readGithub, scanGithubRepos } from "../../services/github";
 import {
   confirmAllFacts,
   confirmFact,
@@ -86,6 +87,11 @@ export function profileRoutes(deps: Deps) {
         const bytes = new Uint8Array(await file.arrayBuffer());
         return c.json(await uploadCv(deps, { fileName: file.name, bytes, confirmOverCap: confirmOverCap === "true" }));
       })
+      // Finding the user's own repos through gh (decision 78).
+      .get("/profile/github/repos", async (c) => c.json(await scanGithubRepos(deps)))
+      .post("/profile/github/repos", validate("json", AddReposInput), async (c) =>
+        c.json(await addGithubRepos(deps, c.req.valid("json"))),
+      )
       .post("/profile/addons", validate("json", AddonInput), async (c) =>
         c.json(await createAddon(deps, c.req.valid("json")), 201),
       )

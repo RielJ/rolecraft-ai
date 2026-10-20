@@ -208,6 +208,7 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
     skillCatalog: SKILLS.map((s) => s.name),
     cvFile,
     aiReady: aiConfig !== null,
+    githubScan: deps.github.list !== null,
   };
 }
 
@@ -353,16 +354,27 @@ async function checkSplitCap(
   deps: Deps,
   { item, kind, confirmOverCap }: { item: SplitItem; kind: ProfileItemKind; confirmOverCap: boolean },
 ): Promise<void> {
+  await checkSplitsCap(deps, { splits: [{ item, kind }], confirmOverCap });
+}
+
+/** The same for several splits started together: one check against their summed estimate. */
+async function checkSplitsCap(
+  deps: Deps,
+  {
+    splits,
+    confirmOverCap,
+  }: { splits: readonly { item: SplitItem; kind: ProfileItemKind }[]; confirmOverCap: boolean },
+): Promise<void> {
   const config = await loadAiConfig(deps);
   if (!config) return;
-  const prompt = buildSplitPrompt({ item });
-  // A CV or experience add-on also has its roles read in the same task (decision 71).
-  const roles = hasRoles(kind) ? rolesEstimateUsd({ config, item }) : 0;
-  await checkCap(deps, {
-    capUsd: config.capUsd,
-    estimateUsd: estimateUsd({ model: config.models.light, prompt, maxOutputTokens: SPLIT_MAX_TOKENS }) + roles,
-    confirmOverCap,
-  });
+  let total = 0;
+  for (const { item, kind } of splits) {
+    const prompt = buildSplitPrompt({ item });
+    // A CV or experience add-on also has its roles read in the same task (decision 71).
+    const roles = hasRoles(kind) ? rolesEstimateUsd({ config, item }) : 0;
+    total += estimateUsd({ model: config.models.light, prompt, maxOutputTokens: SPLIT_MAX_TOKENS }) + roles;
+  }
+  await checkCap(deps, { capUsd: config.capUsd, estimateUsd: total, confirmOverCap });
 }
 
 const SplitResult = z.object({
@@ -830,6 +842,32 @@ export async function createAddon(deps: Deps, input: AddonInput): Promise<Profil
     .returning({ id: profileItems.id });
   if (!created) throw new Error("Could not save the add-on.");
   await startSplit(deps, { itemId: created.id, confirmOverCap });
+  return getProfile(deps);
+}
+
+/** An add-on created by the app rather than typed (decision 78), with its repo's visibility. */
+export type NewAddon = Omit<AddonInput, "confirmOverCap"> & { githubPrivate: boolean | null };
+
+/**
+ * Save several add-ons at once and split each into pending facts: one cap check for all the
+ * splits, then one insert. A private repo is marked private from the start, so exports strip its
+ * link before it is ever read (decision 55).
+ */
+export async function createAddons(
+  deps: Deps,
+  { addons, confirmOverCap }: { addons: readonly NewAddon[]; confirmOverCap: boolean },
+): Promise<ProfileDto> {
+  if (addons.length === 0) return getProfile(deps);
+  const rows = addons.map((a) => ({ ...addonValues(a), githubPrivate: a.githubPrivate }));
+  await checkSplitsCap(deps, {
+    splits: rows.map((values) => ({ item: splitItem(values, []), kind: values.kind })),
+    confirmOverCap,
+  });
+  const created = await deps.db
+    .insert(profileItems)
+    .values(rows.map((values) => ({ userId: deps.userId, ...values })))
+    .returning({ id: profileItems.id });
+  for (const { id } of created) await startSplit(deps, { itemId: id, confirmOverCap });
   return getProfile(deps);
 }
 

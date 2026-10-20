@@ -17,11 +17,12 @@ A side project reaches drafts only after the user adds it as an add-on by hand: 
 
 1. **gh only.** The scan runs through the local `gh` CLI (`HB_GITHUB=gh`), pinned to `HB_GITHUB_USER` as in decision 55. The user's machine is signed in to two accounts (`RielJ` and a work account), and a scan is refused before any list request when gh's active account is not `HB_GITHUB_USER`. Without `HB_GITHUB=gh` the Find button is hidden; the public API and fixture readers don't list. gh also lists the 13 private repos the public API can't see.
 2. **Own repos only.** `user/repos?affiliation=owner`: repos the account owns, never organization repos, so an employer's code never shows up.
-3. **Rules, no AI.** Detection makes no AI call and costs nothing.
-   - Hidden on GitHub: forks, the profile README repo (`<user>/<user>`), and repos under 5 KB. Archived repos stay.
+3. **Rules suggest; the user decides.** Detection makes no AI call and costs nothing.
+   - Hidden by rules: forks, the profile README repo (`<user>/<user>`), and repos under 5 KB. Archived repos stay. A hidden repo is not dropped: it sits in a collapsed "Hidden by rules" group with its reason (Fork, Profile README, Small) and can be ticked like any other.
    - Order: most recent push first, then more stars, then name.
    - A repo that an add-on already links (same owner and name, any case) is shown as Added and can't be picked again.
-   - The list shows how many repos each rule hid, so nothing disappears silently.
+   - The group's heading counts each reason, so nothing disappears silently.
+   - Nothing is remembered between scans: each scan lists every owned repo again.
 4. **Pick, then add.** The user ticks repos and clicks Add. Each becomes an `open_source` add-on:
    - Title: the repo name. Link: the repo URL. Skills: the repo's main language, when GitHub names one.
    - Text: the repo description. With none, "`<name>`, a `<language>` repository on GitHub." (or without the language).
@@ -36,7 +37,7 @@ A side project reaches drafts only after the user adds it as an add-on by hand: 
 
 - **Files owned**: `src/domain/repo-scan.ts` and its test, `listRepos` in `src/server/adapters/github.ts` (gh reader; the fixture reader gets a recorded list for tests), `scanGithubRepos` and `addGithubRepos` in `src/server/services/github.ts`, two routes in `src/server/http/routes/profile.ts`, DTOs in `src/shared/api.ts`, the dialog in `src/web/routes/profile.tsx`, `test/github.test.ts`, `e2e/github.spec.ts`.
 - **Acceptance**:
-  - The list hides forks, the profile repo and repos under 5 KB, and says how many of each it hid.
+  - Forks, the profile repo and repos under 5 KB sit in a collapsed group with their reasons, and can still be picked and added.
   - Repos already linked by an add-on show as Added.
   - Without `HB_GITHUB=gh` the Find button is hidden and the route answers 409.
   - A scan on the wrong gh account is refused before any list request; private repos are listed with a lock.

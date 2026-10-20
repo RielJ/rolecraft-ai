@@ -12,6 +12,7 @@ import {
   type AddLinkInput,
   AddLinkResult,
   type AddonInput,
+  type AddReposInput,
   BoardItemDto,
   BoardMetricsDto,
   type ChangeStatusInput,
@@ -35,6 +36,7 @@ import {
   type PasteJobInput,
   ProfileDto,
   RefreshDto,
+  RepoScanDto,
   type SaveAiKeyInput,
   SavedJob,
   type SaveRolesInput,
@@ -72,6 +74,7 @@ export const keys = {
   matchList: (query: MatchQueryInput) => ["matches", "list", query] as const,
   match: (id: JobId) => ["matches", "detail", id] as const,
   refresh: ["refresh"] as const,
+  githubRepos: ["profile-github-repos"] as const,
   setup: ["setup"] as const,
   pairings: ["extension", "pairings"] as const,
 };
@@ -163,6 +166,25 @@ export const useReadGithub = () =>
       ProfileDto,
     ),
   );
+
+/**
+ * The repos the user's GitHub account owns, through gh (decision 78). Listed only while the dialog
+ * is open, and again on each open, since nothing about a scan is saved.
+ */
+export function useGithubRepos({ enabled }: { enabled: boolean }) {
+  return useQuery({
+    queryKey: keys.githubRepos,
+    queryFn: () => unwrap(client.api.profile.github.repos.$get(), RepoScanDto),
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
+/** Add picked repos as add-ons; each is split into facts like a typed add-on. */
+export const useAddGithubRepos = () =>
+  useProfileMutation((json: AddReposInput) => unwrap(client.api.profile.github.repos.$post({ json }), ProfileDto));
 
 /** "Read roles from your CV": a `roles_read` task the profile refetch polls (decision 71). */
 export const useReadRoles = () =>
