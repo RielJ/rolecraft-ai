@@ -442,6 +442,23 @@ describe("project ops (decision 82)", () => {
     expect(one("I wrote a CLI that schedules Go jobs.", [key(10)])).toMatchObject([{ reason: "pronoun" }]);
     // The project's name is evidence even when its facts don't say it.
     expect(one("Nyx schedules Go jobs on Kubernetes.", [key(10)])).toEqual([]);
+    // Your own project's stack is evidence too (decision 83); a contribution's is not.
+    const stacked = { ...nyx, stack: ["Go", "Kubernetes", "Helm"] };
+    const withStack = (projectKey: string, text: string, k: FactKey) =>
+      validateEdits({
+        base,
+        ops: [project(projectKey, [{ text, facts: [k] }])],
+        facts: PROJECT_FACTS,
+        protectedKeys: new Set(),
+        requirementIds: new Set(["R1"]),
+        posting,
+        contact,
+        projects: [stacked, { ...viem, stack: ["Helm"] }],
+      }).dropped;
+    expect(withStack("PROJECT-1", "Packaged with Helm.", key(10))).toEqual([]);
+    expect(withStack("PROJECT-2", "Added value support with Helm.", key(12))).toMatchObject([
+      { reason: "unsupported", detail: "Helm" },
+    ]);
   });
 
   test("a contribution may not be claimed as the candidate's own", () => {
@@ -451,15 +468,14 @@ describe("project ops (decision 82)", () => {
     expect(dropped).toMatchObject([{ reason: "claims_contribution", detail: "Built Viem" }]);
   });
 
-  test("an own project goes at the end of Projects: the head, what it is, then bullets", () => {
+  test("an own project goes at the end of Projects: the head, then one paragraph (decision 83)", () => {
     const body = applyEdits({ base, changes: run([NYX]).changes });
     expect(body).toContain(
       [
-        "- A CLI that diffs two schemas. [FACT-0]".replace(" [FACT-0]", ""),
+        "- A CLI that diffs two schemas.",
         "",
-        "#### Nyx | https://github.com/alex/nyx | Go, Kubernetes",
-        "A CLI that schedules Go jobs on Kubernetes. [FACT-10]",
-        "- Retries failed jobs with backoff. [FACT-11]",
+        "#### Nyx | https://github.com/alex/nyx",
+        "A CLI that schedules Go jobs on Kubernetes. [FACT-10] Retries failed jobs with backoff. [FACT-11]",
         "",
         "## EDUCATION",
       ].join("\n"),
@@ -517,7 +533,7 @@ describe("project ops (decision 82)", () => {
       before: null,
       after: null,
       afterList: [
-        "Nyx · github.com/alex/nyx · Go, Kubernetes",
+        "Nyx · github.com/alex/nyx",
         "A CLI that schedules Go jobs on Kubernetes.",
         "Retries failed jobs with backoff.",
       ],

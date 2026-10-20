@@ -31,7 +31,7 @@ async function json<T>(res: Response, schema: { parse(v: unknown): T }, status =
   return schema.parse(body);
 }
 
-const NYX_HEAD = "#### Nyx | https://github.com/juan/nyx | Go, Kubernetes";
+const NYX_HEAD = "#### Nyx | https://github.com/juan/nyx";
 
 /** A key, a CV, two projects (one own, one a contribution) split and confirmed, and one pasted job. */
 async function setup(options: { nyxPrivate?: boolean } = {}): Promise<WorkspaceDto> {
@@ -97,13 +97,13 @@ async function draft(ws: WorkspaceDto, kind: "resume" | "letter") {
 const prompt = (i: number) => deps.fake.calls[i]?.messages[0]?.content ?? "";
 
 describe("resume drafting with projects", () => {
-  test("the prompt lists projects; each [PROJECT-n] becomes a head with the server's link and skills", async () => {
+  test("the prompt lists projects; each [PROJECT-n] becomes a head with the server's link", async () => {
     const ws = await setup();
     const { task, resume } = await draftResume(ws);
     expect(task).toMatchObject({ status: "done", error: null });
 
     const text = prompt(0);
-    expect(text).toContain("PROJECT-1: Nyx (your own project)");
+    expect(text).toContain("PROJECT-1: Nyx (your own project; stack: Go, Kubernetes)");
     expect(text).toContain("PROJECT-2: Viem (a contribution to someone else's project)");
     expect(text).toMatch(/FACT-\d+: Nyx is a CLI .*\(PROJECT-1\)/);
 
@@ -113,17 +113,21 @@ describe("resume drafting with projects", () => {
     const contributions = lines.indexOf("## Open Source Contributions");
     expect(projects).toBeGreaterThan(-1);
     expect(lines[projects + 1]).toBe(NYX_HEAD);
-    expect(lines[projects + 2]).toStartWith("Nyx is a CLI");
+    // Your own project is one paragraph, and its stack may be named (decision 83).
+    const nyx = (resume.body ?? "").match(/\[(FACT-\d+)\]/g)?.[1];
+    expect(lines[projects + 2]).toBe(
+      `Nyx is a CLI that schedules Go jobs on Kubernetes ${nyx}. Built with Go, Kubernetes ${nyx}.`,
+    );
     expect(contributions).toBeGreaterThan(projects);
     expect(lines[contributions + 1]).toBe("#### Viem");
     expect(lines[contributions + 2]).toStartWith("- Added value support");
     expect(resume.body).not.toContain("[PROJECT-");
   });
 
-  test("the preview PDF and copy text show the head as name, short link and skills", async () => {
+  test("the preview PDF and copy text show the head as name and short link", async () => {
     const { resume } = await draftResume(await setup());
     const plain = resume.plain ?? "";
-    expect(plain).toContain("Nyx · github.com/juan/nyx · Go, Kubernetes\nNyx is a CLI");
+    expect(plain).toContain("Nyx · github.com/juan/nyx\nNyx is a CLI");
     expect(plain).not.toContain("####");
 
     const res = await call("GET", `/outputs/${resume.id}/preview.pdf`);
@@ -137,7 +141,7 @@ describe("resume drafting with projects", () => {
 
   test("a project whose link is private gets a head without the link", async () => {
     const { resume } = await draftResume(await setup({ nyxPrivate: true }));
-    expect(resume.body).toContain("#### Nyx | Go, Kubernetes");
+    expect(resume.body).toContain("#### Nyx\nNyx is a CLI");
     expect(resume.body).not.toContain("github.com/juan/nyx");
   });
 
@@ -153,6 +157,20 @@ describe("resume drafting with projects", () => {
     expect(resume.body).toBe(
       `## Projects\n${NYX_HEAD}\nNyx is a CLI [${key("Nyx")}].\n\n## Open Source Contributions\n\n#### Viem\n- Added value support [${key("Added")}]\n\n## Skills\n- Go [${key("Nyx")}]`,
     );
+  });
+
+  test("bullets under your own project become one paragraph; a contribution keeps its bullets", async () => {
+    const ws = await setup();
+    const profile = ProfileDto.parse(await (await call("GET", "/profile")).json());
+    const key = (start: string) => profile.facts.find((f) => f.text.startsWith(start))?.key;
+    const nyx = key("Nyx");
+    deps.fake.queue(
+      `## Projects\n[PROJECT-1]\n- Schedules Go jobs [${nyx}]\n- Runs on Kubernetes [${nyx}]\n\n## Open Source Contributions\n[PROJECT-2]\n- Added value support [${key("Added")}]`,
+    );
+    const { resume } = await draftResume(ws);
+    expect(deps.fake.calls).toHaveLength(1);
+    expect(resume.body).toContain(`${NYX_HEAD}\nSchedules Go jobs [${nyx}]. Runs on Kubernetes [${nyx}].\n\n`);
+    expect(resume.body).toContain(`#### Viem\n- Added value support [${key("Added")}]`);
   });
 
   test("another project's fact under a head is retried with the rule", async () => {

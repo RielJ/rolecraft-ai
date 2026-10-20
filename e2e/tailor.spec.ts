@@ -162,7 +162,7 @@ test("a project the CV lacks is added with its head; Undo takes it out of the PD
   const changes = card.getByRole("region", { name: "Changes from your CV" });
   const row = changes.getByRole("group", { name: "Added project, Projects" });
   await expect(changes.getByText("3 of 3 kept")).toBeVisible();
-  await expect(changes.getByText("Nyx · github.com/maria/nyx · Go, Kubernetes")).toBeVisible();
+  await expect(changes.getByText("Nyx · github.com/maria/nyx", { exact: true })).toBeVisible();
   await expect(changes.getByText("Nyx is a CLI that schedules Go jobs on Kubernetes.")).toBeVisible();
   await axe(page, "resume with an added project");
   await changes.screenshot({ path: "test-results/tailor/project.png" });

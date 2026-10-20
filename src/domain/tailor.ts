@@ -322,7 +322,11 @@ export function validateEdits({
           const claim = project.role === "contribution" ? ownershipClaim({ sentence: text, name: project.name }) : null;
           const problem = claim
             ? { reason: "claims_contribution" as const, detail: claim }
-            : textProblem(text, [project.name, ...cited.facts.map((f) => f.text)]);
+            : textProblem(text, [
+                project.name,
+                ...(project.role === "own" ? project.stack : []),
+                ...cited.facts.map((f) => f.text),
+              ]);
           if (problem) {
             failed = problem;
             break;
@@ -499,6 +503,18 @@ function sectionEnd(lines: readonly Line[], heading: number): number {
 }
 
 /**
+ * Your own project's lines as one paragraph (decision 83). Each sentence keeps its own markers: the
+ * last one's ride on the line, the others' stay inline.
+ */
+function ownParagraph({ change, section }: { change: ProjectChange & { id: string }; section: BaseSection }): Line {
+  const last = change.lines.at(-1);
+  const text = change.lines
+    .map((l) => (l === last ? l.text : `${l.text}${l.facts.map((k) => ` [${k}]`).join("")}`))
+    .join(" ");
+  return { id: `${change.id}:1`, kind: "text", text, facts: [...(last?.facts ?? [])], section };
+}
+
+/**
  * A project's head and lines at the end of its section (decision 82): your own under the Projects
  * heading, a contribution under one that says open source or contributions. A missing heading is
  * added after the section it follows: Experience for Projects, Projects for contributions.
@@ -509,18 +525,15 @@ function insertProject({ lines, change }: { lines: Line[]; change: ProjectChange
     l.kind === "heading" &&
     (own ? l.section === "projects" && !CONTRIBUTIONS_HEADING.test(l.text) : CONTRIBUTIONS_HEADING.test(l.text));
   const section: BaseSection = own ? "projects" : "other";
-  const entry: Line[] = [
-    { id: `${change.id}:head`, kind: "role", text: change.head, facts: [], section },
-    ...change.lines.map(
-      (l, i): Line => ({
-        id: `${change.id}:${i + 1}`,
-        kind: own && i === 0 ? "text" : "bullet",
-        text: l.text,
-        facts: [...l.facts],
-        section,
-      }),
-    ),
-  ];
+  const head: Line = { id: `${change.id}:head`, kind: "role", text: change.head, facts: [], section };
+  const entry: Line[] = own
+    ? [head, ownParagraph({ change, section })]
+    : [
+        head,
+        ...change.lines.map(
+          (l, i): Line => ({ id: `${change.id}:${i + 1}`, kind: "bullet", text: l.text, facts: [...l.facts], section }),
+        ),
+      ];
   const target = lines.findIndex(isTarget);
   if (target >= 0) {
     const at = sectionEnd(lines, target);

@@ -4,6 +4,7 @@ import {
   expandProjects,
   keyProjects,
   ownershipClaim,
+  paragraphProjects,
   parseProjectHead,
   placeProjects,
   projectHead,
@@ -20,17 +21,27 @@ const NYX: DraftProject = {
   role: "own",
 };
 const VIEM: DraftProject = { key: "PROJECT-2", name: "Viem", link: null, stack: [], role: "contribution" };
-const NYX_HEAD = "#### Nyx | https://github.com/rielj/nyx | Go, TypeScript, Tailwind CSS";
+const NYX_HEAD = "#### Nyx | https://github.com/rielj/nyx";
+const STACKED_HEAD = "#### Nyx | https://github.com/rielj/nyx | Go, TypeScript, Tailwind CSS";
 
-describe("project heads (decision 82)", () => {
-  test("a head has the name, the public link and up to 3 skills; parts it lacks are left out", () => {
+describe("project heads (decisions 82 and 83)", () => {
+  test("your own project's head is its name and public link: its paragraph names the stack", () => {
     expect(projectHead(NYX)).toBe(NYX_HEAD);
+    expect(projectHead({ ...NYX, link: null })).toBe("#### Nyx");
+  });
+
+  test("a contribution's head adds up to 3 skills; parts it lacks are left out", () => {
+    expect(projectHead({ ...NYX, role: "contribution" })).toBe(STACKED_HEAD);
     expect(projectHead(VIEM)).toBe("#### Viem");
-    expect(projectHead({ name: "A | B", link: "not a link", stack: ["Go"] })).toBe("#### A / B | Go");
+    expect(projectHead({ name: "A | B", link: "not a link", stack: ["Go"], role: "contribution" })).toBe(
+      "#### A / B | Go",
+    );
   });
 
   test("a head parses back, and reads as one plain line", () => {
-    const head = parseProjectHead(NYX_HEAD);
+    expect(parseProjectHead(NYX_HEAD)).toEqual({ name: "Nyx", link: "https://github.com/rielj/nyx", stack: null });
+    // Heads drafted before decision 83 list your own project's stack too.
+    const head = parseProjectHead(STACKED_HEAD);
     expect(head).toEqual({ name: "Nyx", link: "https://github.com/rielj/nyx", stack: "Go, TypeScript, Tailwind CSS" });
     if (!head) throw new Error("no head");
     expect(projectHeadPlain(head)).toBe("Nyx · github.com/rielj/nyx · Go, TypeScript, Tailwind CSS");
@@ -42,8 +53,9 @@ describe("project heads (decision 82)", () => {
     expect(parseProjectHead("#### a | b | c")).toBeNull();
   });
 
-  test("the prompt line says whose project it is, and nothing the drafter could copy as a link", () => {
-    expect(projectPromptLine(NYX)).toBe("PROJECT-1: Nyx (your own project)");
+  test("the prompt line says whose project it is and your own project's stack, and no link to copy", () => {
+    expect(projectPromptLine(NYX)).toBe("PROJECT-1: Nyx (your own project; stack: Go, TypeScript, Tailwind CSS, Rust)");
+    expect(projectPromptLine({ ...NYX, stack: [] })).toBe("PROJECT-1: Nyx (your own project)");
     expect(projectPromptLine(VIEM)).toBe("PROJECT-2: Viem (a contribution to someone else's project)");
   });
 
@@ -67,6 +79,51 @@ describe("project heads (decision 82)", () => {
     expect(projectSectionOf("# Personal projects")).toBe("own");
     expect(projectSectionOf("## Experience")).toBeNull();
     expect(projectSectionOf("### Projects")).toBeNull();
+  });
+});
+
+describe("paragraphProjects (decision 83)", () => {
+  const CONTRIB: DraftProject = { ...VIEM, stack: ["TypeScript"] };
+  const VIEM_HEAD = "#### Viem | TypeScript";
+
+  test("your own project's lines and bullets become one paragraph; sentences keep their markers", () => {
+    const body = [
+      "## Projects",
+      NYX_HEAD,
+      "A terminal file manager [FACT-1].",
+      "- Previews 40 file types [FACT-2]",
+      "",
+      "* Built in Go and Rust. [FACT-3]",
+      "",
+      "## Open Source Contributions",
+      VIEM_HEAD,
+      "- Added batching [FACT-4]",
+      "- Fixed gas estimates [FACT-5]",
+      "",
+      "## Skills",
+    ].join("\n");
+    expect(paragraphProjects({ body, projects: [NYX, CONTRIB] }).split("\n")).toEqual([
+      "## Projects",
+      NYX_HEAD,
+      "A terminal file manager [FACT-1]. Previews 40 file types [FACT-2]. Built in Go and Rust. [FACT-3]",
+      "",
+      "## Open Source Contributions",
+      VIEM_HEAD,
+      "- Added batching [FACT-4]",
+      "- Fixed gas estimates [FACT-5]",
+      "",
+      "## Skills",
+    ]);
+  });
+
+  test("a paragraph ends at the next project's head; a lone paragraph is left as written", () => {
+    const other: DraftProject = { key: "PROJECT-3", name: "Kain", link: null, stack: [], role: "own" };
+    const body = `${NYX_HEAD}\n- One [FACT-1]\n#### Kain\nAlready one paragraph. [FACT-2]\n`;
+    expect(paragraphProjects({ body, projects: [NYX, other] })).toBe(
+      `${NYX_HEAD}\nOne [FACT-1].\n\n#### Kain\nAlready one paragraph. [FACT-2]\n`,
+    );
+    const done = `${NYX_HEAD}\nOne. [FACT-1]\n\n## Skills\nGo`;
+    expect(paragraphProjects({ body: done, projects: [NYX] })).toBe(done);
   });
 });
 

@@ -9,7 +9,14 @@ import {
   quarantineViolations,
   stripMarkers,
 } from "@/domain/citations";
-import { expandProjects, keyProjects, type ProjectInfo, placeProjects, projectHead } from "@/domain/draft-projects";
+import {
+  expandProjects,
+  keyProjects,
+  type ProjectInfo,
+  paragraphProjects,
+  placeProjects,
+  projectHead,
+} from "@/domain/draft-projects";
 import { cleanForEdit, fillBlanks, restoreMarkers, stripLeadingName, toPlainText } from "@/domain/file-text";
 import { checkGate, type GateOutput } from "@/domain/gate";
 import { classifyQuestion } from "@/domain/must-answer";
@@ -999,14 +1006,14 @@ async function draftContext(
     });
   /**
    * The model writes `[ROLE-n]` and `[PROJECT-n]`; the server writes the heads, so their words are
-   * the role's and the project's own, and moves each project to its section (decision 82).
+   * the role's and the project's own, and moves each project to its section (decision 82). Your
+   * own project's lines become one paragraph (decision 83).
    */
   const heads = output.kind === "resume" ? projects : [];
-  const expand = (text: string) =>
-    placeProjects({
-      body: expandProjects({ body: expandRoles({ body: cleanModelText(text), roles }), projects: heads }),
-      projects: heads,
-    });
+  const expand = (text: string) => {
+    const expanded = expandProjects({ body: expandRoles({ body: cleanModelText(text), roles }), projects: heads });
+    return paragraphProjects({ body: placeProjects({ body: expanded, projects: heads }), projects: heads });
+  };
   return { opportunity, allowed, prompt, check, expand, requirements, required };
 }
 

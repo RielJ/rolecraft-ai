@@ -129,11 +129,11 @@ const ROLE_TASK =
   "Under ## Experience, write [ROLE-n] alone on its own line before that role's bullets, in the order of the ROLES list (roles may overlap in time; keep that order). Under a role, use only the facts marked with its ROLE-n. Facts with no (ROLE-n) go in Summary, Skills, Projects or Education, never under ## Experience. Never write a role's title, company, location or dates yourself: the [ROLE-n] line becomes the role's header.";
 
 /**
- * The resume task's project rule (decision 82): keys like roles, your own projects and contributions
+ * The resume task's project rule (decisions 82 and 83): keys like roles, your own projects and contributions
  * in their own sections. The server moves a project to its section, so this saves a retry, not a leak.
  */
 const PROJECT_TASK =
-  "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects: one sentence that says what it is, plus at most 2 bullets, only for facts that prove a requirement of this posting. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name, link or skills yourself: the [PROJECT-n] line becomes the project's head. Leave out projects that prove nothing this posting asks for.";
+  "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects as one paragraph of 2 to 4 sentences and no bullets: what it is, what it does, and what it is built with, naming only skills from its facts or the stack its PROJECTS line lists. Every sentence cites that project's facts. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name or link yourself: the [PROJECT-n] line becomes the project's head. Leave out projects that prove nothing this posting asks for.";
 
 /**
  * Every other kind's project rule (decision 82): no heads, so the drafter names projects itself,
@@ -341,7 +341,7 @@ const TAILOR_TASK = [
   `reword: new text for one bullet or Skills line. Keep its numbers, tools and names; cite a fact of the same role in "facts" only to use something the line doesn't say. At most ${MAX_REWORDS}.`,
   "remove: drop one bullet or Skills line. Never a line marked (keep), and never every bullet of a project: each project keeps its name, link and at least one line saying what it is.",
   `add: a new bullet after a role line or one of its bullets, from facts of that role marked "not in the CV". At most ${MAX_ADDS}.`,
-  `project: add one project from the PROJECTS list, which the CV lacks, as 1 to ${MAX_PROJECT_LINES} lines from facts marked with its PROJECT-n. For your own project the first line says what it is; for a contribution each line says what the candidate did in it, never that they built or own it. Name, link and skills are added for you, in the right section. Only for a project that serves a requirement. At most ${MAX_PROJECTS}.`,
+  `project: add one project from the PROJECTS list, which the CV lacks, as 1 to ${MAX_PROJECT_LINES} lines from facts marked with its PROJECT-n. For your own project the lines are the sentences of one paragraph: what it is, what it does and what it is built with, naming only skills from its facts or its PROJECTS line's stack. For a contribution each line says what the candidate did in it, never that they built or own it. Name and link are added for you, in the right section. Only for a project that serves a requirement. At most ${MAX_PROJECTS}.`,
   'Each line gets at most one edit. "reasons" holds the REQUIREMENTS ids the edit serves; "note" is null or a few words for the candidate.',
   "Write text without [FACT-n] markers, ids or Markdown. No pronouns.",
 ];

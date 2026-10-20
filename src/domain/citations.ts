@@ -62,7 +62,8 @@ export type DraftViolation =
   | (Span & { kind: "claims_contribution"; projectKey: string; name: string; words: string });
 
 /** A project as the checks know it: its key, the name files call it by, and whose it is. */
-export type ProjectName = { key: string; name: string; role: ProjectRole };
+/** A project facts come from. A sentence citing its facts may say its name and stack (decision 83). */
+export type ProjectName = { key: string; name: string; role: ProjectRole; stack?: readonly string[] };
 
 /** A `##` section that holds roles. Anything cited in it must sit under its own role's header. */
 const EXPERIENCE_HEADING = /^#{1,2}\s+.*\b(?:experience|employment|work history)\b/i;
@@ -394,7 +395,8 @@ export function checkDraft({
   projects?: readonly DraftRoleHeader[];
   /**
    * Every project the facts come from, in any kind of file. A sentence citing a project's fact may
-   * say its name, and none may claim a contribution as the candidate's own (decision 82).
+   * say its name and stack (decision 83), and none may claim a contribution as the candidate's own
+   * (decision 82).
    */
   projectNames?: readonly ProjectName[];
 }): DraftCheck {
@@ -402,7 +404,7 @@ export function checkDraft({
   const byKey = new Map<string, string>(facts.map((f) => [f.key, f.text]));
   const roleOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.roleKey ?? null]));
   const projectOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.projectKey ?? null]));
-  const nameOf = new Map(projectNames.map((p) => [p.key, p.name]));
+  const nameOf = new Map(projectNames.map((p) => [p.key, [p.name, ...(p.stack ?? [])].join(", ")]));
   const contributions = projectNames.filter((p) => p.role === "contribution");
   const names = evidenceOf([
     posting.company,

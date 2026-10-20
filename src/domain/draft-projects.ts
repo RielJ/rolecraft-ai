@@ -54,9 +54,14 @@ const squash = (text: string) => text.replace(/\s+/g, " ").trim();
 const headPart = (text: string) => squash(text.replace(/\|/g, "/"));
 const isLink = (text: string) => /^https?:\/\/\S+$/i.test(text);
 
-/** The head line a `[PROJECT-n]` becomes. Parts the project lacks are left out. */
-export function projectHead(project: Pick<DraftProject, "name" | "link" | "stack">): string {
-  const stack = project.stack.slice(0, PROJECT_STACK_MAX).map(headPart).filter(Boolean).join(", ");
+/**
+ * The head line a `[PROJECT-n]` becomes. Parts the project lacks are left out. Your own project's
+ * head is its name and link: its paragraph names the stack (decision 83). A contribution's head
+ * also lists the stack, since its bullets say only what the candidate did in it.
+ */
+export function projectHead(project: Pick<DraftProject, "name" | "link" | "stack" | "role">): string {
+  const stack =
+    project.role === "own" ? "" : project.stack.slice(0, PROJECT_STACK_MAX).map(headPart).filter(Boolean).join(", ");
   const link = project.link && isLink(project.link.trim()) ? project.link.trim() : null;
   return `#### ${[headPart(project.name), ...(link ? [link] : []), ...(stack ? [stack] : [])].join(" | ")}`;
 }
@@ -91,10 +96,12 @@ export function projectHeadPlain(head: ParsedProjectHead): string {
   return [head.name, ...(head.link ? [shownLink(head.link)] : []), ...(head.stack ? [head.stack] : [])].join(" · ");
 }
 
-/** The PROJECTS block line: `PROJECT-1: Nyx (your own project)`. */
+/** The PROJECTS block line: `PROJECT-1: Nyx (your own project; stack: Go, TypeScript)`. */
 export function projectPromptLine(project: DraftProject): string {
-  const what = project.role === "own" ? "your own project" : "a contribution to someone else's project";
-  return `${project.key}: ${squash(project.name)} (${what})`;
+  if (project.role === "contribution")
+    return `${project.key}: ${squash(project.name)} (a contribution to someone else's project)`;
+  const stack = project.stack.map(squash).filter(Boolean).join(", ");
+  return `${project.key}: ${squash(project.name)} (your own project${stack ? `; stack: ${stack}` : ""})`;
 }
 
 /** Words that may sit between a claim and the project's name: "built the open-source Viem". */
@@ -143,6 +150,50 @@ export function expandProjects({ body, projects }: { body: string; projects: rea
     const project = byKey.get(key);
     return project ? projectHead(project) : line;
   });
+}
+
+/**
+ * Under each of your own projects' heads, join the lines up to the next head or heading into one
+ * paragraph, dropping bullet marks (decision 83). Each sentence keeps its own markers. The PDF breaks
+ * the line between lines of one paragraph, so a paragraph must be one line. Contributions keep their
+ * bullets. Pure.
+ */
+export function paragraphProjects({ body, projects }: { body: string; projects: readonly DraftProject[] }): string {
+  const heads = new Set(projects.map((p) => projectHead(p).trim()));
+  const own = new Set(projects.filter((p) => p.role === "own").map((p) => projectHead(p).trim()));
+  const lines = body.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i] ?? "";
+    out.push(line);
+    i++;
+    if (!own.has(line.trim())) continue;
+    const parts: string[] = [];
+    let end = i;
+    while (end < lines.length) {
+      const next = (lines[end] ?? "").trim();
+      if (/^#{1,6}\s/.test(next) || heads.has(next)) break;
+      end++;
+    }
+    for (const next of lines.slice(i, end)) {
+      const text = next
+        .trim()
+        .replace(/^[-*]\s+/, "")
+        .trim();
+      if (text !== "") parts.push(endsSentence(text) ? text : `${text}.`);
+    }
+    if (parts.length > 0) out.push(parts.join(" "));
+    if (end < lines.length) out.push("");
+    i = end;
+    while (i < lines.length && (lines[i] ?? "").trim() === "") i++;
+  }
+  const joined = out.join("\n");
+  return body.endsWith("\n") && !joined.endsWith("\n") ? `${joined}\n` : joined;
+}
+
+/** True when `text` ends in `.`, `!` or `?`, before or after its trailing fact markers. */
+function endsSentence(text: string): boolean {
+  return /[.!?]$/.test(text) || /[.!?](?:\s*\[FACT-[1-9]\d*\])+$/.test(text);
 }
 
 export const PROJECTS_HEADING = "## Projects";

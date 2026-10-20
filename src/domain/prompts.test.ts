@@ -186,7 +186,7 @@ describe("buildDraftPrompt with projects (decision 82)", () => {
   test("a resume lists the projects with whose they are, and marks each fact with its project", () => {
     const text = withProjects("resume");
     expect(text).toContain(
-      "PROJECTS\nPROJECT-1: Nyx (your own project)\nPROJECT-2: Viem (a contribution to someone else's project)\n",
+      "PROJECTS\nPROJECT-1: Nyx (your own project; stack: Go)\nPROJECT-2: Viem (a contribution to someone else's project)\n",
     );
     expect(text).toContain("FACT-2: Added value support to Viem (PROJECT-2)");
     expect(text).toContain("Write [PROJECT-n] alone on its own line");
@@ -198,7 +198,7 @@ describe("buildDraftPrompt with projects (decision 82)", () => {
 
   test("a letter gets the projects and marks, and a rule to name them, but no heads", () => {
     const text = withProjects("letter");
-    expect(text).toContain("PROJECTS\nPROJECT-1: Nyx (your own project)\n");
+    expect(text).toContain("PROJECTS\nPROJECT-1: Nyx (your own project; stack: Go)\n");
     expect(text).toContain("FACT-2: Added value support to Viem (PROJECT-2)");
     expect(text).toContain("Call a project only by its name there.");
     expect(text).toContain("never write that they built, created, founded or own it, or call it my or our project");

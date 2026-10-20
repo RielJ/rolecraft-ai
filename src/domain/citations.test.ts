@@ -340,8 +340,13 @@ describe("checkDraft with projects (decision 82)", () => {
   const k = (n: number) => FactKey.parse(`FACT-${n}`);
   const contact = { fullName: "Juan", email: "", phone: "", location: "", links: [] };
   const posting = { company: "Stripe", title: "Engineer" };
-  const nyx = projectHead({ name: "Nyx", link: "https://github.com/rielj/nyx", stack: ["Go", "Kubernetes"] });
-  const viem = projectHead({ name: "Viem", link: null, stack: [] });
+  const nyx = projectHead({
+    name: "Nyx",
+    link: "https://github.com/rielj/nyx",
+    stack: ["Go", "Kubernetes"],
+    role: "own",
+  });
+  const viem = projectHead({ name: "Viem", link: null, stack: [], role: "contribution" });
   const role = roleHeader({ title: "Engineer", company: "Acme", location: null, start: null, end: null });
   const facts = [
     { key: k(1), text: "Nyx is a CLI that sorts Tailwind classes.", projectKey: "PROJECT-1" },
@@ -462,6 +467,26 @@ describe("checkDraft with projects (decision 82)", () => {
       });
     expect(named([{ key: "PROJECT-1", name: "Acme Ledger", role: "own" }])).toEqual({ ok: true });
     expect(named([])).toMatchObject({ ok: false, violations: [{ kind: "unsupported_token" }] });
+  });
+
+  test("citing your own project's fact lets the sentence name its stack, and no other skill", () => {
+    const stacked = (sentence: string) =>
+      checkDraft({
+        body: ["## Projects", nyx, `A CLI that sorts Tailwind classes [FACT-1]. ${sentence}`].join("\n"),
+        facts,
+        allowedKeys: [k(1)],
+        posting,
+        contact,
+        projects: [{ key: "PROJECT-1", header: nyx }],
+        projectNames: [{ key: "PROJECT-1", name: "Nyx", role: "own", stack: ["Go", "Kubernetes"] }],
+      });
+    expect(stacked("Built in Go and deployed on Kubernetes [FACT-1].")).toEqual({ ok: true });
+    expect(stacked("Built in Rust [FACT-1].")).toMatchObject({
+      ok: false,
+      violations: [{ kind: "unsupported_token", tokens: ["Rust"] }],
+    });
+    // The stack is evidence only for a sentence that cites the project's facts.
+    expect(stacked("Built in Go.")).toMatchObject({ ok: false, violations: [{ kind: "uncited_claim" }] });
   });
 
   test("a [PROJECT-n] left in the body is an unknown project", () => {
