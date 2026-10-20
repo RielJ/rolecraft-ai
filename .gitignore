@@ -2,6 +2,7 @@
 node_modules/
 dist/
 dist-extension/
+dist-app/
 *.tsbuildinfo
 
 # Test output (Playwright writes here unless --output points elsewhere)

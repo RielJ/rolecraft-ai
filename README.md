@@ -70,6 +70,8 @@ PDF export needs Chromium. If `HB_CHROMIUM_PATH` is empty, the app uses Playwrig
 
 To serve the built app from one process, run `bun run build`, then `bun run start`.
 
+To run the app you apply with, use `bun run app`. It serves on port 3300 (or `HB_APP_PORT`) from its own `dist-app/` build, so dev and test runs don't change it, and it starts only from a committed tree. See [docs/MVP.md](docs/MVP.md#daily-app).
+
 ## Use the Chrome extension
 
 The extension adds a side panel that fills empty fields on a job's application form from your profile and reviewed answers, after you click **Prefill**. It never submits, never overwrites a field, and never fills a pay question.
@@ -147,6 +149,7 @@ The recorded run of that command reported 0 missed exclusions and 0 invented cla
 
 The docs in `docs/`:
 
+- [docs/MVP.md](docs/MVP.md): what the app must do for real use now, the rules that keep work on course, and the log of real applications. `docs/features/` holds one doc per unbuilt feature.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the app is built. Layers, data model, the main flows, and open work.
 - [docs/DECISIONS.md](docs/DECISIONS.md): the rules the app follows and why, numbered. Code comments cite them as "decision N".
 - [docs/EXTENSION.md](docs/EXTENSION.md): the Chrome extension, from setup to its threat model.

@@ -17,6 +17,7 @@
     "test:budget": "cd test/budget && bun test",
     "test:extension": "bun test --cwd extension",
     "start": "bun src/server/main.ts",
+    "app": "bun scripts/app.ts",
     "e2e": "vite build && playwright test",
     "e2e:extension": "tsc -p e2e-extension/tsconfig.json --noEmit && vite build && bun run build:extension && playwright test -c playwright.extension.config.ts",
     "eval": "bun eval/run.ts"

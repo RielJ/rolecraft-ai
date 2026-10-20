@@ -348,15 +348,7 @@ The extension's user guide, permissions and threat model are in [EXTENSION.md](E
 
 ### Planned, not built
 
-- **ATS links in Add by link.** The plan read a known ATS posting URL through its board API. The code reads every link as a page.
-- **Every-role check and saved coverage.** A draft missing a role is not retried, and requirement coverage is not saved with the output.
-- **Requirements list in the drafts tab.** The Shown, Not shown and Gap rows, with "redraft with this".
-- **Tailoring eval set.** `eval/drafting/` has no backend, frontend and contract tailoring cases.
-- **Requirement coverage on Matches.** "6 of 9 requirements" from an AI map per job. Decision 76 shipped a rule-based skill percentage instead.
-- **Skipping posting sections** (About us, Benefits, EEO) when reading skills.
-- **GitLab deep read** for facts and `project_role`, and letting the user pick features before their hunks are read.
-- **Deferred by the plan:** near-match detection on re-import ("this replaces FACT-12"), output version history, a "not a duplicate" memory, a `status_events` table, and board drag and drop.
-- Longer-term items are in the "Later" list of [DECISIONS.md](DECISIONS.md).
+Each unbuilt item has a feature doc in [features/](features/), listed with its status in [MVP.md](MVP.md#features). They stay frozen until a real application needs them. Longer-term items are in the "Later" list of [DECISIONS.md](DECISIONS.md).
 
 ### Open risks
 
@@ -369,9 +361,3 @@ The extension's user guide, permissions and threat model are in [EXTENSION.md](E
 | Matching on read may slow past about 20,000 open jobs. | `src/domain/match.test.ts` scores 20,000 jobs in under a second, in memory only. The database load and DTO build for that many jobs are not measured. |
 | Hono RPC type inference may slow the editor as routes grow. | Routes are chained per module. `AppType` is not split yet. |
 | Skill updates scan job text with `strpos`. | Decision 68 names a `pg_trgm` index as the next step past about 6,000 open jobs. |
-
-### Rule changes not applied
-
-From the end of [research/projects.md](research/projects.md):
-
-- **Item 5, missing README:** the scan flags archived and stale repos, but not a repo with no README. The check needs one call per repo, so it waits for the repo read.
