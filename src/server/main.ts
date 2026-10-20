@@ -123,7 +123,9 @@ const server = new Hono()
   // SPA fallback: any non-API path that is not a file gets index.html.
   .get("*", serveStatic({ root: env.HB_STATIC_DIR, path: "index.html" }));
 
-const bun = Bun.serve({ hostname: env.HB_HOST, port: env.PORT, fetch: server.fetch });
+// Bun closes a connection after 10 seconds without data by default, and Find my projects takes
+// longer than that against a real account, so browsers got an empty reply. 255 is Bun's maximum.
+const bun = Bun.serve({ hostname: env.HB_HOST, port: env.PORT, idleTimeout: 255, fetch: server.fetch });
 console.info(JSON.stringify({ level: "info", msg: "listening", url: bun.url.href }));
 
 async function shutdown(): Promise<void> {
