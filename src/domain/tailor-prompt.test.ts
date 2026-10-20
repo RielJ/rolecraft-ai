@@ -64,6 +64,32 @@ describe("buildTailorPrompt (decision 75)", () => {
     expect(prompt.system).not.toContain("[FACT-3]");
   });
 
+  test("projects the CV lacks are listed, their facts marked, and the project op offered (decision 82)", () => {
+    const text = promptText(
+      buildTailorPrompt({
+        posting,
+        base,
+        facts: [
+          { key: k(9), text: "Nyx schedules Go jobs.", link: null, usage: "everywhere", projectKey: "PROJECT-1" },
+        ],
+        map: null,
+        protectedKeys: new Set(),
+        projects: [{ key: "PROJECT-1", name: "Nyx", link: null, stack: [], role: "own" }],
+      }),
+    );
+    expect(text).toContain("PROJECTS\nPROJECT-1: Nyx (your own project)\n");
+    expect(text).toContain("FACT-9 (PROJECT-1) (not in the CV): Nyx schedules Go jobs.");
+    expect(text).toContain("project: add one project from the PROJECTS list");
+    expect(text).toContain('{"op": "project", "project": "PROJECT-n"');
+  });
+
+  test("without projects there is no PROJECTS list and no project op", () => {
+    const text = promptText(buildTailorPrompt({ posting, base, facts: [], map: null, protectedKeys: new Set() }));
+    expect(text).not.toContain("PROJECTS\nPROJECT-");
+    expect(text).not.toContain("project: add one project");
+    expect(text).not.toContain('"op": "project"');
+  });
+
   test("without a map the prompt still builds", () => {
     const text = promptText(buildTailorPrompt({ posting, base, facts: [], map: null, protectedKeys: new Set() }));
     expect(text).not.toContain("REQUIREMENTS\nRole:");

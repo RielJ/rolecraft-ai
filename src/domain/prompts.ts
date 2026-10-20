@@ -7,7 +7,7 @@ import { bundleName, type ProjectBundle } from "./github-read";
 import { guideFor, tailorGuide } from "./guide";
 import { requirementLines, requirementsByFact } from "./requirements";
 import { styleHitLabel, VOICE_RULES } from "./style";
-import { type DroppedOp, MAX_ADDS, MAX_REWORDS, type TailorOp } from "./tailor";
+import { type DroppedOp, MAX_ADDS, MAX_PROJECT_LINES, MAX_PROJECTS, MAX_REWORDS, type TailorOp } from "./tailor";
 import { type DraftRole, rolePromptLine } from "./work-roles";
 
 /**
@@ -331,7 +331,8 @@ const TAILOR_REPLY = `Reply with JSON only: {"ops": [...]}, using these shapes:
 {"op": "order", "parent": "L12", "lines": ["L15", "L13", "L14"], "reasons": ["R2"], "note": null}
 {"op": "reword", "line": "L13", "text": "...", "facts": [], "reasons": ["R1"], "note": null}
 {"op": "remove", "line": "L40", "reasons": [], "note": "why, in a few words"}
-{"op": "add", "after": "L14", "text": "...", "facts": ["FACT-n"], "reasons": ["R3"], "note": null}`;
+{"op": "add", "after": "L14", "text": "...", "facts": ["FACT-n"], "reasons": ["R3"], "note": null}
+{"op": "project", "project": "PROJECT-n", "lines": [{"text": "...", "facts": ["FACT-n"]}], "reasons": ["R2"], "note": null}`;
 
 const TAILOR_TASK = [
   "Propose the edits that make this CV fit the posting, following the guide's section on editing a base resume. Return an empty list when the CV already fits.",
@@ -340,6 +341,7 @@ const TAILOR_TASK = [
   `reword: new text for one bullet or Skills line. Keep its numbers, tools and names; cite a fact of the same role in "facts" only to use something the line doesn't say. At most ${MAX_REWORDS}.`,
   "remove: drop one bullet or Skills line. Never a line marked (keep), and never every bullet of a project: each project keeps its name, link and at least one line saying what it is.",
   `add: a new bullet after a role line or one of its bullets, from facts of that role marked "not in the CV". At most ${MAX_ADDS}.`,
+  `project: add one project from the PROJECTS list, which the CV lacks, as 1 to ${MAX_PROJECT_LINES} lines from facts marked with its PROJECT-n. For your own project the first line says what it is; for a contribution each line says what the candidate did in it, never that they built or own it. Name, link and skills are added for you, in the right section. Only for a project that serves a requirement. At most ${MAX_PROJECTS}.`,
   'Each line gets at most one edit. "reasons" holds the REQUIREMENTS ids the edit serves; "note" is null or a few words for the candidate.',
   "Write text without [FACT-n] markers, ids or Markdown. No pronouns.",
 ];
@@ -374,13 +376,16 @@ export function buildTailorPrompt({
   facts,
   map,
   protectedKeys,
+  projects = [],
 }: {
   posting: DraftPosting;
   base: readonly BaseLine[];
-  /** Facts a resume may cite (`allowedFacts`), with their `roleKey`. */
+  /** Facts a resume may cite (`allowedFacts`), with their `roleKey` and, from a project, `projectKey`. */
   facts: readonly PromptFact[];
   map: RequirementMap | null;
   protectedKeys: ReadonlySet<FactKey>;
+  /** Projects the CV lacks, which a project op may add (decision 82). */
+  projects?: readonly DraftProject[];
 }): Prompt {
   const withMap = map !== null && map.requirements.length > 0;
   const proves = withMap ? requirementsByFact(map) : new Map<FactKey, string[]>();
@@ -389,7 +394,9 @@ export function buildTailorPrompt({
   const factText = facts.map((f) => {
     const ids = proves.get(f.key) ?? [];
     const where = lineOf.get(f.key) ? `on ${lineOf.get(f.key)}` : "not in the CV";
-    return `${f.key} (${f.roleKey ?? "no role"}) (${where})${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}: ${f.text}`;
+    const owner =
+      f.roleKey ?? (f.projectKey && projects.some((p) => p.key === f.projectKey) ? f.projectKey : "no role");
+    return `${f.key} (${owner}) (${where})${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}: ${f.text}`;
   });
   const user = [
     "JOB POSTING",
@@ -404,18 +411,19 @@ export function buildTailorPrompt({
       .filter((l) => l.kind !== "contact")
       .map((line) => baseLineText({ line, proves, protectedKeys, onlyDescriptions })),
     "",
+    ...(projects.length > 0 ? ["PROJECTS", ...projects.map(projectPromptLine), ""] : []),
     "FACTS",
     ...(factText.length > 0 ? factText : ["(none)"]),
     "",
     "TASK",
-    ...TAILOR_TASK,
+    ...TAILOR_TASK.filter((t) => projects.length > 0 || !t.startsWith("project:")),
     ...(withMap && map.role
       ? [
           `The Summary opens with the role noun for "${map.role}" where the CV shows that kind of work, without a seniority word the CV doesn't give.`,
         ]
       : []),
     "",
-    TAILOR_REPLY,
+    ...TAILOR_REPLY.split("\n").filter((l) => projects.length > 0 || !l.includes('"op": "project"')),
   ].join("\n");
   const system = [
     "You edit one candidate's own resume for one job posting. The CV is theirs and already true; you propose a short list of edits, and the candidate keeps or undoes each one.",
@@ -446,6 +454,8 @@ function opLabel(op: TailorOp): string {
       return `${op.op} ${op.line}`;
     case "add":
       return `the add after ${op.after}`;
+    case "project":
+      return `the project ${op.project}`;
     default: {
       const _exhaustive: never = op;
       return _exhaustive;
@@ -464,6 +474,10 @@ function describeDrop({ op, reason, detail }: DroppedOp): string {
       return `${what}: cite the facts it draws on.`;
     case "wrong_role":
       return `${what}: ${detail} belongs to another role.`;
+    case "wrong_project":
+      return `${what}: ${detail} is not one of that project's facts.`;
+    case "claims_contribution":
+      return `${what}: says "${detail}", but that project is someone else's; say what the candidate did in it.`;
     case "unsupported":
       return `${what}: says ${detail}, which the line and the facts it cites don't say.`;
     case "pronoun":

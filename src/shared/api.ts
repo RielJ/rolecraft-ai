@@ -886,7 +886,7 @@ export type CitationDto = z.infer<typeof CitationDto>;
 
 // ---------- Tailoring from the base CV (decision 75) ----------
 
-export const TAILOR_OPS = ["summary", "order", "reword", "remove", "add"] as const;
+export const TAILOR_OPS = ["summary", "order", "reword", "remove", "add", "project"] as const;
 export const TailorOpKind = z.enum(TAILOR_OPS);
 export type TailorOpKind = z.infer<typeof TailorOpKind>;
 export const CHANGE_STATUSES = ["accepted", "rejected"] as const;
@@ -902,7 +902,10 @@ export const ChangeView = z.object({
   before: z.string().nullable(),
   /** The text after; null for a remove and an order. */
   after: z.string().nullable(),
-  /** An order's lines before and after; null for every other change. */
+  /**
+   * An order's lines before and after; null for every other change. A project's lines are its
+   * head as one line, then what it says, in `afterList` (decision 82).
+   */
   beforeList: z.array(z.string()).nullable(),
   afterList: z.array(z.string()).nullable(),
   /** The role or section the change is in. */

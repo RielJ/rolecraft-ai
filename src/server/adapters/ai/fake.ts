@@ -290,7 +290,8 @@ function defaultRequirements(request: AiCompletionRequest): string {
  * The default tailor reply (decision 75), two edits the checks always keep: reverse the bullets of
  * the first role with two or more, and shorten the first bullet of another role by cutting its
  * first "by/for/with/in/on/through" clause (fewer of the line's own words). Either is left out when the CV
- * has no line for it.
+ * has no line for it. When the prompt lists projects the CV lacks (decision 82), the first one is
+ * added from its facts, word for word.
  */
 function defaultTailor(request: AiCompletionRequest): string {
   const prompt = request.messages[0]?.content ?? "";
@@ -319,6 +320,15 @@ function defaultTailor(request: AiCompletionRequest): string {
     ops.push({ op: "reword", line: bullet.id, text: `${cut[1]}.`, facts: [], reasons, note: null });
     break;
   }
+  const project = /^PROJECTS\n(PROJECT-[1-9]\d*): /m.exec(prompt)?.[1];
+  const projectFacts = project
+    ? Array.from(prompt.matchAll(new RegExp(`^(FACT-[1-9]\\d*) \\(${project}\\)[^:\\n]*: (.*)$`, "gm")), (m) => ({
+        text: m[2] ?? "",
+        facts: [m[1] ?? ""],
+      })).slice(0, 3)
+    : [];
+  if (project && projectFacts.length > 0)
+    ops.push({ op: "project", project, lines: projectFacts, reasons, note: null });
   return JSON.stringify({ ops });
 }
 

@@ -323,3 +323,84 @@ describe("keeping and undoing changes (decision 75)", () => {
     expect(ws.files.find((f) => f.kind === "resume")?.reviewedAt).toBeNull();
   });
 });
+
+describe("tailoring adds a project the CV lacks (decision 82)", () => {
+  async function withProject() {
+    const { ws } = await setup();
+    await waitForSplits(
+      await json(
+        await call("POST", "/profile/addons", {
+          kind: "open_source",
+          title: "Nyx",
+          body: "Nyx is a CLI that schedules Go jobs on Kubernetes.",
+          link: "https://github.com/maria/nyx",
+          skills: ["Go", "Kubernetes"],
+          projectRole: "own",
+        }),
+        ProfileDto,
+        201,
+      ),
+    );
+    const profile = await json(await call("POST", "/facts/confirm-all"), ProfileDto);
+    deps.fake.reset();
+    const nyx = profile.facts.find((f) => f.text.startsWith("Nyx is"))?.key;
+    if (!nyx) throw new Error("no Nyx fact");
+    return { ws, nyx };
+  }
+
+  test("the prompt offers it; the kept op adds the head and lines under a new Projects heading", async () => {
+    const { ws, nyx } = await withProject();
+    deps.fake.queueTailor(
+      JSON.stringify({
+        ops: [
+          {
+            op: "project",
+            project: "PROJECT-1",
+            lines: [{ text: "A CLI that schedules Go jobs on Kubernetes.", facts: [nyx] }],
+            reasons: [],
+          },
+        ],
+      }),
+    );
+    const { resume, task } = await draft(ws, ["resume"]);
+    expect(task.status).toBe("done");
+    const prompt = deps.fake.tailorCalls[0]?.messages[0]?.content ?? "";
+    expect(prompt).toContain("PROJECTS\nPROJECT-1: Nyx (your own project)");
+    expect(prompt).toContain(`${nyx} (PROJECT-1) (not in the CV) [R1]: Nyx is a CLI`);
+    expect(deps.fake.tailorCalls).toHaveLength(1);
+
+    expect(resume?.body).toContain(
+      `## Projects\n\n#### Nyx | https://github.com/maria/nyx | Go, Kubernetes\nA CLI that schedules Go jobs on Kubernetes. [${nyx}]\n\n## EDUCATION`,
+    );
+    expect(resume?.tailoring?.changes).toMatchObject([
+      {
+        id: "C1",
+        op: "project",
+        where: "Projects",
+        afterList: ["Nyx · github.com/maria/nyx · Go, Kubernetes", "A CLI that schedules Go jobs on Kubernetes."],
+      },
+    ]);
+    expect(resume?.citations.map((c) => c.key)).toContain(nyx);
+
+    // Undoing it takes out the heading too.
+    const undone = await json(await decide(resume?.id ?? "", { ids: ["C1"], status: "rejected" }), WorkspaceDto);
+    const body = undone.files.find((f) => f.kind === "resume")?.body ?? "";
+    expect(body).not.toContain("Nyx");
+    expect(body).not.toContain("## Projects");
+  });
+
+  test("a project op citing a role's fact is retried with the reason", async () => {
+    const { ws } = await withProject();
+    const profile = ProfileDto.parse(await (await call("GET", "/profile")).json());
+    const built = profile.facts.find((f) => f.text.startsWith("Built a billing"))?.key;
+    const bad = JSON.stringify({
+      ops: [{ op: "project", project: "PROJECT-1", lines: [{ text: "Built a billing service.", facts: [built] }] }],
+    });
+    deps.fake.queueTailor(bad, '{"ops": []}');
+    await draft(ws, ["resume"]);
+    expect(deps.fake.tailorCalls).toHaveLength(2);
+    expect(deps.fake.tailorCalls[1]?.messages.at(-1)?.content).toContain(
+      `the project PROJECT-1: ${built} is not one of that project's facts.`,
+    );
+  });
+});

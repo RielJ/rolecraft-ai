@@ -41,6 +41,30 @@ describe("parseTailorReply (decision 75)", () => {
     expect(parsed?.ops).toHaveLength(1);
   });
 
+  test("a project op takes 1 to 3 lines and a PROJECT-n key (decision 82)", () => {
+    const op = (project: string, n: number) => ({
+      op: "project",
+      project,
+      lines: Array.from({ length: n }, () => ({ text: "A CLI.", facts: ["FACT-1"] })),
+    });
+    const parsed = parseTailorReply(
+      JSON.stringify({ ops: [op("PROJECT-1", 2), op("PROJECT-1", 0), op("PROJECT-1", 4), op("Nyx", 1)] }),
+    );
+    expect(parsed?.unreadable).toBe(3);
+    expect(parsed?.ops).toEqual([
+      {
+        op: "project",
+        project: "PROJECT-1",
+        lines: [
+          { text: "A CLI.", facts: ["FACT-1" as never] },
+          { text: "A CLI.", facts: ["FACT-1" as never] },
+        ],
+        reasons: [],
+        note: null,
+      },
+    ]);
+  });
+
   test("a reply that is not {ops: [...]} is null", () => {
     expect(parseTailorReply("Here are my edits")).toBeNull();
     expect(parseTailorReply('{"edits": []}')).toBeNull();

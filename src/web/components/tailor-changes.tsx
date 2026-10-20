@@ -13,6 +13,7 @@ const OP_LABEL: Record<TailorOpKind, string> = {
   reword: "Reworded",
   remove: "Removed",
   add: "Added",
+  project: "Added project",
 };
 
 const WEIGHT_LABEL: Record<RequirementWeight, string> = { must: "Required", duty: "Duty", nice: "Nice to have" };
@@ -31,6 +32,20 @@ function ChangeText({ change }: { change: ChangeView }) {
             <li key={line}>{line}</li>
           ))}
         </ol>
+      </>
+    );
+  }
+  if (change.op === "project") {
+    // The head as one line (name · link · skills), then what the project says.
+    const [head, ...lines] = change.afterList ?? [];
+    return (
+      <>
+        <p className="font-medium">{head}</p>
+        <ul className="list-disc pl-5">
+          {lines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </>
     );
   }
@@ -91,7 +106,11 @@ function ChangeRow({
       </div>
       <div className={cn("grid gap-1", !kept && "opacity-60")}>
         <ChangeText change={change} />
-        {!kept && <p className="text-muted-foreground text-xs">Undone. Your CV's version is used.</p>}
+        {!kept && (
+          <p className="text-muted-foreground text-xs">
+            {change.op === "project" ? "Undone. The project is left out." : "Undone. Your CV's version is used."}
+          </p>
+        )}
       </div>
       {change.reasons.length > 0 && (
         <p className="flex flex-wrap gap-1 text-xs">

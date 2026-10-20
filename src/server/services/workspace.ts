@@ -40,6 +40,7 @@ import { checkStyle } from "@/domain/style";
 import {
   applyEdits,
   changedText,
+  projectsMissingFromCv,
   type Tailoring,
   type TailorOp,
   tailoringView,
@@ -1064,6 +1065,9 @@ async function tailorContext(deps: Deps, { opportunityId }: { opportunityId: Opp
   const parsed = parseBaseCv({ text: cv.body, roles });
   if (!isUsableBase({ lines: parsed, roleCount: roles.length })) return null;
   const { lines: base } = mapFactsToLines({ lines: parsed, facts: kindFacts });
+  // Decision 82: a project the CV lacks may be added, with the head a drafted resume would get.
+  const keyed = keyProjects({ facts: kindFacts, info: await loadProjectInfo(deps, { facts: kindFacts, contact }) });
+  const projects = projectsMissingFromCv({ base, projects: keyed.projects, facts: keyed.facts });
 
   const posting = { title: job.title, company: job.company, description: job.description };
   const { map: stored } = await requirementMapState(deps, { opportunity, posting, all });
@@ -1075,12 +1079,13 @@ async function tailorContext(deps: Deps, { opportunityId }: { opportunityId: Opp
     hash: baseHash(cv.body),
     base,
     map,
-    prompt: buildTailorPrompt({ posting, base, facts: kindFacts, map, protectedKeys }),
+    prompt: buildTailorPrompt({ posting, base, facts: keyed.facts, map, protectedKeys, projects }),
     validate: (ops: readonly TailorOp[]) =>
       validateEdits({
         base,
         ops,
-        facts: kindFacts,
+        facts: keyed.facts,
+        projects,
         protectedKeys,
         requirementIds,
         posting: { company: job.company, title: job.title },

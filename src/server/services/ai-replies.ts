@@ -3,7 +3,7 @@ import type { AiEligibilityAnswer } from "@/domain/eligibility";
 import type { GithubProposal } from "@/domain/github-read";
 import { cleanModelText, MAX_SUGGESTED_QUESTIONS } from "@/domain/prompts";
 import type { RequirementsReply as RequirementsReplyShape } from "@/domain/requirements";
-import type { TailorOp } from "@/domain/tailor";
+import { MAX_PROJECT_LINES, type TailorOp } from "@/domain/tailor";
 import { FactKey } from "@/shared/api";
 import { Eligibility, RequirementWeight } from "@/shared/enums";
 
@@ -110,6 +110,15 @@ const TailorOpReply = z.discriminatedUnion("op", [
   z.object({ op: z.literal("reword"), line: LineId, text: OpText, facts: OpFacts, ...OpCommon }),
   z.object({ op: z.literal("remove"), line: LineId, ...OpCommon }),
   z.object({ op: z.literal("add"), after: LineId, text: OpText, facts: OpFacts, ...OpCommon }),
+  z.object({
+    op: z.literal("project"),
+    project: z.string().regex(/^PROJECT-[1-9]\d*$/),
+    lines: z
+      .array(z.object({ text: OpText, facts: OpFacts }))
+      .min(1)
+      .max(MAX_PROJECT_LINES),
+    ...OpCommon,
+  }),
 ]);
 const TailorReply = z.object({ ops: z.array(z.unknown()).max(60) });
 

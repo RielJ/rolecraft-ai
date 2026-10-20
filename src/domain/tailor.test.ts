@@ -3,7 +3,16 @@ import { type Contact, FactKey } from "@/shared/api";
 import { mapFactsToLines, parseBaseCv, renderLines } from "./base-cv";
 import { CV, ROLES } from "./base-cv.fixture";
 import { checkLine } from "./citations";
-import { applyEdits, changedText, changeViews, type TailorChange, type TailorOp, validateEdits } from "./tailor";
+import { type DraftProject, projectHead } from "./draft-projects";
+import {
+  applyEdits,
+  changedText,
+  changeViews,
+  projectsMissingFromCv,
+  type TailorChange,
+  type TailorOp,
+  validateEdits,
+} from "./tailor";
 
 const key = (n: number) => FactKey.parse(`FACT-${n}`);
 const contact: Contact = {
@@ -350,5 +359,188 @@ describe("changeViews", () => {
     expect(view?.before).toBe("Cut p95 checkout latency by 40% with Postgres query plans and Redis caching.");
     expect(view?.reasons).toEqual([{ id: "R1", text: "Performance" }]);
     expect(view?.where).toBe("Senior Backend Engineer, Paywise, Remote");
+  });
+});
+
+describe("project ops (decision 82)", () => {
+  const PROJECT_FACTS = [
+    ...FACTS,
+    { key: key(10), text: "Nyx is a CLI that schedules Go jobs on Kubernetes.", projectKey: "PROJECT-1" },
+    { key: key(11), text: "Nyx retries failed jobs with backoff.", projectKey: "PROJECT-1" },
+    { key: key(12), text: "Added value support to deployContract in Viem.", projectKey: "PROJECT-2" },
+    { key: key(13), text: "Fixed a race in the pgx pool shutdown path.", projectKey: "PROJECT-3" },
+  ];
+  const nyx: DraftProject = {
+    key: "PROJECT-1",
+    name: "Nyx",
+    link: "https://github.com/alex/nyx",
+    stack: ["Go", "Kubernetes"],
+    role: "own",
+  };
+  const viem: DraftProject = { key: "PROJECT-2", name: "Viem", link: null, stack: [], role: "contribution" };
+  const pgTools: DraftProject = { key: "PROJECT-3", name: "pg-tools", link: null, stack: [], role: "own" };
+  const run = (ops: TailorOp[]) =>
+    validateEdits({
+      base,
+      ops,
+      facts: PROJECT_FACTS,
+      protectedKeys: new Set(),
+      requirementIds: new Set(["R1"]),
+      posting,
+      contact,
+      projects: [nyx, viem],
+    });
+  const project = (key: string, lines: { text: string; facts: FactKey[] }[]): TailorOp => ({
+    op: "project",
+    project: key,
+    lines,
+    reasons: ["R1"],
+    note: null,
+  });
+  const NYX = project("PROJECT-1", [
+    { text: "A CLI that schedules Go jobs on Kubernetes.", facts: [key(10)] },
+    { text: "Retries failed jobs with backoff.", facts: [key(11)] },
+  ]);
+  const VIEM = project("PROJECT-2", [{ text: "Added value support to deployContract.", facts: [key(12)] }]);
+
+  test("a listed project from its own facts is kept with the server's head and whose it is", () => {
+    const { changes, dropped } = run([NYX]);
+    expect(dropped).toEqual([]);
+    expect(changes).toMatchObject([
+      { id: "C1", op: "project", project: "PROJECT-1", head: projectHead(nyx), role: "own", status: "accepted" },
+    ]);
+  });
+
+  test("a project not listed, a second op for one project and a third project are dropped", () => {
+    const third: DraftProject = { ...nyx, key: "PROJECT-4", name: "Kite" };
+    const out = validateEdits({
+      base,
+      ops: [
+        project("PROJECT-9", [{ text: "x", facts: [key(10)] }]),
+        NYX,
+        NYX,
+        VIEM,
+        project("PROJECT-4", [{ text: "A CLI that schedules Go jobs.", facts: [key(10)] }]),
+      ],
+      facts: PROJECT_FACTS,
+      protectedKeys: new Set(),
+      requirementIds: new Set(),
+      posting,
+      contact,
+      projects: [nyx, viem, third],
+    });
+    expect(out.changes.map((c) => c.op === "project" && c.project)).toEqual(["PROJECT-1", "PROJECT-2"]);
+    expect(out.dropped.map((d) => d.reason)).toEqual(["bad_target", "bad_target", "cap"]);
+  });
+
+  test("every line cites facts of that project, says nothing they don't, and no pronouns", () => {
+    const one = (text: string, facts: FactKey[]) => run([project("PROJECT-1", [{ text, facts }])]).dropped;
+    expect(one("A CLI.", [])).toMatchObject([{ reason: "uncited" }]);
+    expect(one("Added value support.", [key(12)])).toMatchObject([{ reason: "wrong_project", detail: "FACT-12" }]);
+    expect(one("Built a ledger.", [key(3)])).toMatchObject([{ reason: "wrong_project", detail: "FACT-3" }]);
+    expect(one("A CLI on Nomad.", [key(10)])).toMatchObject([{ reason: "unsupported", detail: "Nomad" }]);
+    expect(one("I wrote a CLI that schedules Go jobs.", [key(10)])).toMatchObject([{ reason: "pronoun" }]);
+    // The project's name is evidence even when its facts don't say it.
+    expect(one("Nyx schedules Go jobs on Kubernetes.", [key(10)])).toEqual([]);
+  });
+
+  test("a contribution may not be claimed as the candidate's own", () => {
+    const { dropped } = run([
+      project("PROJECT-2", [{ text: "Built Viem with value support for deployContract.", facts: [key(12)] }]),
+    ]);
+    expect(dropped).toMatchObject([{ reason: "claims_contribution", detail: "Built Viem" }]);
+  });
+
+  test("an own project goes at the end of Projects: the head, what it is, then bullets", () => {
+    const body = applyEdits({ base, changes: run([NYX]).changes });
+    expect(body).toContain(
+      [
+        "- A CLI that diffs two schemas. [FACT-0]".replace(" [FACT-0]", ""),
+        "",
+        "#### Nyx | https://github.com/alex/nyx | Go, Kubernetes",
+        "A CLI that schedules Go jobs on Kubernetes. [FACT-10]",
+        "- Retries failed jobs with backoff. [FACT-11]",
+        "",
+        "## EDUCATION",
+      ].join("\n"),
+    );
+  });
+
+  test("a contribution gets its own section after Projects when the CV has none", () => {
+    const body = applyEdits({ base, changes: run([VIEM]).changes });
+    expect(body).toContain(
+      [
+        "- A CLI that diffs two schemas.",
+        "",
+        "## Open Source Contributions",
+        "",
+        "#### Viem",
+        "- Added value support to deployContract. [FACT-12]",
+        "",
+        "## EDUCATION",
+      ].join("\n"),
+    );
+  });
+
+  test("a CV without Projects gets the heading after Experience; undoing removes it all", () => {
+    const short = base.filter((l) => l.section !== "projects");
+    const changes = validateEdits({
+      base: short,
+      ops: [NYX],
+      facts: PROJECT_FACTS,
+      protectedKeys: new Set(),
+      requirementIds: new Set(),
+      posting,
+      contact,
+      projects: [nyx],
+    }).changes;
+    const body = applyEdits({ base: short, changes });
+    expect(body).toContain(
+      "- Wrote the order API in TypeScript used by 3 mobile apps. [FACT-5]\n\n## Projects\n\n#### Nyx",
+    );
+    expect(body.indexOf("## Projects")).toBeLessThan(body.indexOf("## EDUCATION"));
+    const undone = changes.map((c): TailorChange => ({ ...c, status: "rejected" }));
+    expect(applyEdits({ base: short, changes: undone })).toBe(renderLines(short));
+  });
+
+  test("style warnings count the project's lines, not its head", () => {
+    const text = changedText({ base, changes: run([NYX]).changes });
+    expect(text).toContain("A CLI that schedules Go jobs on Kubernetes.");
+    expect(text).not.toContain("####");
+  });
+
+  test("the review row shows the head as one line, then the lines, under its section", () => {
+    const [own, theirs] = changeViews({ tailoring: { base, changes: run([NYX, VIEM]).changes }, map: null });
+    expect(own).toMatchObject({
+      op: "project",
+      where: "Projects",
+      before: null,
+      after: null,
+      afterList: [
+        "Nyx · github.com/alex/nyx · Go, Kubernetes",
+        "A CLI that schedules Go jobs on Kubernetes.",
+        "Retries failed jobs with backoff.",
+      ],
+    });
+    expect(theirs).toMatchObject({
+      where: "Open Source Contributions",
+      afterList: ["Viem", "Added value support to deployContract."],
+    });
+  });
+
+  test("a project already in the CV, by a fact on a line or by its name, is not offered", () => {
+    const facts = [...PROJECT_FACTS, { key: key(14), text: "A CLI that diffs two schemas.", projectKey: "PROJECT-3" }];
+    const lines = mapFactsToLines({ lines: parseBaseCv({ text: CV, roles: ROLES }), facts }).lines;
+    // Named differently from the CV's title, so only its fact on a CV line shows it's there.
+    const differ = { ...pgTools, name: "Schema Differ" };
+    expect(projectsMissingFromCv({ base: lines, projects: [nyx, viem, differ], facts }).map((p) => p.key)).toEqual([
+      "PROJECT-1",
+      "PROJECT-2",
+    ]);
+    const renamed = { ...pgTools, name: "pg-tools" };
+    expect(projectsMissingFromCv({ base, projects: [renamed], facts: FACTS })).toEqual([]);
+    // A name only in Experience or Skills doesn't count: "Go" is a skill, not the project.
+    const goProject = { ...nyx, name: "Go" };
+    expect(projectsMissingFromCv({ base, projects: [goProject], facts: FACTS })).toEqual([goProject]);
   });
 });

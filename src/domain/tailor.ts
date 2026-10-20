@@ -1,6 +1,7 @@
 import type { ChangeStatus, ChangeView, Contact, FactKey, RequirementMap, TailoringDto } from "@/shared/api";
-import { type BaseLine, coverage, projectEntries, renderLines } from "./base-cv";
+import { type BaseLine, type BaseSection, coverage, projectEntries, renderLines } from "./base-cv";
 import { checkLine, stripMarkers } from "./citations";
+import { type DraftProject, ownershipClaim, parseProjectHead, projectHead, projectHeadPlain } from "./draft-projects";
 import { requirementGaps } from "./requirements";
 import { checkStyle } from "./style";
 
@@ -15,9 +16,26 @@ export type TailorOp =
   | { op: "order"; parent: string; lines: string[]; reasons: string[]; note: string | null }
   | { op: "reword"; line: string; text: string; facts: FactKey[]; reasons: string[]; note: string | null }
   | { op: "remove"; line: string; reasons: string[]; note: string | null }
-  | { op: "add"; after: string; text: string; facts: FactKey[]; reasons: string[]; note: string | null };
+  | { op: "add"; after: string; text: string; facts: FactKey[]; reasons: string[]; note: string | null }
+  | {
+      op: "project";
+      /** The `PROJECT-n` of a project the CV lacks (decision 82). */
+      project: string;
+      lines: { text: string; facts: FactKey[] }[];
+      reasons: string[];
+      note: string | null;
+    };
 
-export type TailorChange = TailorOp & { id: string; status: ChangeStatus };
+/** A kept `project` op, with the head and whose project it is as they were when it was made. */
+export type ProjectChange = Extract<TailorOp, { op: "project" }> & {
+  head: string;
+  role: DraftProject["role"];
+};
+
+export type TailorChange = (Exclude<TailorOp, { op: "project" }> | ProjectChange) & {
+  id: string;
+  status: ChangeStatus;
+};
 
 /** What an output keeps of one tailoring: the base it was read against and the changes. */
 export type Tailoring = {
@@ -34,6 +52,8 @@ export type DropReason =
   | "unknown_fact"
   | "uncited"
   | "wrong_role"
+  | "wrong_project"
+  | "claims_contribution"
   | "unsupported"
   | "pronoun"
   | "protected"
@@ -52,10 +72,13 @@ export function worthRetry(dropped: readonly DroppedOp[]): boolean {
 /** At most this many rewords and adds are kept; the rest are dropped as `cap`. */
 export const MAX_REWORDS = 12;
 export const MAX_ADDS = 6;
+export const MAX_PROJECTS = 2;
+/** A project op writes 1 to this many lines. */
+export const MAX_PROJECT_LINES = 3;
 /** An add that says this much of a line in its role repeats it. */
 const DUPLICATE_COVERAGE = 0.8;
 
-type TailorFact = { key: FactKey; text: string; roleKey?: string | null };
+type TailorFact = { key: FactKey; text: string; roleKey?: string | null; projectKey?: string | null };
 
 const clean = (text: string) => stripMarkers(text).replace(/\s+/g, " ").trim();
 
@@ -87,7 +110,10 @@ const editable = (line: BaseLine) => line.kind === "bullet" || (line.kind === "t
  *   line and those facts lack (`checkLine`), and no pronoun.
  * - A line holding a REQUIRED fact (decision 74) can't be removed, nor a project's last description
  *   (decision 77: a project always shows its name, link and what it is); an add can't repeat a line.
- * - One change per line, one order per parent, one summary; at most `MAX_REWORDS` and `MAX_ADDS`.
+ * - A project op adds a listed project the CV lacks, from that project's facts only, never claiming
+ *   a contribution as the candidate's own (decision 82).
+ * - One change per line, one order per parent, one summary, one op per project; at most
+ *   `MAX_REWORDS`, `MAX_ADDS` and `MAX_PROJECTS`.
  * Reasons keep only requirement ids in the map. Pure.
  */
 export function validateEdits({
@@ -98,10 +124,13 @@ export function validateEdits({
   requirementIds,
   posting,
   contact,
+  projects = [],
 }: {
   base: readonly BaseLine[];
   ops: readonly TailorOp[];
   facts: readonly TailorFact[];
+  /** Projects the CV lacks, which a project op may add (decision 82). */
+  projects?: readonly DraftProject[];
   protectedKeys: ReadonlySet<FactKey>;
   requirementIds: ReadonlySet<string>;
   posting: { company: string; title: string };
@@ -112,7 +141,8 @@ export function validateEdits({
   const touched = new Set<string>();
   const changes: TailorChange[] = [];
   const dropped: DroppedOp[] = [];
-  const count = { reword: 0, add: 0, summary: 0 };
+  const count = { reword: 0, add: 0, summary: 0, project: 0 };
+  const projectByKey = new Map(projects.map((p) => [p.key, p]));
   const drop = (op: TailorOp, reason: DropReason, detail: string) => dropped.push({ op, reason, detail });
   // Each project's bullets still in it, by bullet id: a remove may not take the last one.
   const projectOf = new Map<string, { title: BaseLine; left: Set<string> }>();
@@ -261,6 +291,53 @@ export function validateEdits({
         changes.push({ ...op, text, id: "", status: "accepted" });
         break;
       }
+      case "project": {
+        const project = projectByKey.get(op.project);
+        if (project === undefined || touched.has(`project:${op.project}`) || op.lines.length === 0) {
+          drop(op, "bad_target", op.project);
+          break;
+        }
+        if (count.project >= MAX_PROJECTS) {
+          drop(op, "cap", op.project);
+          break;
+        }
+        const lines: { text: string; facts: FactKey[] }[] = [];
+        let failed: { reason: DropReason; detail: string } | null = null;
+        for (const line of op.lines.slice(0, MAX_PROJECT_LINES)) {
+          if (line.facts.length === 0) {
+            failed = { reason: "uncited", detail: op.project };
+            break;
+          }
+          const cited = cite(line.facts, undefined);
+          if ("reason" in cited) {
+            failed = cited;
+            break;
+          }
+          const other = cited.facts.find((f) => (f.projectKey ?? null) !== op.project);
+          if (other) {
+            failed = { reason: "wrong_project", detail: other.key };
+            break;
+          }
+          const text = clean(line.text);
+          const claim = project.role === "contribution" ? ownershipClaim({ sentence: text, name: project.name }) : null;
+          const problem = claim
+            ? { reason: "claims_contribution" as const, detail: claim }
+            : textProblem(text, [project.name, ...cited.facts.map((f) => f.text)]);
+          if (problem) {
+            failed = problem;
+            break;
+          }
+          lines.push({ text, facts: [...line.facts] });
+        }
+        if (failed) {
+          drop(op, failed.reason, failed.detail);
+          break;
+        }
+        touched.add(`project:${op.project}`);
+        count.project++;
+        changes.push({ ...op, lines, head: projectHead(project), role: project.role, id: "", status: "accepted" });
+        break;
+      }
       case "summary": {
         if (count.summary > 0) {
           drop(op, "bad_target", "a second summary");
@@ -294,6 +371,33 @@ export function validateEdits({
     }
   }
   return { changes: changes.map((c, i) => ({ ...c, id: `C${i + 1}` })), dropped };
+}
+
+/**
+ * The projects a project op may add (decision 82): those the CV lacks. A project is in the CV when
+ * one of its facts is on a CV line, or a line outside Summary, Skills, Experience and Education
+ * says its name. Pure.
+ */
+export function projectsMissingFromCv<P extends Pick<DraftProject, "key" | "name">>({
+  base,
+  projects,
+  facts,
+}: {
+  base: readonly BaseLine[];
+  projects: readonly P[];
+  facts: readonly { key: FactKey; projectKey?: string | null }[];
+}): P[] {
+  const onLine = new Set(base.flatMap((l) => l.facts));
+  const loose = base
+    .filter((l) => l.kind !== "contact" && (l.section === "projects" || l.section === "other"))
+    .map((l) => clean(l.text).toLowerCase());
+  return projects.filter((p) => {
+    if (facts.some((f) => f.projectKey === p.key && onLine.has(f.key))) return false;
+    const name = p.name.trim().toLowerCase();
+    if (name === "") return true;
+    const word = new RegExp(`(?<![\\w-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`);
+    return !loose.some((text) => word.test(text));
+  });
 }
 
 type Line = Pick<BaseLine, "id" | "kind" | "text" | "facts" | "section">;
@@ -377,8 +481,67 @@ export function applyLines({ base, changes }: { base: readonly BaseLine[]; chang
     lines = [...lines.slice(0, at + 1), line, ...lines.slice(at + 1)];
     changed.add(c.id);
   }
+  for (const c of active) {
+    if (c.op !== "project") continue;
+    lines = insertProject({ lines, change: c });
+    for (let i = 1; i <= c.lines.length; i++) changed.add(`${c.id}:${i}`);
+  }
   const removed = new Set(active.flatMap((c) => (c.op === "remove" ? [c.line] : [])));
   return { lines: lines.filter((l) => !removed.has(l.id)), changed };
+}
+
+const CONTRIBUTIONS_HEADING = /open[\s-]*source|contribution/i;
+
+/** Where the section a project goes in ends: before the heading after `heading`, or the end. */
+function sectionEnd(lines: readonly Line[], heading: number): number {
+  const next = lines.findIndex((l, i) => i > heading && l.kind === "heading");
+  return next < 0 ? lines.length : next;
+}
+
+/**
+ * A project's head and lines at the end of its section (decision 82): your own under the Projects
+ * heading, a contribution under one that says open source or contributions. A missing heading is
+ * added after the section it follows: Experience for Projects, Projects for contributions.
+ */
+function insertProject({ lines, change }: { lines: Line[]; change: ProjectChange & { id: string } }): Line[] {
+  const own = change.role === "own";
+  const isTarget = (l: Line) =>
+    l.kind === "heading" &&
+    (own ? l.section === "projects" && !CONTRIBUTIONS_HEADING.test(l.text) : CONTRIBUTIONS_HEADING.test(l.text));
+  const section: BaseSection = own ? "projects" : "other";
+  const entry: Line[] = [
+    { id: `${change.id}:head`, kind: "role", text: change.head, facts: [], section },
+    ...change.lines.map(
+      (l, i): Line => ({
+        id: `${change.id}:${i + 1}`,
+        kind: own && i === 0 ? "text" : "bullet",
+        text: l.text,
+        facts: [...l.facts],
+        section,
+      }),
+    ),
+  ];
+  const target = lines.findIndex(isTarget);
+  if (target >= 0) {
+    const at = sectionEnd(lines, target);
+    return [...lines.slice(0, at), ...entry, ...lines.slice(at)];
+  }
+  const after = (test: (l: Line) => boolean) => {
+    const at = lines.findIndex((l) => l.kind === "heading" && test(l));
+    return at < 0 ? null : sectionEnd(lines, at);
+  };
+  const at =
+    (own ? null : after((l) => l.section === "projects" && !CONTRIBUTIONS_HEADING.test(l.text))) ??
+    after((l) => l.section === "experience") ??
+    lines.length;
+  const heading: Line = {
+    id: `${change.id}:heading`,
+    kind: "heading",
+    text: own ? "Projects" : "Open Source Contributions",
+    facts: [],
+    section,
+  };
+  return [...lines.slice(0, at), heading, ...entry, ...lines.slice(at)];
 }
 
 /** The body for a tailoring: the base with every accepted change applied (decision 75). Pure. */
@@ -455,6 +618,16 @@ export function changeViews({
     if (c.op === "reword") return { ...common, before: text(c.line), after: c.text, where: whereOf(c.line) };
     if (c.op === "remove") return { ...common, before: text(c.line), after: null, where: whereOf(c.line) };
     if (c.op === "add") return { ...common, before: null, after: c.text, where: whereOf(c.after) };
+    if (c.op === "project") {
+      const head = parseProjectHead(c.head);
+      return {
+        ...common,
+        before: null,
+        after: null,
+        afterList: [head ? projectHeadPlain(head) : c.head, ...c.lines.map((l) => l.text)],
+        where: c.role === "own" ? "Projects" : "Open Source Contributions",
+      };
+    }
     const children = orderChildren({ base, parent: c.parent }) ?? [];
     return {
       ...common,

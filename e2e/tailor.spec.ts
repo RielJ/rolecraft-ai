@@ -45,7 +45,7 @@ async function axe(page: Page, label: string): Promise<void> {
 }
 
 /** A CV split with AI into roles and facts, all confirmed, and a job drafted as a resume. */
-async function seed(page: Page): Promise<string> {
+async function seed(page: Page, options: { project?: boolean } = {}): Promise<string> {
   await api(page, "PUT", "/settings/ai-key", any, { provider: "anthropic", key: "sk-ant-tailor-key-ABCD" });
   await api(page, "PUT", "/profile", ProfileDto, {
     contact: { fullName: "Maria Santos", email: "maria@example.ph", phone: "", location: "Manila", links: [] },
@@ -54,6 +54,22 @@ async function seed(page: Page): Promise<string> {
   await expect
     .poll(async () => (await api(page, "GET", "/profile", ProfileDto)).cv?.roles.length, { timeout: 15_000 })
     .toBe(3);
+  if (options.project) {
+    // A project the CV lacks (decision 82): the fake tailor adds the first one listed.
+    await api(page, "POST", "/profile/addons", ProfileDto, {
+      kind: "open_source",
+      title: "Nyx",
+      body: "Nyx is a CLI that schedules Go jobs on Kubernetes.",
+      link: "https://github.com/maria/nyx",
+      skills: ["Go", "Kubernetes"],
+      projectRole: "own",
+    });
+    await expect
+      .poll(async () => (await api(page, "GET", "/profile", ProfileDto)).facts.some((f) => f.text.startsWith("Nyx")), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+  }
   await api(page, "POST", "/facts/confirm-all", ProfileDto);
   const { opportunityId } = await api(page, "POST", "/jobs/from-paste", AddJobResult, {
     title: "Senior Backend Engineer",
@@ -137,4 +153,27 @@ test("a tailored resume lists its changes; Undo puts the CV's line back in the P
   await changes.getByRole("button", { name: "Keep all" }).click();
   await expect(changes.getByText("2 of 2 kept")).toBeVisible();
   expect(await resumeBody(page, opportunityId)).toBe(tailored);
+});
+
+test("a project the CV lacks is added with its head; Undo takes it out of the PDF", async ({ page }) => {
+  const opportunityId = await seed(page, { project: true });
+  await page.goto(`/jobs/${opportunityId}`);
+  const card = page.getByRole("tabpanel", { name: /^Resume/ });
+  const changes = card.getByRole("region", { name: "Changes from your CV" });
+  const row = changes.getByRole("group", { name: "Added project, Projects" });
+  await expect(changes.getByText("3 of 3 kept")).toBeVisible();
+  await expect(changes.getByText("Nyx · github.com/maria/nyx · Go, Kubernetes")).toBeVisible();
+  await expect(changes.getByText("Nyx is a CLI that schedules Go jobs on Kubernetes.")).toBeVisible();
+  await axe(page, "resume with an added project");
+  await changes.screenshot({ path: "test-results/tailor/project.png" });
+  const pdf = await previewText(page, card);
+  expect(pdf).toContain("Projects");
+  expect(pdf).toContain("github.com/maria/nyx");
+
+  await row.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(changes.getByText("2 of 3 kept")).toBeVisible();
+  await expect(changes.getByText("Undone. The project is left out.")).toBeVisible();
+  const undone = await previewText(page, card);
+  expect(undone).not.toContain("Nyx");
+  expect(await resumeBody(page, opportunityId)).not.toContain("## Projects");
 });
