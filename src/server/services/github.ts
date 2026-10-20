@@ -9,6 +9,7 @@ import {
 } from "@/domain/github-read";
 import { isOwnEmail } from "@/domain/local-scan";
 import { API_PATCH_COMMITS, type CommitSource, FEATURE_LIST_TOKENS } from "@/domain/project-read";
+import { type GithubUser, githubUserFor } from "@/domain/project-role";
 import { parseProjectSource } from "@/domain/project-source";
 import { FEATURE_MAX_TOKENS, GITHUB_FACTS_MAX_TOKENS, GITHUB_PICK_MAX_TOKENS, type Prompt } from "@/domain/prompts";
 import type { OwnedRepo } from "@/domain/repo-scan";
@@ -21,13 +22,8 @@ import {
   type ProfileDto,
   type TaskDto,
 } from "@/shared/api";
-import {
-  type GithubLink,
-  type GithubRepoRef,
-  githubLabel,
-  githubProfileUser,
-  parseGithubLink,
-} from "@/shared/github-link";
+import type { ProjectRole } from "@/shared/enums";
+import { type GithubLink, type GithubRepoRef, githubLabel, parseGithubLink } from "@/shared/github-link";
 import { FolderReadError, type PublicRemote } from "../adapters/folder-read";
 import { GithubError, type OpenCommitSource } from "../adapters/github";
 import { CLONE_SHOW_TIMEOUT_MS, CloneError, MAX_CLONE_KB } from "../adapters/temp-clone";
@@ -70,8 +66,6 @@ export function githubAppError(err: GithubError): AppError {
 
 // ---------- Whose commits ----------
 
-export type GithubUser = { user: string; from: GithubReadSummary["userFrom"] };
-
 /** Whose commits a folder read counts: emails from git and HB_GIT_EMAILS, and the GitHub noreply. */
 type FolderUser = { user: string; from: GithubReadSummary["userFrom"]; emails: string[]; githubUser: string | null };
 
@@ -92,25 +86,6 @@ async function requireFolderUser(deps: Deps): Promise<FolderUser> {
     emails,
     githubUser: github?.user ?? null,
   };
-}
-
-/**
- * The account whose commits count as the user's: `HB_GITHUB_USER` when set (always with gh, which
- * is pinned to it), else the first `github.com/<name>` profile link in the contact links.
- */
-export function githubUserFor({
-  configured,
-  links,
-}: {
-  configured: string | null;
-  links: readonly string[];
-}): GithubUser | null {
-  if (configured) return { user: configured, from: "HB_GITHUB_USER" };
-  for (const link of links) {
-    const user = githubProfileUser(link);
-    if (user) return { user, from: "profile link" };
-  }
-  return null;
 }
 
 async function requireGithubUser(deps: Deps): Promise<GithubUser> {
@@ -367,6 +342,7 @@ async function runRead(
     itemId,
     source: { link: row.link, folder: row.folder },
     isPrivate: bundle.private,
+    role: bundle.framing,
     kept: extraction.kept,
   });
   if (applied.kind === "skipped") return applied;
@@ -490,11 +466,14 @@ async function applyRead(
     itemId,
     source,
     isPrivate,
+    role,
     kept,
   }: {
     itemId: ItemId;
     source: { link: string | null; folder: string | null };
     isPrivate: boolean;
+    /** Own project or contribution, from the commit share (decision 82). The user's choice still wins. */
+    role: ProjectRole;
     kept: AcceptedGithubFact[];
   },
 ) {
@@ -509,7 +488,10 @@ async function applyRead(
       return { kind: "skipped", reason: "link_changed" } as const;
     }
     const rev = locked.githubRev + 1;
-    await tx.update(profileItems).set({ githubRev: rev, githubPrivate: isPrivate }).where(eq(profileItems.id, itemId));
+    await tx
+      .update(profileItems)
+      .set({ githubRev: rev, githubPrivate: isPrivate, projectRoleRead: role })
+      .where(eq(profileItems.id, itemId));
 
     const existing = await tx
       .select({ id: facts.id, text: facts.text, status: facts.status })

@@ -1,3 +1,4 @@
+import { githubUserFor } from "@/domain/project-role";
 import {
   type AddonPrefill,
   folderPrefill,
@@ -9,7 +10,7 @@ import type { AddonPrefillDto, PrefillAddonInput } from "@/shared/api";
 import { GithubError } from "../adapters/github";
 import { GitlabError } from "../adapters/gitlab";
 import { AppError, type Deps } from "./context";
-import { githubAppError, githubUserFor } from "./github";
+import { githubAppError } from "./github";
 import { loadContact } from "./profile";
 
 /**

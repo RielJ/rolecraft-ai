@@ -225,7 +225,7 @@ test("fill the add-on form from a private repo link and a folder path; save keep
   await source.press("Enter");
   await expect(dialog.getByLabel("What you did")).toHaveValue("Recipe planner for carinderias.");
   await expect(dialog.getByLabel("Title")).toHaveValue("kain-tayo");
-  await expect(dialog.getByRole("radio", { name: "Open source" })).toBeChecked();
+  await expect(dialog.getByRole("radio", { name: "Open source", exact: true })).toBeChecked();
 
   await source.fill("https://example.com/x");
   await dialog.getByRole("button", { name: "Fill" }).click();
@@ -319,4 +319,33 @@ test("find my projects with Read each project for facts → a repo and a folder 
   const folder = addons.getByRole("listitem").filter({ hasText: "kain-tayo" });
   await expect(folder).toContainText(E2E_PROJECTS_DIR);
   await expect(page.getByRole("list", { name: "Facts to review" })).toContainText("feat: shopping list");
+});
+
+test("an add-on of someone else's repo is a contribution; the form switches it to my project (decision 82)", async ({
+  page,
+}) => {
+  await seed(page, "https://github.com/wevm/viem");
+  await page.goto("/profile");
+  const addon = page.getByRole("list", { name: "Add-ons" }).getByRole("listitem").filter({ hasText: "Side project" });
+  await expect(addon).toContainText("Contribution");
+
+  await addon.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit add-on" });
+  const auto = dialog.getByRole("radio", { name: /^Decide from its commits/ });
+  await expect(auto).toBeChecked();
+  await expect(dialog).toContainText("Until it is read, the link says a contribution.");
+  await dialog.getByRole("radio", { name: /^My project/ }).check();
+
+  const result = await new AxeBuilder({ page })
+    .include('[role="dialog"]')
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(result.violations.map((v) => v.id)).toEqual([]);
+
+  await dialog.getByRole("button", { name: /^Save/ }).first().click();
+  await expect(dialog).toBeHidden();
+  await expect(addon).not.toContainText("Contribution");
+  await page.reload();
+  await addon.getByRole("button", { name: "Edit" }).click();
+  await expect(dialog.getByRole("radio", { name: /^My project/ })).toBeChecked();
 });

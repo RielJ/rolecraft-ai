@@ -129,6 +129,51 @@ describe("Read for facts: a folder", () => {
     }
   });
 
+  test("a read sets own or contribution from the commit share; the user's choice wins (decision 82)", async () => {
+    const item = await addFromFolder(join(dir, "jeep-route"));
+    expect(item.project).toEqual({ role: "own", from: "link", choice: null });
+
+    // Most commits are someone else's: the read says contribution.
+    await makeFileRepo(join(dir, "viem"), {
+      commits: [
+        { email: ME, subject: "feat: deploy value", files: { "deploy.ts": "export const v = 1;\n" } },
+        { email: PAL, subject: "feat: core", files: { "core.ts": "export {};\n" } },
+        { email: PAL, subject: "feat: more", files: { "more.ts": "export {};\n" } },
+      ],
+    });
+    const viem = await addFromFolder(join(dir, "viem"));
+    let profile = await settle(await call("POST", `/profile/addons/${viem.id}/github-read`, {}));
+    expect(profile.addons.find((a) => a.id === viem.id)?.project).toEqual({
+      role: "contribution",
+      from: "read",
+      choice: null,
+    });
+
+    // The user says it is theirs; a re-read keeps the choice and still records what it found.
+    profile = await settle(
+      await call("PUT", `/profile/addons/${viem.id}`, {
+        kind: "open_source",
+        title: "Viem",
+        body: "x",
+        projectRole: "own",
+      }),
+    );
+    expect(profile.addons.find((a) => a.id === viem.id)?.project).toEqual({ role: "own", from: "you", choice: "own" });
+    profile = await settle(await call("POST", `/profile/addons/${viem.id}/github-read`, {}));
+    expect(profile.addons.find((a) => a.id === viem.id)?.project).toEqual({ role: "own", from: "you", choice: "own" });
+
+    // Back to "Decide from its commits": the read's answer shows again.
+    profile = await settle(
+      await call("PUT", `/profile/addons/${viem.id}`, {
+        kind: "open_source",
+        title: "Viem",
+        body: "x",
+        projectRole: null,
+      }),
+    );
+    expect(profile.addons.find((a) => a.id === viem.id)?.project?.role).toBe("contribution");
+  });
+
   test("a folder moved after adding fails the read with a clear message", async () => {
     const item = await addFromFolder(join(dir, "jeep-route"));
     await rename(join(dir, "jeep-route"), join(dir, "moved"));

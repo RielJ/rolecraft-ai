@@ -25,6 +25,11 @@ export const ITEM_USAGES = ["everywhere", "letters_only"] as const;
 export const ItemUsage = z.enum(ITEM_USAGES);
 export type ItemUsage = z.infer<typeof ItemUsage>;
 
+/** A project add-on is the user's own project or a contribution to someone else's (decision 82). */
+export const PROJECT_ROLES = ["own", "contribution"] as const;
+export const ProjectRole = z.enum(PROJECT_ROLES);
+export type ProjectRole = z.infer<typeof ProjectRole>;
+
 export const FACT_STATUSES = ["pending", "confirmed"] as const;
 export const FactStatus = z.enum(FACT_STATUSES);
 export type FactStatus = z.infer<typeof FactStatus>;

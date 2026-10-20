@@ -148,6 +148,13 @@
       "when": 1792492389737,
       "tag": "0020_project_folder",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792500074756,
+      "tag": "0021_project_role",
+      "breakpoints": true
     }
   ]
 }

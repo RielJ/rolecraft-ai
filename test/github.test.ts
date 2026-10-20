@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText, getDocumentProxy } from "unpdf";
 import { GITHUB_TOKEN_CAP, MAX_GITHUB_COMMITS } from "@/domain/github-read";
+import { githubUserFor } from "@/domain/project-role";
 import { buildGithubFactsPrompt, estimateTokens } from "@/domain/prompts";
 import { createFakeAi, type FakeAi } from "@/server/adapters/ai/fake";
 import {
@@ -25,7 +26,7 @@ import { createHttpClient } from "@/server/adapters/http";
 import { createProjectsReader, type ProjectsReader } from "@/server/adapters/local-projects";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
-import { githubAppError, githubUserFor, privateGithubRepos } from "@/server/services/github";
+import { githubAppError, privateGithubRepos } from "@/server/services/github";
 import { waitForTask } from "@/server/services/tasks";
 import {
   AddJobResult,

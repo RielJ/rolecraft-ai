@@ -31,6 +31,7 @@ import {
   MUST_ANSWERS,
   PAY_PERIODS,
   PayPeriod,
+  type ProjectRole,
   ROLE_FAMILIES,
   type RoleFamily,
   USER_SENIORITIES,
@@ -1311,6 +1312,8 @@ type AddonForm = {
   link: string;
   skills: string;
   usage: ItemUsage;
+  /** A project's role (decision 82); "auto" lets reads decide. */
+  projectRole: ProjectRole | "auto";
 };
 
 const EMPTY_ADDON: AddonForm = {
@@ -1321,6 +1324,7 @@ const EMPTY_ADDON: AddonForm = {
   link: "",
   skills: "",
   usage: "everywhere",
+  projectRole: "auto",
 };
 
 function toForm(item: ProfileItemDto): AddonForm {
@@ -1332,6 +1336,7 @@ function toForm(item: ProfileItemDto): AddonForm {
     link: item.link ?? "",
     skills: item.skills.join(", "),
     usage: item.usage,
+    projectRole: item.project?.choice ?? "auto",
   };
 }
 
@@ -1351,6 +1356,74 @@ function problemOf(error: { issues: { path: PropertyKey[] }[] }): string {
     default:
       return "Check the fields and try again.";
   }
+}
+
+const PROJECT_ROLE_OPTIONS = [
+  { value: "auto", label: "Decide from its commits", hint: "Yours when at least half of the commits are yours." },
+  { value: "own", label: "My project", hint: "Listed under Projects on your resume." },
+  {
+    value: "contribution",
+    label: "A contribution",
+    hint: "Listed under Open Source Contributions, and never written as something you built.",
+  },
+] as const satisfies readonly { value: AddonForm["projectRole"]; label: string; hint: string }[];
+
+/** What the app decides now, for the "Decide from its commits" option. */
+function decidedNote(current: NonNullable<ProfileItemDto["project"]>): string {
+  const role = current.role === "own" ? "your project" : "a contribution";
+  switch (current.from) {
+    case "read":
+      return `The last read found ${role}.`;
+    case "link":
+      return `Until it is read, the link says ${role}.`;
+    case "you":
+      return "";
+    default: {
+      const _exhaustive: never = current.from;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Own project or contribution (decision 82). */
+function ProjectRoleField({
+  id,
+  value,
+  current,
+  onChange,
+}: {
+  id: string;
+  value: AddonForm["projectRole"];
+  current: ProfileItemDto["project"];
+  onChange: (value: AddonForm["projectRole"]) => void;
+}) {
+  const note = current && current.from !== "you" ? decidedNote(current) : "";
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="mb-2 font-medium text-sm">Whose project</legend>
+      <RadioGroup
+        value={value}
+        onValueChange={(next) => {
+          const picked = PROJECT_ROLE_OPTIONS.find((o) => o.value === next);
+          if (picked) onChange(picked.value);
+        }}
+        className="grid gap-2"
+      >
+        {PROJECT_ROLE_OPTIONS.map((o) => (
+          <div key={o.value} className="flex items-start gap-2">
+            <RadioGroupItem value={o.value} id={`${id}-role-${o.value}`} className="mt-0.5" />
+            <Label htmlFor={`${id}-role-${o.value}`} className="grid gap-0.5 font-normal">
+              <span>{o.label}</span>
+              <span className="text-muted-foreground text-xs">
+                {o.hint}
+                {o.value === "auto" && note ? ` ${note}` : ""}
+              </span>
+            </Label>
+          </div>
+        ))}
+      </RadioGroup>
+    </fieldset>
+  );
 }
 
 function AddonDialog({
@@ -1393,6 +1466,7 @@ function AddonDialog({
         .map((s) => s.trim())
         .filter(Boolean),
       usage: form.usage,
+      projectRole: form.kind === "open_source" && form.projectRole !== "auto" ? form.projectRole : null,
       ...(!item && privateLink !== null && form.link.trim() === privateLink ? { linkPrivate: true } : {}),
       ...(!item && folder ? { folder } : {}),
       ...(reading ? { read: true } : {}),
@@ -1523,6 +1597,14 @@ function AddonDialog({
               Context for the split only. A skill counts for matching once a confirmed fact names it.
             </p>
           </div>
+          {form.kind === "open_source" && (
+            <ProjectRoleField
+              id={id}
+              value={form.projectRole}
+              current={item?.project ?? null}
+              onChange={(projectRole) => setForm((f) => ({ ...f, projectRole }))}
+            />
+          )}
           <fieldset className="grid gap-2">
             <legend className="mb-2 font-medium text-sm">Use it in</legend>
             <RadioGroup
@@ -1669,7 +1751,12 @@ function AddonRow({
 }) {
   const remove = useDeleteAddon();
   const [confirming, setConfirming] = useState(false);
-  const meta = [itemKindLabel(item.kind), item.happenedOn, item.usage === "letters_only" ? "Letters only" : null]
+  const meta = [
+    itemKindLabel(item.kind),
+    item.project?.role === "contribution" ? "Contribution" : null,
+    item.happenedOn,
+    item.usage === "letters_only" ? "Letters only" : null,
+  ]
     .filter(Boolean)
     .join(" · ");
   return (

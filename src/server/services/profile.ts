@@ -4,6 +4,7 @@ import { factKey } from "@/domain/citations";
 import { contactFromCv, fillContact } from "@/domain/contact";
 import { diffFacts } from "@/domain/facts-diff";
 import { SKILLS, skillsInFacts } from "@/domain/features";
+import { githubUserFor, projectRoleOf } from "@/domain/project-role";
 import {
   buildSplitPrompt,
   buildSplitRetryPrompt,
@@ -121,7 +122,11 @@ async function readSourceOf(
   return { github, folder: null };
 }
 
-async function toItemDto(deps: Deps, row: ItemRow, itemRoles: readonly RoleDto[]): Promise<ProfileItemDto> {
+async function toItemDto(
+  deps: Deps,
+  row: ItemRow,
+  { itemRoles, githubUser }: { itemRoles: readonly RoleDto[]; githubUser: string | null },
+): Promise<ProfileItemDto> {
   const withRoles = hasRoles(row.kind);
   const [split, { github, folder }, rolesRead] = await Promise.all([
     latestTask(deps, { kind: "split", inputMatches: { itemId: row.id } }),
@@ -142,9 +147,21 @@ async function toItemDto(deps: Deps, row: ItemRow, itemRoles: readonly RoleDto[]
     splitTask: split?.task ?? null,
     github,
     folder,
+    project: projectDto(row, githubUser),
     roles: withRoles ? [...itemRoles] : [],
     rolesTask: rolesRead?.task ?? null,
   };
+}
+
+function projectDto(row: ItemRow, githubUser: string | null): ProfileItemDto["project"] {
+  const found = projectRoleOf({
+    kind: row.kind,
+    choice: row.projectRoleChoice,
+    read: row.projectRoleRead,
+    link: row.link,
+    githubUser,
+  });
+  return found ? { ...found, choice: row.projectRoleChoice } : null;
 }
 
 /** The stored CV file's name, size and upload time. Never its bytes. */
@@ -207,7 +224,10 @@ export async function getProfile(deps: Deps): Promise<ProfileDto> {
       loadCvFile(deps),
       loadRolesByItem(deps),
     ]);
-  const dtos = await Promise.all(items.map((row) => toItemDto(deps, row, rolesByItem.get(row.id) ?? [])));
+  const githubUser = githubUserFor({ configured: deps.github.user, links: contact.links })?.user ?? null;
+  const dtos = await Promise.all(
+    items.map((row) => toItemDto(deps, row, { itemRoles: rolesByItem.get(row.id) ?? [], githubUser })),
+  );
   const skillsFound = skillsInFacts({ texts: rows.filter((r) => r.status === "confirmed").map((r) => r.text) });
   return {
     contact,
@@ -859,6 +879,7 @@ function addonValues(input: AddonInput) {
     link: input.link ?? null,
     skills: input.skills ?? [],
     usage: input.usage ?? "everywhere",
+    projectRoleChoice: input.kind === "open_source" ? (input.projectRole ?? null) : null,
   } satisfies Partial<typeof profileItems.$inferInsert>;
 }
 

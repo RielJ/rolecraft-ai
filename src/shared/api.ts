@@ -18,6 +18,7 @@ import {
   OutputKind,
   PayPeriod,
   ProfileItemKind,
+  ProjectRole,
   RateType,
   RequirementWeight,
   RoleFamily,
@@ -294,6 +295,13 @@ export const ProfileItemDto = z.object({
   splitTask: TaskDto.nullable(),
   github: ItemGithubDto.nullable(),
   folder: ItemFolderDto.nullable(),
+  /**
+   * A project add-on's role (decision 82): the user's own project or a contribution, and who
+   * decided it. `choice` is what the user picked in the form. Null for add-ons that are not projects.
+   */
+  project: z
+    .object({ role: ProjectRole, from: z.enum(["you", "read", "link"]), choice: ProjectRole.nullable() })
+    .nullable(),
   /** The CV's or an experience add-on's roles, most recent first. Empty for other kinds. */
   roles: z.array(RoleDto),
   /** The latest "Read roles" task (`roles_read`); a split reads roles in its own task. */
@@ -522,6 +530,8 @@ export const AddonInput = z.object({
     .optional(),
   skills: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
   usage: ItemUsage.optional(),
+  /** A project's role picked by the user (decision 82); null or left out lets reads decide. */
+  projectRole: ProjectRole.nullable().optional(),
   /**
    * Set when the form was filled from a private repo, or one whose visibility is unknown: the
    * link is kept out of exports from the start (decision 80). Read on create only.

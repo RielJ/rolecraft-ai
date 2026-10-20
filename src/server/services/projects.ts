@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { type LocalScan, localAddon, type ScannedLocal, scanLocal } from "@/domain/local-scan";
+import { githubUserFor } from "@/domain/project-role";
 import { type OwnedRepo, type RepoScan, repoAddon, repoKey, type ScannedRepo, scanRepos } from "@/domain/repo-scan";
 import type { AddProjectsInput, ProfileDto, ProjectScanDto, ScannedFolderDto, ScannedRepoDto } from "@/shared/api";
 import { profileItems } from "../db/schema";
 import { AppError, type Deps } from "./context";
-import { githubUserFor, linkedRepos, listOwned, NO_READS, planReads, queueReads, readEstimateUsd } from "./github";
+import { linkedRepos, listOwned, NO_READS, planReads, queueReads, readEstimateUsd } from "./github";
 import { getProfile, loadContact, saveAddons } from "./profile";
 
 /**

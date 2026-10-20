@@ -60,6 +60,7 @@ import {
   OUTPUT_KINDS,
   PAY_PERIODS,
   PROFILE_ITEM_KINDS,
+  PROJECT_ROLES,
   RATE_TYPES,
   type RoleFamily,
   SOURCE_KINDS,
@@ -188,6 +189,10 @@ export const profileItems = pgTable(
      * absolute path; read for facts, never shown in an export.
      */
     folder: text(),
+    /** A project's role from its last read's commit share (decision 82); null until read. */
+    projectRoleRead: text().$type<(typeof PROJECT_ROLES)[number]>(),
+    /** The role the user picked in the add-on form; wins over reads. Null lets the read decide. */
+    projectRoleChoice: text().$type<(typeof PROJECT_ROLES)[number]>(),
     createdAt: createdAt(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -197,6 +202,8 @@ export const profileItems = pgTable(
     check("profile_items_cv_usage", sql`kind <> 'cv' OR usage = 'everywhere'`),
     check("profile_items_file_name", sql`kind = 'cv' OR file_name IS NULL`),
     check("profile_items_folder", sql`kind <> 'cv' OR folder IS NULL`),
+    check("profile_items_project_role_read", oneOf("project_role_read", PROJECT_ROLES)),
+    check("profile_items_project_role_choice", oneOf("project_role_choice", PROJECT_ROLES)),
     uniqueIndex("profile_items_one_cv").on(sql`user_id`).where(sql`kind = 'cv'`),
   ],
 );
