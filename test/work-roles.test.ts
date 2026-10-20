@@ -21,6 +21,21 @@ describe("checkRoles on whole CVs (decision 71)", () => {
   });
 });
 
+describe("bodyHtml project heads (decision 82)", () => {
+  test("the name in bold, the link and skills below; a line under it stays in the same entry", () => {
+    const html = bodyHtml("## Projects\n#### Nyx <x> | https://github.com/rielj/nyx | Go, Rust\nA CLI.");
+    expect(html).toContain(
+      '<div class="entry"><div class="role"><p class="role-line"><strong class="role-title">Nyx &lt;x&gt;</strong></p><p class="role-org"><a class="entry-link" href="https://github.com/rielj/nyx">github.com/rielj/nyx</a> · Go, Rust</p></div><p>A CLI.</p></div>',
+    );
+  });
+
+  test("a head with only a name has no line below", () => {
+    expect(bodyHtml("#### Viem")).toBe(
+      '<div class="entry"><div class="role"><p class="role-line"><strong class="role-title">Viem</strong></p></div></div>',
+    );
+  });
+});
+
 describe("bodyHtml role headers", () => {
   test("title and dates on one line, company and location below", () => {
     const [first] = PAREN_ROLES;

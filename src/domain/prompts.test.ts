@@ -164,6 +164,45 @@ describe("buildDraftPrompt with roles (decision 71)", () => {
   });
 });
 
+describe("buildDraftPrompt with projects (decision 82)", () => {
+  const withProjects = (kind: "resume" | "letter") =>
+    promptText(
+      buildDraftPrompt({
+        kind,
+        opportunityType: "job",
+        posting,
+        candidateName: "Juan",
+        facts: [
+          { key: k(1), text: "Nyx sorts Tailwind classes", link: null, usage: "everywhere", projectKey: "PROJECT-1" },
+          { key: k(2), text: "Added value support to Viem", link: null, usage: "everywhere", projectKey: "PROJECT-2" },
+        ],
+        projects: [
+          { key: "PROJECT-1", name: "Nyx", link: "https://github.com/rielj/nyx", stack: ["Go"], role: "own" },
+          { key: "PROJECT-2", name: "Viem", link: null, stack: [], role: "contribution" },
+        ],
+      }),
+    );
+
+  test("a resume lists the projects with whose they are, and marks each fact with its project", () => {
+    const text = withProjects("resume");
+    expect(text).toContain(
+      "PROJECTS\nPROJECT-1: Nyx (your own project)\nPROJECT-2: Viem (a contribution to someone else's project)\n",
+    );
+    expect(text).toContain("FACT-2: Added value support to Viem (PROJECT-2)");
+    expect(text).toContain("Write [PROJECT-n] alone on its own line");
+    expect(text).toContain("Contributions go under ## Open Source Contributions");
+    expect(text).toContain("never write that they built, created, founded or own it");
+    // The drafter never sees the head's link to copy: the server writes it.
+    expect(text).not.toContain("github.com/rielj/nyx");
+  });
+
+  test("a letter gets no projects block and no project marks", () => {
+    const text = withProjects("letter");
+    expect(text).not.toContain("PROJECT-1");
+    expect(text).not.toContain("[PROJECT-n]");
+  });
+});
+
 describe("buildRolesPrompt", () => {
   test("carries the text and asks for the roles JSON with fields copied exactly", () => {
     const prompt = buildRolesPrompt({
@@ -174,6 +213,23 @@ describe("buildRolesPrompt", () => {
     expect(text).toContain('{"roles"');
     expect(text).toContain("exactly");
     expect(buildRolesRetryPrompt({ prompt, reply: "no" }).messages).toHaveLength(3);
+  });
+});
+
+describe("describeViolation for projects", () => {
+  test("the retry names the project and the rule", () => {
+    const sentence = "- Added value support [FACT-2]";
+    const text = (violations: Parameters<typeof buildRetryPrompt>[0]["violations"]) =>
+      promptText(buildRetryPrompt({ prompt: draft("resume"), draft: sentence, violations }));
+    expect(
+      text([{ kind: "wrong_project", projectKey: "PROJECT-1", factKeys: ["FACT-2"], sentence, start: 0, end: 10 }]),
+    ).toContain("is under [PROJECT-1] but cites FACT-2, which is not marked (PROJECT-1)");
+    expect(
+      text([{ kind: "wrong_project", projectKey: null, factKeys: ["FACT-2"], sentence, start: 0, end: 10 }]),
+    ).toContain("before any [PROJECT-n] line");
+    expect(text([{ kind: "unknown_project", projectKey: "PROJECT-9", sentence, start: 0, end: 10 }])).toContain(
+      "Write only a PROJECT-n from the PROJECTS list",
+    );
   });
 });
 

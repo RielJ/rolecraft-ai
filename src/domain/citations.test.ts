@@ -9,6 +9,7 @@ import {
   quarantineViolations,
   stripMarkers,
 } from "./citations";
+import { projectHead } from "./draft-projects";
 import { expandRoles, roleHeader } from "./work-roles";
 
 describe("factKey", () => {
@@ -332,5 +333,109 @@ describe("quarantineViolations", () => {
     });
     expect(out).toBe(`I build APIs [FACT-1]. ${checkThisPlaceholder(sentence)}\n- Led a team`);
     expect(findPlaceholders(out)).toEqual(['Check this: "I have 8 years in Go." is not backed by your facts']);
+  });
+});
+
+describe("checkDraft with projects (decision 82)", () => {
+  const k = (n: number) => FactKey.parse(`FACT-${n}`);
+  const contact = { fullName: "Juan", email: "", phone: "", location: "", links: [] };
+  const posting = { company: "Stripe", title: "Engineer" };
+  const nyx = projectHead({ name: "Nyx", link: "https://github.com/rielj/nyx", stack: ["Go", "Kubernetes"] });
+  const viem = projectHead({ name: "Viem", link: null, stack: [] });
+  const role = roleHeader({ title: "Engineer", company: "Acme", location: null, start: null, end: null });
+  const facts = [
+    { key: k(1), text: "Nyx is a CLI that sorts Tailwind classes.", projectKey: "PROJECT-1" },
+    { key: k(2), text: "Added value support to deployContract in Viem.", projectKey: "PROJECT-2" },
+    { key: k(3), text: "Built the billing service.", roleKey: "ROLE-1" },
+  ];
+  const run = (lines: string[]) =>
+    checkDraft({
+      body: lines.join("\n"),
+      facts,
+      allowedKeys: [k(1), k(2), k(3)],
+      posting,
+      contact,
+      roles: [{ key: "ROLE-1", header: role }],
+      projects: [
+        { key: "PROJECT-1", header: nyx },
+        { key: "PROJECT-2", header: viem },
+      ],
+    });
+
+  test("each project's facts under its head pass; the head's link and skills are the server's", () => {
+    expect(
+      run([
+        "## Experience",
+        role,
+        "- Built the billing service [FACT-3]",
+        "## Projects",
+        nyx,
+        "A CLI that sorts Tailwind classes [FACT-1].",
+        "## Open Source Contributions",
+        viem,
+        "- Added value support to deployContract [FACT-2]",
+      ]),
+    ).toEqual({ ok: true });
+  });
+
+  test("another project's fact under a head is a wrong project", () => {
+    expect(run(["## Projects", nyx, "- Added value support to deployContract [FACT-2]"])).toMatchObject({
+      ok: false,
+      violations: [{ kind: "wrong_project", projectKey: "PROJECT-1", factKeys: ["FACT-2"] }],
+    });
+    expect(run(["## Projects", nyx, "- Built the billing service [FACT-3]"])).toMatchObject({
+      ok: false,
+      violations: [{ kind: "wrong_project", projectKey: "PROJECT-1", factKeys: ["FACT-3"] }],
+    });
+  });
+
+  test("a project's fact in a project section before any head is a wrong project; elsewhere it's fine", () => {
+    expect(run(["## Projects", "A CLI that sorts Tailwind classes [FACT-1].", nyx])).toMatchObject({
+      ok: false,
+      violations: [{ kind: "wrong_project", projectKey: null, factKeys: ["FACT-1"] }],
+    });
+    expect(run(["## Summary", "Wrote a CLI that sorts Tailwind classes [FACT-1]."])).toEqual({ ok: true });
+  });
+
+  test("a project's fact under a role is a wrong role, and a role ends a project", () => {
+    expect(run(["## Experience", role, "- Sorts Tailwind classes [FACT-1]"])).toMatchObject({
+      ok: false,
+      violations: [{ kind: "wrong_role", roleKey: "ROLE-1", factKeys: ["FACT-1"] }],
+    });
+    expect(run(["## Projects", nyx, role, "- Built the billing service [FACT-3]"])).toEqual({ ok: true });
+  });
+
+  test("projects alone don't turn on the Experience rule, and roles alone don't turn on the project one", () => {
+    const noRoles = (body: string) =>
+      checkDraft({
+        body,
+        facts,
+        allowedKeys: [k(1), k(3)],
+        posting,
+        contact,
+        roles: [],
+        projects: [{ key: "PROJECT-1", header: nyx }],
+      });
+    expect(noRoles("## Experience\n- Built the billing service [FACT-3]")).toEqual({ ok: true });
+    const noProjects = checkDraft({
+      body: "## Projects\n- Sorts Tailwind classes [FACT-1]",
+      facts,
+      allowedKeys: [k(1)],
+      posting,
+      contact,
+      roles: [{ key: "ROLE-1", header: role }],
+      projects: [],
+    });
+    expect(noProjects).toEqual({ ok: true });
+  });
+
+  test("a [PROJECT-n] left in the body is an unknown project", () => {
+    expect(run(["## Projects", "[PROJECT-9]", "See [PROJECT-1] for more."])).toMatchObject({
+      ok: false,
+      violations: [
+        { kind: "unknown_project", projectKey: "PROJECT-9" },
+        { kind: "unknown_project", projectKey: "PROJECT-1" },
+      ],
+    });
   });
 });

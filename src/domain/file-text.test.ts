@@ -48,6 +48,13 @@ describe("toPlainText", () => {
     expect(toPlainText("### Software Engineer | Cashflowy")).toBe("Software Engineer, Cashflowy");
   });
 
+  test("a project head reads as one line: name, link without its scheme, skills (decision 82)", () => {
+    expect(toPlainText("## Projects\n#### Nyx | https://github.com/rielj/nyx | Go, Rust\nA CLI [FACT-1].")).toBe(
+      "Projects\n\nNyx · github.com/rielj/nyx · Go, Rust\nA CLI.",
+    );
+    expect(toPlainText("#### Viem")).toBe("Viem");
+  });
+
   test("numbered items stay as written", () => {
     expect(toPlainText("1. First\n2. Second")).toBe("1. First\n2. Second");
   });

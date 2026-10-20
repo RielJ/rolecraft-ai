@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { type Browser, chromium } from "playwright-core";
 import { getDocumentProxy } from "unpdf";
+import { parseProjectHead, shownLink } from "@/domain/draft-projects";
 import { parseRoleHeader } from "@/domain/work-roles";
 import type { Contact } from "@/shared/api";
 
@@ -103,6 +104,7 @@ export function bodyHtml(body: string): string {
     const heading = /^(#{1,2})\s+(.*)$/.exec(line);
     const bullet = /^[-*]\s+(.*)$/.exec(line);
     const role = parseRoleHeader(line);
+    const project = role ? null : parseProjectHead(line);
     if (line === "") {
       flushParagraph();
       flushList();
@@ -114,6 +116,18 @@ export function bodyHtml(body: string): string {
       html.push({
         kind: "role",
         html: `<div class="role"><p class="role-line"><strong class="role-title">${inline(role.title)}</strong>${dates}</p><p class="role-org">${inline(role.org)}</p></div>`,
+      });
+    } else if (project) {
+      // Like a role: the name in bold, the link and skills below in the company line's style.
+      flushParagraph();
+      flushList();
+      const link = project.link
+        ? `<a class="entry-link" href="${escapeHtml(project.link)}">${escapeHtml(shownLink(project.link))}</a>`
+        : null;
+      const below = [link, project.stack ? inline(project.stack) : null].filter(Boolean).join(" · ");
+      html.push({
+        kind: "role",
+        html: `<div class="role"><p class="role-line"><strong class="role-title">${inline(project.name)}</strong></p>${below ? `<p class="role-org">${below}</p>` : ""}</div>`,
       });
     } else if (heading) {
       flushParagraph();

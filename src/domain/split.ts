@@ -167,9 +167,11 @@ export function checkCandidates({
         ? [v.factKey]
         : v.kind === "unknown_role"
           ? [v.roleKey]
-          : v.kind === "wrong_role"
-            ? v.factKeys
-            : v.tokens,
+          : v.kind === "unknown_project"
+            ? [v.projectKey]
+            : v.kind === "wrong_role" || v.kind === "wrong_project"
+              ? v.factKeys
+              : v.tokens,
     );
     result.dropped.push({ text, tokens: [...new Set(tokens)] });
   }

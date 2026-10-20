@@ -2,6 +2,7 @@ import type { FactKey, RequirementMap, StyleHit } from "@/shared/api";
 import type { ItemUsage, OpportunityType, OutputKind } from "@/shared/enums";
 import { type BaseLine, projectEntries } from "./base-cv";
 import type { DraftViolation } from "./citations";
+import { type DraftProject, projectPromptLine } from "./draft-projects";
 import { bundleName, type ProjectBundle } from "./github-read";
 import { guideFor, tailorGuide } from "./guide";
 import { requirementLines, requirementsByFact } from "./requirements";
@@ -10,10 +11,17 @@ import { type DroppedOp, MAX_ADDS, MAX_REWORDS, type TailorOp } from "./tailor";
 import { type DraftRole, rolePromptLine } from "./work-roles";
 
 /**
- * A confirmed fact as drafting sees it. `roleKey` is the `ROLE-n` of the role it sits under, in a
- * resume prompt only (decision 71).
+ * A confirmed fact as drafting sees it. `roleKey` is the `ROLE-n` of the role it sits under, and
+ * `projectKey` the `PROJECT-n` of its project, in a resume prompt only (decisions 71 and 82).
  */
-export type PromptFact = { key: FactKey; text: string; link: string | null; usage: ItemUsage; roleKey?: string | null };
+export type PromptFact = {
+  key: FactKey;
+  text: string;
+  link: string | null;
+  usage: ItemUsage;
+  roleKey?: string | null;
+  projectKey?: string | null;
+};
 
 export type PromptMessage = { role: "user" | "assistant"; content: string };
 export type Prompt = { system: string; messages: [PromptMessage, ...PromptMessage[]] };
@@ -79,13 +87,13 @@ function taskFor({
   }
 }
 
-/** `FACT-n: text (link) (ROLE-n) [R1, R3]`: the role and the requirements it proves, when known. */
+/** `FACT-n: text (link) (ROLE-n) [R1, R3]`: the role or project and the requirements it proves, when known. */
 function factLines(facts: readonly PromptFact[], proves: ReadonlyMap<FactKey, string[]> = new Map()): string {
   if (facts.length === 0) return "(none yet)";
   return facts
     .map((f) => {
       const ids = proves.get(f.key) ?? [];
-      const marks = `${f.link ? ` (${f.link})` : ""}${f.roleKey ? ` (${f.roleKey})` : ""}`;
+      const marks = `${f.link ? ` (${f.link})` : ""}${f.roleKey ? ` (${f.roleKey})` : ""}${f.projectKey ? ` (${f.projectKey})` : ""}`;
       return `${f.key}: ${f.text}${marks}${ids.length > 0 ? ` [${ids.join(", ")}]` : ""}`;
     })
     .join("\n");
@@ -119,6 +127,13 @@ function resumeMapTask({ map, required }: { map: RequirementMap; required: reado
 /** The resume task's role rule: the model writes keys, the server writes the headers. */
 const ROLE_TASK =
   "Under ## Experience, write [ROLE-n] alone on its own line before that role's bullets, in the order of the ROLES list (roles may overlap in time; keep that order). Under a role, use only the facts marked with its ROLE-n. Facts with no (ROLE-n) go in Summary, Skills, Projects or Education, never under ## Experience. Never write a role's title, company, location or dates yourself: the [ROLE-n] line becomes the role's header.";
+
+/**
+ * The resume task's project rule (decision 82): keys like roles, your own projects and contributions
+ * in their own sections. The server moves a project to its section, so this saves a retry, not a leak.
+ */
+const PROJECT_TASK =
+  "Write [PROJECT-n] alone on its own line before that project's lines, and under a project use only the facts marked with its PROJECT-n. Your own projects go under ## Projects: one sentence that says what it is, plus at most 2 bullets, only for facts that prove a requirement of this posting. Contributions go under ## Open Source Contributions: 1 to 3 bullets about what the candidate did in it; never write that they built, created, founded or own it. Never write a project's name, link or skills yourself: the [PROJECT-n] line becomes the project's head. Leave out projects that prove nothing this posting asks for.";
 
 /** Who the text speaks as. Resumes leave the subject out; everything else is the candidate's voice. */
 function voiceFor(kind: OutputKind): string {
@@ -157,6 +172,7 @@ export function buildDraftPrompt({
   facts,
   question = null,
   roles = [],
+  projects = [],
   map = null,
   required = [],
 }: {
@@ -168,12 +184,15 @@ export function buildDraftPrompt({
   question?: string | null;
   /** The candidate's roles, for a resume only. Fact lines name theirs with `(ROLE-n)`. */
   roles?: readonly DraftRole[];
+  /** The candidate's projects, for a resume only. Fact lines name theirs with `(PROJECT-n)`. */
+  projects?: readonly DraftProject[];
   /** What the posting requires and which facts prove it (decision 73). Null drafts from the facts alone. */
   map?: RequirementMap | null;
   /** Resume only: facts the draft must cite (`requiredResumeFacts`, decision 74). */
   required?: readonly FactKey[];
 }): Prompt {
   const withRoles = kind === "resume" && roles.length > 0;
+  const withProjects = kind === "resume" && projects.length > 0;
   const withMap = map !== null && map.requirements.length > 0;
   const user = [
     "JOB POSTING",
@@ -185,10 +204,15 @@ export function buildDraftPrompt({
     `CANDIDATE: ${candidateName.trim() || "[[your name]]"}`,
     "",
     ...(withRoles ? ["ROLES", ...roles.map(rolePromptLine), ""] : []),
+    ...(withProjects ? ["PROJECTS", ...projects.map(projectPromptLine), ""] : []),
     ...(withMap ? ["REQUIREMENTS", ...(map.role ? [`Role: ${map.role}`] : []), ...requirementLines(map), ""] : []),
     "FACTS",
     factLines(
-      withRoles ? facts : facts.map((f) => ({ ...f, roleKey: null })),
+      facts.map((f) => ({
+        ...f,
+        roleKey: withRoles ? (f.roleKey ?? null) : null,
+        projectKey: withProjects ? (f.projectKey ?? null) : null,
+      })),
       withMap ? requirementsByFact(map) : undefined,
     ),
     "",
@@ -196,6 +220,7 @@ export function buildDraftPrompt({
     taskFor({ kind, opportunityType, question }),
     ...(withMap ? (kind === "resume" ? resumeMapTask({ map, required }) : [MAP_TASK]) : []),
     ...(withRoles ? [ROLE_TASK] : []),
+    ...(withProjects ? [PROJECT_TASK] : []),
     "Return only the text.",
   ].join("\n");
   return { system: systemPrompt({ kind, opportunityType }), messages: [{ role: "user", content: user }] };
@@ -211,6 +236,12 @@ function describeViolation(v: DraftViolation): string {
       return `"${v.sentence}" says ${v.tokens.map((t) => `"${t}"`).join(", ")} without a [FACT-n] marker.`;
     case "unknown_role":
       return `"${v.sentence}" writes [${v.roleKey}]. Write only a ROLE-n from the ROLES list, alone on its own line.`;
+    case "unknown_project":
+      return `"${v.sentence}" writes [${v.projectKey}]. Write only a PROJECT-n from the PROJECTS list, alone on its own line.`;
+    case "wrong_project":
+      return v.projectKey === null
+        ? `"${v.sentence}" cites ${v.factKeys.join(", ")} before any [PROJECT-n] line. Write the [PROJECT-n] line its facts are marked with first.`
+        : `"${v.sentence}" is under [${v.projectKey}] but cites ${v.factKeys.join(", ")}, which ${v.factKeys.length === 1 ? "is" : "are"} not marked (${v.projectKey}). Put it under its own project.`;
     case "wrong_role":
       return v.roleKey === null
         ? `"${v.sentence}" is under ## Experience before any [ROLE-n] line. Put it under the role its facts are marked with, or in another section.`

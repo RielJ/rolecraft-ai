@@ -25,12 +25,41 @@ export type FakeAi = AiProviderClient & {
   reset(): void;
 };
 
-const FACT_LINE = /^(FACT-[1-9]\d*): (.*?)(?: \((ROLE-[1-9]\d*)\))?(?: \[R[1-9]\d*(?:, R[1-9]\d*)*\])?$/gm;
+const FACT_LINE =
+  /^(FACT-[1-9]\d*): (.*?)(?: \((ROLE-[1-9]\d*)\))?(?: \((PROJECT-[1-9]\d*)\))?(?: \[R[1-9]\d*(?:, R[1-9]\d*)*\])?$/gm;
 const ROLE_LINE = /^(ROLE-[1-9]\d*): /gm;
+const PROJECT_LINE = /^(PROJECT-[1-9]\d*): .* \((your own project|a contribution[^)]*)\)$/gm;
 
-/** A fact line's text without its `(link)`, and the role it is marked with. */
-function factLine(m: RegExpMatchArray): { key: string; text: string; role: string | null } {
-  return { key: m[1] ?? "", text: (m[2] ?? "").replace(/ \([^)]*\)$/, ""), role: m[3] ?? null };
+type FakeFact = { key: string; text: string; role: string | null; project: string | null };
+
+/** A fact line's text without its `(link)`, and the role or project it is marked with. */
+function factLine(m: RegExpMatchArray): FakeFact {
+  return { key: m[1] ?? "", text: (m[2] ?? "").replace(/ \([^)]*\)$/, ""), role: m[3] ?? null, project: m[4] ?? null };
+}
+
+/**
+ * The resume's project sections (decision 82): each own project's key, its first fact as the line
+ * that says what it is and up to 2 more as bullets; each contribution's key and its facts as bullets.
+ */
+function projectSections(prompt: string, facts: readonly FakeFact[]): string[] {
+  const projects = Array.from(prompt.matchAll(PROJECT_LINE), (m) => ({
+    key: m[1] ?? "",
+    own: m[2] === "your own project",
+  }));
+  const block = (key: string, own: boolean) => {
+    const lines = facts.filter((f) => f.project === key).flatMap((f) => citedSentences(f.key, f.text));
+    const [first, ...rest] = lines;
+    if (!first) return [];
+    return own
+      ? [`[${key}]`, first, ...rest.slice(0, 2).map((t) => `- ${t}`)]
+      : [`[${key}]`, ...lines.map((t) => `- ${t}`)];
+  };
+  const own = projects.filter((p) => p.own).flatMap((p) => block(p.key, true));
+  const theirs = projects.filter((p) => !p.own).flatMap((p) => block(p.key, false));
+  return [
+    ...(own.length > 0 ? ["## Projects", ...own] : []),
+    ...(theirs.length > 0 ? ["## Open Source Contributions", ...theirs] : []),
+  ];
 }
 
 // A role header as CVs write it: "Title  Start – End" over "Company (Location)" or "COMPANY, LOCATION".
@@ -87,10 +116,13 @@ function defaultDraft(request: AiCompletionRequest): string {
     // No name heading: the app adds the contact header (decision 72).
     const roles = Array.from(prompt.matchAll(ROLE_LINE), (m) => m[1] ?? "");
     const bullets = (role: string | null) =>
-      lines.filter((f) => f.role === role).flatMap((f) => citedSentences(f.key, f.text).map((t) => `- ${t}`));
+      lines
+        .filter((f) => f.role === role && f.project === null)
+        .flatMap((f) => citedSentences(f.key, f.text).map((t) => `- ${t}`));
     const grouped = roles.flatMap((role) => [`[${role}]`, ...bullets(role)]);
-    if (roles.length === 0) return ["## Experience", ...bullets(null)].join("\n");
-    return ["## Summary", ...bullets(null), "## Experience", ...grouped].join("\n");
+    const projects = projectSections(prompt, lines);
+    if (roles.length === 0) return ["## Experience", ...bullets(null), ...projects].join("\n");
+    return ["## Summary", ...bullets(null), "## Experience", ...grouped, ...projects].join("\n");
   }
   return [facts.join(" "), "", name].join("\n");
 }

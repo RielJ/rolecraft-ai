@@ -9,9 +9,11 @@ import {
   quarantineViolations,
   stripMarkers,
 } from "@/domain/citations";
+import { expandProjects, keyProjects, type ProjectInfo, placeProjects, projectHead } from "@/domain/draft-projects";
 import { cleanForEdit, fillBlanks, restoreMarkers, stripLeadingName, toPlainText } from "@/domain/file-text";
 import { checkGate, type GateOutput } from "@/domain/gate";
 import { classifyQuestion } from "@/domain/must-answer";
+import { githubUserFor, projectRoleOf } from "@/domain/project-role";
 import {
   allowedFacts,
   buildDraftPrompt,
@@ -57,6 +59,7 @@ import {
   type FactKey,
   type FillBlanksInput,
   type GateResult,
+  type ItemId,
   type OpportunityId,
   type OutdatedChange,
   type OutputDto,
@@ -829,13 +832,14 @@ export async function previewPdf(
 
 // ---------- Drafting (section 3.4) ----------
 
-type DraftFactRow = PromptFact & { id: FactId; roleId: RoleId | null };
+type DraftFactRow = PromptFact & { id: FactId; itemId: ItemId; roleId: RoleId | null };
 
 /** Confirmed facts with their item's link and usage, in key order. */
 async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftFactRow[]> {
   const rows = await deps.db
     .select({
       id: facts.id,
+      itemId: facts.itemId,
       no: facts.no,
       text: facts.text,
       link: profileItems.link,
@@ -850,6 +854,7 @@ async function loadDraftFacts(deps: Pick<Deps, "db" | "userId">): Promise<DraftF
     .orderBy(asc(facts.no));
   return rows.map((r) => ({
     id: r.id,
+    itemId: r.itemId,
     key: factKey(r.no),
     text: r.text,
     // A private repo's link is not offered to the drafter; the export filter is the backstop.
@@ -875,6 +880,36 @@ async function draftRoles(
     roles: kept.map((r) => ({ ...r, key: keyOf.get(r.id) ?? "" })),
     facts: allowed.map((f) => ({ ...f, roleKey: f.roleId ? (keyOf.get(f.roleId) ?? null) : null })),
   };
+}
+
+/** Name, skills and role of each project add-on (decision 82) that one of `facts` comes from. */
+async function loadProjectInfo(
+  deps: Pick<Deps, "db" | "userId" | "github">,
+  { facts: rows, contact }: { facts: readonly DraftFactRow[]; contact: Contact },
+): Promise<Map<ItemId, ProjectInfo>> {
+  const ids = [...new Set(rows.map((f) => f.itemId))];
+  if (ids.length === 0) return new Map();
+  const items = await deps.db
+    .select({
+      id: profileItems.id,
+      kind: profileItems.kind,
+      title: profileItems.title,
+      link: profileItems.link,
+      skills: profileItems.skills,
+      read: profileItems.projectRoleRead,
+      choice: profileItems.projectRoleChoice,
+    })
+    .from(profileItems)
+    .where(
+      and(eq(profileItems.userId, deps.userId), eq(profileItems.kind, "open_source"), inArray(profileItems.id, ids)),
+    );
+  const githubUser = githubUserFor({ configured: deps.github.user, links: contact.links })?.user ?? null;
+  return new Map(
+    items.flatMap((item) => {
+      const found = projectRoleOf({ ...item, githubUser });
+      return found ? [[item.id, { name: item.title, stack: item.skills, role: found.role }] as const] : [];
+    }),
+  );
 }
 
 function mustAnswerRefusal(output: Pick<OutputRow, "question">): AppError {
@@ -919,15 +954,21 @@ async function draftContext(
   ]);
   const posting = { title: job.title, company: job.company, description: job.description };
   const requirements = await requirementMapState(deps, { opportunity, posting, all });
-  const { roles, facts: kindFacts } = await draftRoles(deps, {
+  const { roles, facts: roleFacts } = await draftRoles(deps, {
     kind: output.kind,
     allowed: allowedFacts({ kind: output.kind, facts: all }),
   });
+  const info = output.kind === "resume" ? await loadProjectInfo(deps, { facts: roleFacts, contact }) : new Map();
+  const kindFacts = keyProjects({ facts: roleFacts, info }).facts;
   const map =
     requirements.map &&
     restrictRequirementMap({ map: requirements.map, allowedKeys: new Set(kindFacts.map((f) => f.key)) });
   // A resume is drafted from the facts that prove a requirement, plus one per role (decision 73).
-  const allowed = output.kind === "resume" && map !== null ? selectResumeFacts({ map, facts: kindFacts }) : kindFacts;
+  // Projects are keyed again after the cut, so the keys the drafter sees have no gaps.
+  const { projects, facts: allowed } = keyProjects({
+    facts: output.kind === "resume" && map !== null ? selectResumeFacts({ map, facts: kindFacts }) : kindFacts,
+    info,
+  });
   const required = output.kind === "resume" && map !== null ? requiredResumeFacts({ map, facts: allowed }) : [];
   const prompt = buildDraftPrompt({
     kind: output.kind,
@@ -937,10 +978,12 @@ async function draftContext(
     facts: allowed,
     question: output.question,
     roles,
+    projects,
     map,
     required,
   });
   const roleHeaders = roles.map((r) => ({ key: r.key, header: roleHeader(r) }));
+  const projectHeads = projects.map((p) => ({ key: p.key, header: projectHead(p) }));
   const check = (body: string) =>
     checkDraft({
       body,
@@ -949,9 +992,17 @@ async function draftContext(
       posting: { company: job.company, title: job.title },
       contact,
       roles: roleHeaders,
+      projects: projectHeads,
     });
-  /** The model writes `[ROLE-n]`; the server writes the header, so its words are the role's own. */
-  const expand = (text: string) => expandRoles({ body: cleanModelText(text), roles });
+  /**
+   * The model writes `[ROLE-n]` and `[PROJECT-n]`; the server writes the heads, so their words are
+   * the role's and the project's own, and moves each project to its section (decision 82).
+   */
+  const expand = (text: string) =>
+    placeProjects({
+      body: expandProjects({ body: expandRoles({ body: cleanModelText(text), roles }), projects }),
+      projects,
+    });
   return { opportunity, allowed, prompt, check, expand, requirements, required };
 }
 

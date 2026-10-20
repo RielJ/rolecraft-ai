@@ -1,4 +1,5 @@
 import { parseCitations, stripMarkers } from "./citations";
+import { parseProjectHead, projectHeadPlain } from "./draft-projects";
 import { sentenceSpans } from "./text";
 import { parseRoleHeader, roleHeaderPlain } from "./work-roles";
 
@@ -15,7 +16,8 @@ const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
 /**
  * "Content only" text for Copy and the inline letter view: no markers, headings as their own line
  * with a blank line before them, `- ` and `* ` bullets as `• `, and no `**`. A role header
- * (`### Title | Company, Location | Dates`) reads "Title, Company, Location (Dates)". Blanks stay as
+ * (`### Title | Company, Location | Dates`) reads "Title, Company, Location (Dates)", and a project
+ * head (`#### Name | link | stack`) reads "Name · link · stack". Blanks stay as
  * written; callers decide whether a body with blanks may leave the app.
  */
 export function toPlainText(body: string): string {
@@ -31,8 +33,9 @@ export function toPlainText(body: string): string {
     const bullet = BULLET.exec(line);
     let text = line;
     const role = parseRoleHeader(line);
+    const project = parseProjectHead(line);
     if (heading) {
-      text = role ? roleHeaderPlain(role) : (heading[1] ?? "").trim();
+      text = role ? roleHeaderPlain(role) : project ? projectHeadPlain(project) : (heading[1] ?? "").trim();
       gap = gap || out.length > 0;
     } else if (bullet) {
       text = `${bullet[1] ?? ""}• ${bullet[2] ?? ""}`;

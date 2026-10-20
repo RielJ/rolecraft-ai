@@ -63,8 +63,9 @@ Use these `##` sections, in this order, with these names so applicant tracking s
 1. `## Summary`: 2 to 3 sentences, under 50 words. Start with the role noun that fits this posting and the facts, for example "Backend engineer with 7+ years …". Say why the candidate fits this posting, using its main requirements. ([TIH][tih])
 2. `## Skills`: 2 to 4 lines, each `- **Category:** a, b, c`. Put the posting's stack first. Leave out categories this posting doesn't touch. Only skills that appear in facts. No soft skills. ([TIH][tih], [ResumeMate][rm])
 3. `## Experience`: every role, in the order given.
-4. `## Projects`: only projects that prove something this posting asks for. A bold title, then one sentence. ([TIH][tih], [LockedIn][li])
-5. `## Education`: only if a fact gives it.
+4. `## Projects`: the candidate's own projects that prove something this posting asks for. Each one is its head, then one sentence that says what it is. Add up to 2 bullets only for facts that prove a requirement of this posting. ([TIH][tih], [LockedIn][li])
+5. `## Open Source Contributions`: work on other people's projects that proves something this posting asks for. Each one is its head, then 1 to 3 bullets about what the candidate did in it. Never say the candidate built, created or owns the project.
+6. `## Education`: only if a fact gives it.
 
 Leave out: an objective statement, "references available", hobbies, photos and age. ([TIH][tih], [Remoote][remoote])
 

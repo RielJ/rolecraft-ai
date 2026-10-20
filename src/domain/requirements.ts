@@ -169,9 +169,11 @@ export function restrictRequirementMap({
  * The facts a resume is drafted from (decision 74, replacing 73's per-fact cut). A role that proves
  * any requirement keeps all its facts: facts are atomic, so a role's strongest bullet is often several
  * of them combined, and the map can miss one. A role that proves nothing keeps only its context fact
- * (or its first fact), so the work history has no holes. Facts with no role all stay.
+ * (or its first fact), so the work history has no holes. A project (decision 82) is the same, except
+ * one that proves nothing is left out whole: a resume lists only projects that prove something.
+ * Facts with neither all stay.
  */
-export function selectResumeFacts<F extends Pick<PromptFact, "key" | "roleKey">>({
+export function selectResumeFacts<F extends Pick<PromptFact, "key" | "roleKey" | "projectKey">>({
   map,
   facts,
 }: {
@@ -180,7 +182,12 @@ export function selectResumeFacts<F extends Pick<PromptFact, "key" | "roleKey">>
 }): F[] {
   const proving = new Set(map.requirements.flatMap((r) => r.facts));
   const context = new Set(map.context);
-  const keep = new Set(facts.filter((f) => !f.roleKey).map((f) => f.key));
+  const keep = new Set(facts.filter((f) => !f.roleKey && !f.projectKey).map((f) => f.key));
+  const projects = [...new Set(facts.flatMap((f) => (f.projectKey ? [f.projectKey] : [])))];
+  for (const project of projects) {
+    const own = facts.filter((f) => f.projectKey === project);
+    if (own.some((f) => proving.has(f.key))) for (const f of own) keep.add(f.key);
+  }
   const roles = [...new Set(facts.flatMap((f) => (f.roleKey ? [f.roleKey] : [])))];
   for (const role of roles) {
     const own = facts.filter((f) => f.roleKey === role);

@@ -1,4 +1,5 @@
 import { type Contact, FactKey } from "@/shared/api";
+import { PROJECT_TOKEN, projectSectionOf } from "./draft-projects";
 import { sentenceSpans } from "./text";
 import { ROLE_TOKEN } from "./work-roles";
 
@@ -38,10 +39,13 @@ export function stripMarkers(body: string): string {
 
 // ---------- Anti-invention check (section 3.4, step 3) ----------
 
-/** A fact as the check sees it. `roleKey` is the `ROLE-n` of its role, in a resume with roles. */
-export type DraftFact = { key: FactKey; text: string; roleKey?: string | null };
+/**
+ * A fact as the check sees it. `roleKey` is the `ROLE-n` of its role, and `projectKey` the
+ * `PROJECT-n` of its project, in a resume with roles or projects.
+ */
+export type DraftFact = { key: FactKey; text: string; roleKey?: string | null; projectKey?: string | null };
 
-/** A role the server wrote into the draft: its key and the header line it expanded to. */
+/** A role or project the server wrote into the draft: its key and the head line it expanded to. */
 export type DraftRoleHeader = { key: string; header: string };
 
 type Span = { sentence: string; start: number; end: number };
@@ -50,28 +54,51 @@ export type DraftViolation =
   | (Span & { kind: "unsupported_token"; tokens: string[] })
   | (Span & { kind: "uncited_claim"; tokens: string[] })
   | (Span & { kind: "unknown_role"; roleKey: string })
-  | (Span & { kind: "wrong_role"; roleKey: string | null; factKeys: string[] });
+  | (Span & { kind: "wrong_role"; roleKey: string | null; factKeys: string[] })
+  | (Span & { kind: "unknown_project"; projectKey: string })
+  | (Span & { kind: "wrong_project"; projectKey: string | null; factKeys: string[] });
 
 /** A `##` section that holds roles. Anything cited in it must sit under its own role's header. */
 const EXPERIENCE_HEADING = /^#{1,2}\s+.*\b(?:experience|employment|work history)\b/i;
 
 /**
- * For each line of the body, the role it sits under (the key of the last role header since the
- * last `#` or `##` heading), and whether it is in an Experience section.
+ * For each line of the body, the role or project it sits under (the key of the last head since the
+ * last `#` or `##` heading; a role head ends a project and the other way round), and whether it is
+ * in an Experience section or a project section.
  */
-function roleContext({ lines, roles }: { lines: readonly string[]; roles: readonly DraftRoleHeader[] }) {
-  const keyOf = new Map(roles.map((r) => [r.header.trim(), r.key]));
+function roleContext({
+  lines,
+  roles,
+  projects,
+}: {
+  lines: readonly string[];
+  roles: readonly DraftRoleHeader[];
+  projects: readonly DraftRoleHeader[];
+}) {
+  const roleOf = new Map(roles.map((r) => [r.header.trim(), r.key]));
+  const projectOf = new Map(projects.map((p) => [p.header.trim(), p.key]));
   let role: string | null = null;
+  let project: string | null = null;
   let experience = false;
+  let projectSection = false;
   return lines.map((raw) => {
     const line = raw.trim();
-    const key = keyOf.get(line);
-    if (key !== undefined) role = key;
-    else if (/^#{1,2}\s/.test(line)) {
+    const roleKey = roleOf.get(line);
+    const projectKey = projectOf.get(line);
+    if (roleKey !== undefined) {
+      role = roleKey;
+      project = null;
+    } else if (projectKey !== undefined) {
+      project = projectKey;
       role = null;
-      experience = EXPERIENCE_HEADING.test(line);
+    } else if (/^#{1,2}\s/.test(line)) {
+      role = null;
+      project = null;
+      // Each section rule is on only when the draft has that kind of head to put facts under.
+      experience = roles.length > 0 && EXPERIENCE_HEADING.test(line);
+      projectSection = projects.length > 0 && projectSectionOf(line) !== null;
     }
-    return { role, experience };
+    return { role, project, experience, projectSection };
   });
 }
 
@@ -198,6 +225,8 @@ const PLAIN_CAPITALS = new Set([
   "professional",
   "open",
   "source",
+  "contributions",
+  "contribution",
   "dear",
   "hiring",
   "team",
@@ -331,9 +360,13 @@ function claimText(sentence: string): string {
  * - `wrong_role`: with `roles`, a sentence under a role's header cites a fact that is not marked
  *   with that role, or a sentence in an Experience section cites facts before any role header.
  *   Roles are matched by key only, so overlapping dates never matter.
+ * - `unknown_project`, `wrong_project`: the same for `[PROJECT-n]` and `projects` (decision 82). A
+ *   sentence in a Projects or Contributions section that cites a project's fact before any head is
+ *   `wrong_project` too.
  *
- * A line equal to the header of an allowed role (`roles`, as `roleHeader` renders it) is the
- * server's own text and is not checked. Any other header line is checked like a sentence.
+ * A line equal to the head of an allowed role or project (`roles` and `projects`, as the server
+ * renders them) is the server's own text and is not checked. Any other head line is checked like a
+ * sentence.
  */
 export function checkDraft({
   body,
@@ -342,6 +375,7 @@ export function checkDraft({
   posting,
   contact,
   roles = [],
+  projects = [],
 }: {
   body: string;
   facts: readonly DraftFact[];
@@ -349,10 +383,12 @@ export function checkDraft({
   posting: { company: string; title: string };
   contact: Contact;
   roles?: readonly DraftRoleHeader[];
+  projects?: readonly DraftRoleHeader[];
 }): DraftCheck {
   const allowed = new Set<string>(allowedKeys);
   const byKey = new Map<string, string>(facts.map((f) => [f.key, f.text]));
   const roleOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.roleKey ?? null]));
+  const projectOfFact = new Map<string, string | null>(facts.map((f) => [f.key, f.projectKey ?? null]));
   const names = evidenceOf([
     posting.company,
     posting.title,
@@ -362,16 +398,18 @@ export function checkDraft({
     ...contact.links,
   ]);
   const violations: DraftViolation[] = [];
-  const headers = new Set(roles.map((r) => r.header.trim()));
+  const headers = new Set([...roles, ...projects].map((r) => r.header.trim()));
   const lines = body.split("\n");
-  const context = roles.length > 0 ? roleContext({ lines, roles }) : [];
+  const context = roles.length + projects.length > 0 ? roleContext({ lines, roles, projects }) : [];
 
   for (const span of sentenceSpans(body)) {
     if (headers.has((lines[span.line] ?? "").trim())) continue;
     const base: Span = { sentence: span.text, start: span.start, end: span.end };
     const roleKeys = new Set(Array.from(span.text.matchAll(ROLE_TOKEN), (m) => m[1] ?? ""));
     for (const roleKey of roleKeys) violations.push({ ...base, kind: "unknown_role", roleKey });
-    if (roleKeys.size > 0) continue;
+    const projectKeys = new Set(Array.from(span.text.matchAll(PROJECT_TOKEN), (m) => m[1] ?? ""));
+    for (const projectKey of projectKeys) violations.push({ ...base, kind: "unknown_project", projectKey });
+    if (roleKeys.size + projectKeys.size > 0) continue;
     const keys = parseCitations(span.text);
     const cited: string[] = [];
     for (const key of keys) {
@@ -389,6 +427,17 @@ export function checkDraft({
           roleKey: where.role,
           factKeys: where.role === null ? keys.map(String) : misplaced.map(String),
         });
+    }
+    if (where && keys.length > 0 && where.role === null) {
+      const known = keys.filter((key) => byKey.has(key));
+      const misplaced =
+        where.project !== null
+          ? known.filter((key) => projectOfFact.get(key) !== where.project)
+          : where.projectSection
+            ? known.filter((key) => projectOfFact.get(key) != null)
+            : [];
+      if (misplaced.length > 0)
+        violations.push({ ...base, kind: "wrong_project", projectKey: where.project, factKeys: misplaced.map(String) });
     }
     const text = claimText(span.text);
     const tokens = unsupportedTokens(text, evidenceOf(cited), names);

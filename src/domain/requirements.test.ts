@@ -140,6 +140,20 @@ describe("selectResumeFacts (decision 74)", () => {
     });
     expect(picked.map((f) => f.key)).toEqual([key(1), key(2), key(3), key(4), key(6)]);
   });
+
+  test("a project that proves anything keeps all its facts; one that proves nothing is left out (decision 82)", () => {
+    const facts = [
+      { key: key(1), roleKey: null, projectKey: "PROJECT-1" },
+      { key: key(2), roleKey: null, projectKey: "PROJECT-1" },
+      { key: key(3), roleKey: null, projectKey: "PROJECT-2" },
+      { key: key(4), roleKey: null, projectKey: null },
+    ];
+    const picked = selectResumeFacts({
+      map: map([{ id: "R1", text: "Go", weight: "must", facts: [key(2)] }], [key(3)]),
+      facts,
+    });
+    expect(picked.map((f) => f.key)).toEqual([key(1), key(2), key(4)]);
+  });
 });
 
 describe("requiredResumeFacts (decision 74)", () => {

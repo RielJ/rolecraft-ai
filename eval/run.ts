@@ -303,6 +303,10 @@ function violationText(v: DraftViolation): string {
       return `writes ${v.roleKey}, which is not a role here: ${quote(v.sentence)}`;
     case "wrong_role":
       return `${v.factKeys.join(", ")} under ${v.roleKey ?? "Experience, before any role"}: ${quote(v.sentence)}`;
+    case "unknown_project":
+      return `writes ${v.projectKey}, which is not a project here: ${quote(v.sentence)}`;
+    case "wrong_project":
+      return `${v.factKeys.join(", ")} under ${v.projectKey ?? "a project section, before any project"}: ${quote(v.sentence)}`;
     default:
       return `${v.tokens.join(", ")} in ${quote(v.sentence)}`;
   }
