@@ -173,6 +173,8 @@ function folderNote(repo: ScannedLocal): string | null {
       return "This folder isn't a git repo, so nothing shows the work is yours.";
     case "others":
       return "Most of this repo's commits are by someone else. Write what you did in it.";
+    case "owned_by":
+      return `This repo belongs to ${repo.remoteOwner ?? "someone else"} on GitHub, not to you. If it's an employer's, keep its code and private details out of what you write.`;
     case "few_commits":
       return repo.ownCommits === 0
         ? "None of this repo's commits use your email. Check it's yours, or add your other emails to HB_GIT_EMAILS."

@@ -112,6 +112,25 @@ describe("readmeSummary", () => {
 });
 
 describe("scanLocal", () => {
+  test("hides a clone of a GitHub repo someone else owns, even with only your commits", () => {
+    const git = (remote: string | null) => ({ authors: { [ME]: 40 }, lastCommitAt: "2026-09-01T00:00:00Z", remote });
+    const folders = [
+      folder("payroll", { git: git("git@github.com:AcmeCorp/payroll.git") }),
+      folder("mine", { git: git("https://github.com/JuanDC/mine.git") }),
+      folder("offline", { git: git(null) }),
+      folder("on-gitlab", { git: git("https://gitlab.com/acme/tool.git") }),
+    ];
+    const result = scan(folders);
+    expect(result.shown.map((r) => r.folder).toSorted()).toEqual(["mine", "offline", "on-gitlab"]);
+    expect(result.hidden.map((r) => [r.folder, r.hiddenBy, r.remoteOwner])).toEqual([
+      ["payroll", "owned_by", "AcmeCorp"],
+    ]);
+    // Never linked: an employer's repo stays out of what the user exports.
+    expect(result.hidden[0]?.github).toBeNull();
+    // Without HB_GITHUB_USER no owner can be judged.
+    expect(scan(folders, { githubUser: null }).hidden).toEqual([]);
+  });
+
   test("hides non-git folders, repos with few of your commits, and repos mostly by others", () => {
     const result = scan([
       folder("hanapbuhay"),
@@ -134,7 +153,7 @@ describe("scanLocal", () => {
     expect(result.shown.map((r) => r.folder)).toEqual(["hanapbuhay"]);
     expect(result.hidden.map((r) => [r.folder, r.hiddenBy])).toEqual([
       ["jersey", "few_commits"],
-      ["pi-mux-ref", "others"],
+      ["pi-mux-ref", "owned_by"],
       ["mixed", "others"],
       ["anon", "few_commits"],
       ["empty", "few_commits"],

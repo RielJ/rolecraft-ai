@@ -1823,6 +1823,7 @@ const REPO_HIDE: Record<RepoHideReason, HideWords> = {
 
 const FOLDER_HIDE: Record<LocalHideReason, HideWords> = {
   not_git: { label: "Not a git repo", count: (n) => `${n} not git` },
+  owned_by: { label: "Owned by someone else", count: (n) => `${n} owned by others` },
   few_commits: { label: "Few of your commits", count: (n) => `${n} with few of your commits` },
   others: { label: "Mostly others' commits", count: (n) => `${n} mostly by others` },
   same_remote: { label: "Same repo as another folder", count: (n) => `${n} ${n === 1 ? "copy" : "copies"}` },
@@ -2050,7 +2051,15 @@ function ProjectsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     <ProjectOption
       key={folder.folder}
       name={folder.folder}
-      badges={folder.hiddenBy && <Badge variant="secondary">{FOLDER_HIDE[folder.hiddenBy].label}</Badge>}
+      badges={
+        folder.hiddenBy && (
+          <Badge variant="secondary">
+            {folder.hiddenBy === "owned_by" && folder.remoteOwner
+              ? `Owned by ${folder.remoteOwner}`
+              : FOLDER_HIDE[folder.hiddenBy].label}
+          </Badge>
+        )
+      }
       meta={folderMeta(folder)}
       text={folder.summary}
       added={folder.added}

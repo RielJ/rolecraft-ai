@@ -980,7 +980,8 @@ describe("Find my projects: a local folder", () => {
     expect(found.shown.map((f) => [f.folder, f.languages, f.summary, f.url])).toEqual([
       ["kain-tayo", ["Go"], "Recipe planner for carinderias.", null],
     ]);
-    expect(found.hidden.map((f) => [f.folder, f.hiddenBy])).toEqual([["their-lib", "others"]]);
+    expect(found.hidden.map((f) => [f.folder, f.hiddenBy])).toEqual([["their-lib", "owned_by"]]);
+    expect(found.hidden[0]?.remoteOwner).toBe("maria");
 
     const github = await scan();
     const empty = github.shown.find((r) => r.name === "empty");

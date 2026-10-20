@@ -97,6 +97,7 @@ function folderDto(repo: ScannedLocal): ScannedFolderDto {
   return {
     folder: repo.folder,
     url: localAddon(repo).link,
+    remoteOwner: repo.remoteOwner,
     languages: repo.languages,
     lastCommitAt: repo.lastCommitAt,
     ownCommits: repo.ownCommits,

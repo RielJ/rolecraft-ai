@@ -410,13 +410,15 @@ export const ScannedRepoDto = z.object({
 export type ScannedRepoDto = z.infer<typeof ScannedRepoDto>;
 
 /** Why the rules put a local folder in the hidden group. */
-export const LocalHideReason = z.enum(["not_git", "few_commits", "others", "same_remote"]);
+export const LocalHideReason = z.enum(["not_git", "owned_by", "few_commits", "others", "same_remote"]);
 export type LocalHideReason = z.infer<typeof LocalHideReason>;
 
 export const ScannedFolderDto = z.object({
   folder: z.string(),
   /** Its GitHub repo when the remote is yours, else null. */
   url: z.string().nullable(),
+  /** The GitHub remote's owner when it isn't you, such as an employer's org; else null. */
+  remoteOwner: z.string().nullable(),
   languages: z.array(z.string()),
   lastCommitAt: z.string().nullable(),
   ownCommits: z.number().int(),

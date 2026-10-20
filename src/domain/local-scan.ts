@@ -5,7 +5,8 @@ import { type CloneInfo, MIN_OWN_COMMITS, repoKey } from "./repo-scan";
  * Finding the user's projects in a local folder (decision 78). Rules only, no AI: a folder is the
  * user's when most of its commits are by one of the user's emails. Folders that aren't git repos,
  * repos with few commits by the user, and repos mostly by others go to the hidden group with their
- * reason; the user can still pick them. A repo whose remote is one of the user's listed GitHub
+ * reason; the user can still pick them. So does a clone of a GitHub repo someone else owns, such as
+ * an employer's, even when the commits are the user's (decision 85). A repo whose remote is one of the user's listed GitHub
  * repos is shown once, under GitHub.
  */
 
@@ -30,7 +31,7 @@ export type LocalFolder = {
 /** The longest add-on text taken from a README. */
 export const MAX_SUMMARY_CHARS = 1500;
 
-export type LocalHideReason = "not_git" | "few_commits" | "others" | "same_remote";
+export type LocalHideReason = "not_git" | "owned_by" | "few_commits" | "others" | "same_remote";
 
 export type ScannedLocal = {
   folder: string;
@@ -39,6 +40,8 @@ export type ScannedLocal = {
   lastCommitAt: string | null;
   /** The GitHub repo the remote points to, when it is one of the user's. */
   github: GithubRepoRef | null;
+  /** The owner of the GitHub remote, when it isn't the user: why the folder is `owned_by`. */
+  remoteOwner: string | null;
   languages: string[];
   /** The README's first paragraph, cleaned, or null. */
   summary: string | null;
@@ -200,12 +203,15 @@ function hiddenBy({
   git,
   own,
   total,
+  remoteOwner,
 }: {
   git: LocalFolder["git"];
   own: number;
   total: number;
+  remoteOwner: string | null;
 }): LocalHideReason | null {
   if (!git) return "not_git";
+  if (remoteOwner) return "owned_by";
   if (total > 0 && own * 2 < total) return "others";
   if (own < MIN_OWN_COMMITS) return "few_commits";
   return null;
@@ -268,18 +274,21 @@ export function scanLocal({
       if (!prev || ownCommits > prev.ownCommits) clones.set(repoKey(remote), { ownCommits, summary });
       continue;
     }
-    const mine =
-      remote && !listed && githubUser && remote.owner.toLowerCase() === githubUser.toLowerCase() ? remote : null;
+    const ownRemote = remote && githubUser ? remote.owner.toLowerCase() === githubUser.toLowerCase() : null;
+    const mine = remote && !listed && ownRemote ? remote : null;
+    // Without HB_GITHUB_USER no owner can be judged, so nothing is hidden for it.
+    const remoteOwner = remote && ownRemote === false ? remote.owner : null;
     all.push({
       folder: f.folder,
       ownCommits,
       totalCommits,
       lastCommitAt: f.git?.lastCommitAt ?? null,
       github: mine,
+      remoteOwner,
       languages: guessLanguages(f.rootFiles),
       summary,
       added: mine ? taken.has(repoKey(mine)) : takenTitles.has(f.folder.toLowerCase()),
-      hiddenBy: hiddenBy({ git: f.git, own: ownCommits, total: totalCommits }),
+      hiddenBy: hiddenBy({ git: f.git, own: ownCommits, total: totalCommits, remoteOwner }),
     });
   }
 

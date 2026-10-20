@@ -201,6 +201,21 @@ describe("folderPrefill", () => {
     ]);
   });
 
+  test("a clone of a GitHub repo someone else owns names the owner and warns about private details", () => {
+    const out = folderPrefill({
+      folder: folder({
+        git: { authors: { [ME]: 40 }, lastCommitAt: null, remote: "git@github.com:AcmeCorp/payroll.git" },
+      }),
+      emails: [ME],
+      githubUser: "juandc",
+    });
+    expect([out.link, out.linkPrivate, out.note]).toEqual([
+      "https://github.com/AcmeCorp/payroll",
+      true,
+      "This repo belongs to AcmeCorp on GitHub, not to you. If it's an employer's, keep its code and private details out of what you write.",
+    ]);
+  });
+
   test("a small repo of yours says it is small, not that your email is missing", () => {
     const small = (authors: Record<string, number>) =>
       folderPrefill({
