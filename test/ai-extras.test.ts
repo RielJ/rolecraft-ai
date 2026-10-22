@@ -464,7 +464,9 @@ describe("AI eligibility pass during Refresh", () => {
   });
 
   test("in pi mode it runs without a key, on pi's light model", async () => {
-    await setUp({ aiSource: { kind: "pi", models: { light: "pi-light", writing: "pi-writing" } } });
+    await setUp({
+      aiSource: { kind: "pi", provider: "anthropic", models: { light: "pi-light", writing: "pi-writing" } },
+    });
     await json(await call("PATCH", "/settings", { eligibilityOnRefresh: true }), SettingsDto);
     postings = unclearJobs(1);
     expect((await refresh()).result.aiPass).toMatchObject({ kind: "ran", checked: 1 });

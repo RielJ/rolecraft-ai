@@ -24,7 +24,7 @@ export type AiCompletion = {
  * Where AI calls go (decision 48). `key`: the provider SDKs with the key saved in Settings.
  * `pi`: the local pi CLI with its own sign-in, the models fixed by env.
  */
-export type AiSource = { kind: "key" } | { kind: "pi"; models: Record<AiTier, string> };
+export type AiSource = { kind: "key" } | { kind: "pi"; provider: AiProvider; models: Record<AiTier, string> };
 
 /**
  * Why a call failed, in terms the app can act on:

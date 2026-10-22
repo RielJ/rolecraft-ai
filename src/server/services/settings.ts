@@ -25,7 +25,7 @@ export async function getSettings(deps: Deps): Promise<SettingsDto> {
     ai: {
       via: deps.aiSource.kind,
       piModels: deps.aiSource.kind === "pi" ? deps.aiSource.models : null,
-      provider: user.aiProvider,
+      provider: deps.aiSource.kind === "pi" ? deps.aiSource.provider : user.aiProvider,
       keyHint: user.aiKeyHint,
       modelLight: user.modelLight,
       modelWriting: user.modelWriting,

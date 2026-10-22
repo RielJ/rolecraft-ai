@@ -37,7 +37,7 @@ export async function loadAiConfig(deps: Omit<AiDeps, "ai" | "clock">): Promise<
     const [user] = await deps.db.select({ cap: users.monthlyCapUsd }).from(users).where(eq(users.id, deps.userId));
     return {
       via: "pi",
-      provider: "anthropic",
+      provider: deps.aiSource.provider,
       key: "",
       models: deps.aiSource.models,
       capUsd: user?.cap == null ? null : Number(user.cap),
@@ -80,7 +80,7 @@ export async function loadAiTierConfig(
     const [user] = await deps.db.select({ cap: users.monthlyCapUsd }).from(users).where(eq(users.id, deps.userId));
     return {
       via: "pi",
-      provider: "anthropic",
+      provider: deps.aiSource.provider,
       key: "",
       model: deps.aiSource.models[tier],
       capUsd: user?.cap == null ? null : Number(user.cap),
@@ -171,12 +171,12 @@ export async function checkCap(
 }
 
 /** The same, for the local pi runner: the way out is pi's own sign-in, not Settings. */
-function piFailure(err: AiError): AppError {
+function piFailure(err: AiError, provider: AiProvider): AppError {
   switch (err.kind) {
     case "rejected_key":
       return new AppError({
         code: "key_rejected",
-        message: "pi is not signed in to Anthropic. Run pi, sign in with /login, then try again.",
+        message: `pi is not signed in to ${PROVIDER_NAMES[provider]}. Run pi, sign in with /login, then try again.`,
       });
     case "rate_limited":
       return new AppError({
@@ -202,7 +202,7 @@ function piFailure(err: AiError): AppError {
 
 /** Turn a provider failure into a message that names the problem and the way out. */
 export function aiFailure(err: AiError, provider: AiProvider, via: AiSource["kind"] = "key"): AppError {
-  if (via === "pi") return piFailure(err);
+  if (via === "pi") return piFailure(err, provider);
   const name = PROVIDER_NAMES[provider];
   switch (err.kind) {
     case "rejected_key":

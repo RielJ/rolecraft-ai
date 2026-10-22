@@ -42,7 +42,9 @@ const EnvSchema = z
     HB_AI: z.enum(["live", "pi", "fake"]).default("live"),
     /** The pi binary for `HB_AI=pi`. */
     HB_PI_BIN: z.string().min(1).default("pi"),
-    /** Anthropic models pi runs for each tier. */
+    /** Pi's credential provider. Codex uses the existing OpenAI OAuth sign-in. */
+    HB_PI_PROVIDER: z.enum(["anthropic", "openai", "openai-codex"]).default("anthropic"),
+    /** Models pi runs for each tier, under HB_PI_PROVIDER. */
     HB_PI_MODEL_LIGHT: z.string().min(1).default("claude-haiku-5-5"),
     HB_PI_MODEL_WRITING: z.string().min(1).default("claude-opus-5-5"),
     /** Thinking level per tier; thinking tokens bill as output, so light calls skip it. */

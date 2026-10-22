@@ -113,7 +113,9 @@ describe("GET /api/setup", () => {
   });
 
   test("with the pi runner the AI step needs no key", async () => {
-    const pi = await testDeps({ aiSource: { kind: "pi", models: { light: "claude-haiku-5-5", writing: "x" } } });
+    const pi = await testDeps({
+      aiSource: { kind: "pi", provider: "anthropic", models: { light: "claude-haiku-5-5", writing: "x" } },
+    });
     const s = await ok(await createApp(pi).request("/api/setup"), SetupDto);
     expect(s.aiVia).toBe("pi");
     expect(doneSteps(s)).toContain("ai");

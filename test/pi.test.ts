@@ -10,8 +10,9 @@ import {
   piPromptText,
 } from "@/server/adapters/ai/pi";
 import { AiError } from "@/server/adapters/ai/types";
+import { parseEnv } from "@/server/env";
 import { createApp } from "@/server/http/app";
-import { runAi } from "@/server/services/ai";
+import { aiFailure, loadAiConfig, runAi } from "@/server/services/ai";
 import type { Deps } from "@/server/services/context";
 import { ApiErrorBody, SettingsDto } from "@/shared/api";
 import { resetDb, testDeps, testSql } from "./setup";
@@ -55,6 +56,38 @@ function fakeSpawn(stdout: string, exit = 0, calls: Call[] = []): PiSpawn {
 const THINKING = { light: "off", writing: "low" } as const;
 
 describe("pi adapter", () => {
+  test("Pi provider configuration defaults to Anthropic and accepts Codex OAuth", () => {
+    expect(parseEnv({}).HB_PI_PROVIDER).toBe("anthropic");
+    expect(parseEnv({ HB_PI_PROVIDER: "openai-codex" }).HB_PI_PROVIDER).toBe("openai-codex");
+    expect(() => parseEnv({ HB_PI_PROVIDER: "unknown" })).toThrow("HB_PI_PROVIDER");
+  });
+
+  test("Codex uses the same provider for authentication and generation", async () => {
+    const calls: Call[] = [];
+    const pi = createPiClient({
+      piProvider: "openai-codex",
+      thinking: THINKING,
+      spawn: (cmd, options) =>
+        fakeSpawn(
+          cmd.includes("auth") ? '{"status":"ready"}' : messageEnd({ model: "gpt-6.1-sol" }),
+          0,
+          calls,
+        )(cmd, options),
+    });
+    expect(await pi.authReady()).toBe(true);
+    await pi.complete({
+      key: "",
+      model: "gpt-6.1-sol",
+      tier: "writing",
+      system: "SYS",
+      messages: [{ role: "user", content: "x" }],
+      maxOutputTokens: 100,
+    });
+    expect(calls[0]?.cmd).toEqual(["pi", "auth", "check", "--provider", "openai-codex", "--json", "--no-refresh"]);
+    const cmd = calls[1]?.cmd ?? [];
+    expect(cmd[cmd.indexOf("--model") + 1]).toBe("openai-codex/gpt-6.1-sol");
+  });
+
   test("argv runs pi bare with the model, thinking and system prompt; the prompt is not in argv", async () => {
     const calls: Call[] = [];
     const pi = createPiClient({ thinking: THINKING, spawn: fakeSpawn(`${USER_END}\n${messageEnd()}\n`, 0, calls) });
@@ -158,8 +191,29 @@ describe("HB_AI=pi in the app", () => {
 
   beforeEach(async () => {
     await resetDb();
-    deps = await testDeps({ aiSource: { kind: "pi", models: PI_MODELS } });
+    deps = await testDeps({ aiSource: { kind: "pi", provider: "anthropic", models: PI_MODELS } });
     app = createApp(deps);
+  });
+
+  test("GPT configuration is reported in Settings and recorded as OpenAI, without a saved key", async () => {
+    const models = { light: "gpt-6.1-sol", writing: "gpt-6.1-sol" };
+    const source = { kind: "pi", provider: "openai", models } as const;
+    const gptDeps = { ...deps, aiSource: source };
+    expect(await loadAiConfig(gptDeps)).toMatchObject({ provider: "openai", models, key: "" });
+    const settings = SettingsDto.parse(await (await createApp(gptDeps).request("/api/settings")).json());
+    expect(settings.ai.provider).toBe("openai");
+    expect(settings.ai.piModels).toEqual(models);
+    await runAi(gptDeps, {
+      purpose: "draft",
+      tier: "writing",
+      prompt: { system: "s", messages: [{ role: "user", content: "x" }] },
+      maxOutputTokens: 10,
+    });
+    const [row] = await testSql()<{ provider: string; model: string }[]>`select provider, model from ai_calls`;
+    expect(row).toMatchObject({ provider: "openai", model: "gpt-6.1-sol" });
+    expect(aiFailure(new AiError({ kind: "rejected_key", message: "not ready" }), "openai", "pi").message).toContain(
+      "OpenAI",
+    );
   });
 
   test("Settings reports pi with its models, and saving a key is refused", async () => {

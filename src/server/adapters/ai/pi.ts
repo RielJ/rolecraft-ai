@@ -26,7 +26,7 @@ export type PiSpawn = (
 export type PiOptions = {
   /** The pi binary, `pi` on PATH by default. */
   bin?: string;
-  /** pi's provider for the models (`anthropic/<model>`). */
+  /** pi's provider for the models, for example `anthropic` or `openai-codex`. */
   piProvider?: string;
   thinking: Record<AiTier, PiThinking>;
   timeoutMs?: number;

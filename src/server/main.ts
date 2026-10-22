@@ -48,15 +48,21 @@ function buildAi(): { ai: AiClients; aiSource: AiSource } {
     case "pi": {
       const pi = createPiClient({
         bin: env.HB_PI_BIN,
+        piProvider: env.HB_PI_PROVIDER,
         thinking: { light: env.HB_PI_THINKING_LIGHT, writing: env.HB_PI_THINKING_WRITING },
       });
       // Not fatal: the user can sign in to pi while the app runs. Drafts say how until then.
       void pi.authReady().then((ready) => {
-        if (!ready) console.warn(JSON.stringify({ level: "warn", msg: "pi is not signed in to anthropic" }));
+        if (!ready)
+          console.warn(JSON.stringify({ level: "warn", msg: "pi is not signed in", provider: env.HB_PI_PROVIDER }));
       });
       return {
         ai: { anthropic: pi, openai: pi },
-        aiSource: { kind: "pi", models: { light: env.HB_PI_MODEL_LIGHT, writing: env.HB_PI_MODEL_WRITING } },
+        aiSource: {
+          kind: "pi",
+          provider: env.HB_PI_PROVIDER === "anthropic" ? "anthropic" : "openai",
+          models: { light: env.HB_PI_MODEL_LIGHT, writing: env.HB_PI_MODEL_WRITING },
+        },
       };
     }
     default: {

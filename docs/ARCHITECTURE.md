@@ -68,13 +68,13 @@ Every enum lives once in `src/shared/enums.ts`. The Zod enum and the database CH
 | `HB_STATIC_DIR`, `HB_DATA_DIR` | `./dist`, `./data` | Built SPA; AI key files. |
 | `HB_CHROMIUM_PATH` | unset | Chromium for PDF export. |
 | `HB_AI` | `live` | `live` (saved key), `pi` (decision 48) or `fake`. |
-| `HB_PI_*` | `pi`, Haiku and Opus models | pi binary, model and thinking level per tier. |
+| `HB_PI_*` | `pi`, Anthropic, Haiku and Opus models | pi binary, credential provider, model and thinking level per tier. `HB_PI_PROVIDER` accepts `anthropic`, `openai`, or `openai-codex`. |
 | `HB_SOURCES`, `HB_GITHUB`, `HB_FX` | `live`, `public`, `live` | `fixture` reads recorded files from the matching `*_DIR`. `HB_GITHUB=gh` uses the gh CLI. |
 | `HB_GITHUB_USER` | unset | Your GitHub login. Required with `HB_GITHUB=gh`. |
 | `HB_PROJECTS_DIR` | unset | Folders for Find my projects (decision 79). |
 | `HB_GITLAB_HOSTS`, `HB_GIT_EMAILS` | unset | Self-hosted GitLab hosts (decision 80); extra commit emails. |
 
-With `HB_AI=pi`, both provider slots use the pi client, and `ai_calls.provider` records `anthropic`. Settings shows the pi models instead of the key form.
+With `HB_AI=pi`, both provider slots use the pi client. `HB_PI_PROVIDER` selects its credentials and model namespace for both tiers. `openai-codex` uses Pi's existing OpenAI OAuth sign-in without copying credentials into the app. `ai_calls.provider` records `openai` for either OpenAI provider and `anthropic` otherwise. Settings shows the active provider and pi models instead of the key form.
 
 ## Folder map
 
