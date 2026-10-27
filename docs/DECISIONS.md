@@ -1,4 +1,4 @@
-# hanapbuhay: decisions
+# rolecraft: decisions
 
 This file lists the product and design decisions that hold now. Each entry states the current rule, with a short reason when the reason is not obvious. The numbers are stable: code comments cite them as "decision N", so a number is never reused or renumbered. To change a decision, edit its entry so that it states the new rule. To add one, use the next free number. An entry that no longer applies names the decision that replaced it.
 
@@ -6,7 +6,7 @@ For how the app is built, see [ARCHITECTURE.md](ARCHITECTURE.md). For the Chrome
 
 ## Product
 
-hanapbuhay is a local job-search workspace for a person based in the Philippines who applies globally, mainly to Philippine and US employers and clients. It finds postings, ranks them against the user's confirmed facts, tracks applications and contracts, and drafts tailored files and answers that use only those facts.
+rolecraft is a local job-search workspace for a person based in the Philippines who applies globally, mainly to Philippine and US employers and clients. It finds postings, ranks them against the user's confirmed facts, tracks applications and contracts, and drafts tailored files and answers that use only those facts.
 
 The first user is the author. A few friends will each run their own copy.
 

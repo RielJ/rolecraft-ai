@@ -8,9 +8,9 @@ type NotPaired = Exclude<ConnectionStatus, { kind: "paired" }>;
 function notice(status: NotPaired): string | null {
   switch (status.kind) {
     case "unpaired":
-      return status.notice === "revoked" ? "This browser was disconnected from Hanapbuhay. Pair it again." : null;
+      return status.notice === "revoked" ? "This browser was disconnected from Rolecraft. Pair it again." : null;
     case "unreachable":
-      return `Can't reach Hanapbuhay at ${status.endpoint}. Start the server, then retry.`;
+      return `Can't reach Rolecraft at ${status.endpoint}. Start the server, then retry.`;
     case "error":
       return status.message;
     default: {
@@ -33,7 +33,7 @@ export function Pairing({ status, onReply }: { status: NotPaired; onReply: (repl
     event.preventDefault();
     const parsed = ExtensionEndpoint.safeParse(endpoint);
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Enter the Hanapbuhay address.");
+      setError(parsed.error.issues[0]?.message ?? "Enter the Rolecraft address.");
       return;
     }
     // First await in the handler: Chrome only shows the permission prompt during the user gesture.
@@ -60,9 +60,9 @@ export function Pairing({ status, onReply }: { status: NotPaired; onReply: (repl
   return (
     <main className="flex flex-col gap-5 p-4">
       <header className="flex flex-col gap-1">
-        <h1 className="text-base font-semibold">Pair with Hanapbuhay</h1>
+        <h1 className="text-base font-semibold">Pair with Rolecraft</h1>
         <p className="text-sm text-muted-foreground">
-          In Hanapbuhay, open Settings and create a pairing code. Codes work once and expire after 10 minutes.
+          In Rolecraft, open Settings and create a pairing code. Codes work once and expire after 10 minutes.
         </p>
       </header>
 
@@ -80,7 +80,7 @@ export function Pairing({ status, onReply }: { status: NotPaired; onReply: (repl
       <form className="flex flex-col gap-4" onSubmit={submit} noValidate>
         <div className="flex flex-col gap-1.5">
           <label htmlFor={endpointId} className="text-sm font-medium">
-            Hanapbuhay address
+            Rolecraft address
           </label>
           <input
             id={endpointId}

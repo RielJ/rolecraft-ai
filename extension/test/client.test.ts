@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { EXTENSION_AUTH_MATRIX, ExtensionEndpoint, PairingId, PingResult } from "@shared/extension";
+import { OpportunityId } from "@shared/api";
+import {
+  ApplicationSessionId,
+  EXTENSION_AUTH_MATRIX,
+  ExtensionEndpoint,
+  PairingId,
+  PingResult,
+} from "@shared/extension";
 import { z } from "zod";
 import { createClient, type FetchLike, ROUTES } from "../src/api/client";
 import { getStatus, pair } from "../src/background/pairing";
@@ -56,7 +63,71 @@ function header(init: RequestInit, name: string): string | null {
   return new Headers(init.headers).get(name);
 }
 
+describe("session binding cleanup", () => {
+  test("a binding saved during compare-and-clear is not removed", async () => {
+    const { local, session } = pairedStores();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let first = true;
+    const store = createStore({
+      local,
+      session: {
+        ...session,
+        get: async (keys) => {
+          const snapshot = await session.get(keys);
+          if (first) {
+            first = false;
+            entered.resolve();
+            await release.promise;
+          }
+          return snapshot;
+        },
+      },
+    });
+    const oldId = ApplicationSessionId.parse(SESSION_ID);
+    const clearing = store.clearBinding(oldId);
+    await entered.promise;
+    const nextId = ApplicationSessionId.parse("1c9f2e0f-4d3b-4f60-9b8c-7d6e5f4a3b2c");
+    const saving = store.saveBinding({
+      sessionId: nextId,
+      opportunityId: OpportunityId.parse(OPPORTUNITY_ID),
+      tabId: 8,
+      claimedAt: 2,
+    });
+    release.resolve();
+    await Promise.all([clearing, saving]);
+    expect(await store.readBinding()).toMatchObject({ sessionId: nextId, tabId: 8 });
+  });
+
+  test("clearing an old session leaves the new binding intact", async () => {
+    const { store } = pairedStores();
+    await store.clearBinding(ApplicationSessionId.parse("1c9f2e0f-4d3b-4f60-9b8c-7d6e5f4a3b2c"));
+    expect(await store.readBinding()).toMatchObject({ sessionId: SESSION_ID, tabId: 7 });
+  });
+});
+
 describe("client: bearer calls", () => {
+  test("an old request's late network failure leaves the new binding intact", async () => {
+    const { store } = pairedStores();
+    const entered = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<Response>();
+    const client = createClient({
+      store,
+      fetch: fakeFetch(() => {
+        entered.resolve();
+        return response.promise;
+      }),
+    });
+    const old = client.call({ route: ROUTES.ping, schema: PingResult });
+    await entered.promise;
+    const binding = await store.readBinding();
+    if (binding === null) throw new Error("No binding");
+    const nextId = ApplicationSessionId.parse("1c9f2e0f-4d3b-4f60-9b8c-7d6e5f4a3b2c");
+    await store.saveBinding({ ...binding, sessionId: nextId, tabId: 8 });
+    response.reject(new TypeError("Failed to fetch"));
+    expect(await old).toEqual({ kind: "unreachable" });
+    expect(await store.readBinding()).toMatchObject({ sessionId: nextId, tabId: 8 });
+  });
   test("sends the bearer token, refuses redirects, and parses with the schema", async () => {
     const { store } = pairedStores();
     const fetch = fakeFetch(() => json(200, { ok: true, pairingId: PAIRING_ID }));
@@ -186,7 +257,7 @@ describe("endpoint", () => {
   test.each([
     "http://192.168.1.10:3000",
     "http://10.0.0.2:3000",
-    "http://hanapbuhay.local:3000",
+    "http://rolecraft.local:3000",
     "http://localhost:3000/api",
     "http://user:pw@localhost:3000",
     "ftp://localhost:3000",
@@ -197,7 +268,7 @@ describe("endpoint", () => {
   test.each([
     ["http://localhost:3000", "http://localhost/*"],
     ["http://127.0.0.1:8080/", "http://127.0.0.1/*"],
-    ["https://hb.example.com", "https://hb.example.com/*"],
+    ["https://rolecraft.example.com", "https://rolecraft.example.com/*"],
   ])("%s asks for host permission %s", (raw, pattern) => {
     expect(hostPermissionPattern(ExtensionEndpoint.parse(raw))).toBe(pattern);
   });

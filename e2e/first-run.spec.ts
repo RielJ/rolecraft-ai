@@ -38,6 +38,8 @@ test("the first Refresh opens the sources panel, a source turned off is never ca
 }) => {
   // A fresh database shows the checklist on Matches, Board and Profile.
   await page.goto("/");
+  await expect(page).toHaveTitle("Rolecraft");
+  await expect(page.getByRole("banner").getByText("Rolecraft", { exact: true })).toBeVisible();
   await expect(checklist(page)).toBeVisible();
   await expect(checklist(page)).toContainText("1 of 6 done");
   await page.getByRole("banner").getByRole("link", { name: "Board" }).click();

@@ -2,12 +2,12 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronLeftIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { JobId, MatchItem, MatchQueryInput, OpportunityId } from "@/shared/api";
+import type { JobId, MatchItem, MatchQueryInput, MatchSort, OpportunityId } from "@/shared/api";
 import { DISMISS_REASONS, type DismissReason } from "@/shared/enums";
 import { dismissReasonLabel, matchLevelLabel } from "@/shared/labels";
 import { errorMessage } from "../api";
 import { JobList, JobListSkeleton, optionId } from "../components/job-list";
-import { CompanyFilter, SourceFilter, type SourcePick } from "../components/match-filters";
+import { CompanyFilter, SortFilter, SourceFilter, type SourcePick } from "../components/match-filters";
 import { type PaneActions, ReadingPane } from "../components/reading-pane";
 import { SetupChecklist } from "../components/setup-checklist";
 import { ShortcutSheet } from "../components/shortcut-sheet";
@@ -103,9 +103,14 @@ function ignoreKeys(e: KeyboardEvent): boolean {
 /** The posting's page for `v`: only an http(s) address from the job's own data opens. */
 function postingUrl(job: MatchItem | null): string | null {
   const raw = job?.applyUrl ?? job?.seenOn[0]?.listingUrl;
-  if (!raw || !URL.canParse(raw)) return null;
-  const url = new URL(raw);
-  return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    // Not a parsable address: nothing to open.
+    return null;
+  }
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -249,6 +254,8 @@ export function MatchesPage() {
   // Picked companies by key, with the name shown on the button.
   const [companies, setCompanies] = useState<ReadonlyMap<string, string>>(new Map());
   const [source, setSource] = useState<SourcePick>(null);
+  // Best match by default; the user's pick survives filter changes.
+  const [sort, setSort] = useState<MatchSort>("relevance");
   const [companyOpen, setCompanyOpen] = useState(false);
   const q = useSettled(search.trim(), 250);
   // Blank turns the filter off (0); untouched leaves it to the saved minimum (undefined).
@@ -260,6 +267,7 @@ export function MatchesPage() {
     payAtLeast,
     company: companies.size > 0 ? [...companies.keys()] : undefined,
     source: source ?? undefined,
+    sort: sort === "relevance" ? undefined : sort,
   };
   const matches = useMatches(query);
 
@@ -554,8 +562,12 @@ export function MatchesPage() {
   }
 
   function openPosting() {
+    // postingUrl() allows only an http(s) address from the job's own data; re-check at the open
+    // site so no caller can ever widen it.
     const url = postingUrl(current);
-    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    if (url?.startsWith("http://") || url?.startsWith("https://")) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
   }
 
   function scrollPane(direction: 1 | -1) {
@@ -780,6 +792,7 @@ export function MatchesPage() {
           value={source}
           onChange={setSource}
         />
+        <SortFilter value={sort} onChange={setSort} />
         <div className="flex items-center gap-2">
           <Label htmlFor={payId} className="text-muted-foreground text-sm">
             Pay at least

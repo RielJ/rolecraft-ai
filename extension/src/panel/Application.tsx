@@ -1,28 +1,27 @@
 import type { FieldDescriptor, ScanNonce } from "@shared/extension";
 import { useEffect, useRef, useState } from "react";
 import { requestOriginAccess } from "../background/permissions";
-import type { PanelReply, PanelRequest } from "../messages";
+import type { PanelReply } from "../messages";
 import type { AttachRequests } from "../messages-attach";
-import type { AppliedWatch } from "./AppliedPrompt";
+import type { ApplicationCompletion, AppliedWatch } from "./AppliedPrompt";
 import { FileAttachments } from "./Attachments";
 import { sendToWorker } from "./bridge";
 import { DraftProgress } from "./DraftProgress";
 import { FieldReview, LeftBlankList } from "./FieldReview";
+import { createPanelMachine } from "./machine";
+import { QuestionAnswers } from "./QuestionAnswers";
 import { SavePreference } from "./SavePreference";
 import { SensitiveChecklist } from "./SensitiveChecklist";
 import {
   appliedWatch,
   type ClaimState,
-  type Effect,
   fillSummary,
   INITIAL_STATE,
   type PanelEvent,
   type PanelState,
-  replyToEvent,
   reviewItems,
   saveCandidates,
   type TabInfo,
-  transition,
   unresolvedItems,
   type Work,
 } from "./state";
@@ -41,67 +40,33 @@ export async function activeTab(): Promise<TabInfo | null> {
 /** Run `transition` and the requests it returns. Replies come back as events. */
 function useMachine(onReply: (reply: PanelReply) => void) {
   const [state, setState] = useState<PanelState>(INITIAL_STATE);
-  const ref = useRef(state);
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const live = useRef(true);
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
-
-  // Built once: all close over refs only, so `dispatch` and `ask` are stable for effects and children.
-  const [{ dispatch, ask }] = useState(() => {
-    /** Send one request; its reply reaches `onReply` and comes back to the machine as an event. */
-    const ask = async (request: PanelRequest): Promise<PanelReply> => {
-      const reply = await sendToWorker(request);
-      if (!live.current) return reply;
-      onReplyRef.current(reply);
-      apply(replyToEvent({ request, reply }));
-      return reply;
-    };
-    const send = async (request: Effect["request"]) => {
-      await ask(request);
-    };
-    const run = ({ request, delayMs }: Effect) => {
-      if (delayMs === 0) {
-        void send(request);
-        return;
-      }
-      const timer = setTimeout(() => {
-        timers.current.delete(timer);
-        void send(request);
-      }, delayMs);
-      timers.current.add(timer);
-    };
-    const apply = (event: PanelEvent) => {
-      const out = transition(ref.current, event);
-      ref.current = out.state;
-      setState(out.state);
-      for (const effect of out.effects) run(effect);
-    };
-    return { dispatch: apply, ask };
-  });
-
+  const [machine] = useState(() =>
+    createPanelMachine({ send: sendToWorker, onState: setState, onReply: (reply) => onReplyRef.current(reply) }),
+  );
   useEffect(() => {
-    live.current = true;
-    const pending = timers.current;
-    return () => {
-      live.current = false;
-      for (const t of pending) clearTimeout(t);
-      pending.clear();
-    };
-  }, []);
-
-  return { state, dispatch, ask, current: ref };
+    machine.start();
+    return machine.stop;
+  }, [machine]);
+  return { state, dispatch: machine.dispatch, ask: machine.ask, current: machine.current };
 }
 
 export function Application({
   onReply,
   onWatch,
+  completion,
 }: {
   onReply: (reply: PanelReply) => void;
+  completion: ApplicationCompletion | null;
   /** Gets `appliedWatch(state)` whenever it changes. App.tsx shows the applied prompt above the tabs. */
   onWatch: (watch: AppliedWatch | null) => void;
 }) {
   const { state, dispatch, ask, current } = useMachine(onReply);
+
+  useEffect(() => {
+    if (completion !== null) dispatch({ kind: "application_completed", ...completion });
+  }, [completion, dispatch]);
 
   const watch = appliedWatch(state);
   const watchSession = watch?.sessionId ?? null;
@@ -125,8 +90,9 @@ export function Application({
     };
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      retab();
-      dispatch({ kind: "refresh" });
+      void activeTab().then((tab) => {
+        if (!cancelled) dispatch({ kind: "refresh_tab", tab });
+      });
     };
     chrome.tabs.onActivated.addListener(retab);
     chrome.tabs.onUpdated.addListener(onUpdated);
@@ -145,6 +111,10 @@ export function Application({
     dispatch({ kind: "tab_changed", tab: await activeTab() });
   }
 
+  async function refreshApplication() {
+    dispatch({ kind: "refresh_tab", tab: await activeTab() });
+  }
+
   async function scan() {
     const url = current.current.tab?.url;
     if (url === null || url === undefined) return;
@@ -152,23 +122,29 @@ export function Application({
     dispatch({ kind: "scan_clicked", access });
   }
 
+  function answerReply(reply: PanelReply) {
+    onReply(reply);
+    if (reply.status.kind !== "paired") dispatch({ kind: "connection_lost" });
+    else if (reply.result?.kind === "filled" && reply.result.result.filled.length > 0) dispatch({ kind: "attached" });
+  }
+
   const { session } = state;
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex justify-end">
+        <button type="button" className="btn-secondary" onClick={() => void refreshApplication()}>
+          Refresh application
+        </button>
+      </div>
       {state.notice !== null && <Notice text={state.notice} onDismiss={() => dispatch({ kind: "notice_dismissed" })} />}
       {(() => {
         switch (session.kind) {
           case "loading":
             return <Status text="Looking for an application…" />;
           case "none":
-            return (
-              <Empty
-                text="Click Apply on a job in Hanapbuhay, then open its application form in this tab."
-                onRetry={() => dispatch({ kind: "refresh" })}
-              />
-            );
+            return <Status text="Click Apply on a job in Rolecraft, then open its application form in this tab." />;
           case "failed":
-            return <Empty text={session.message} onRetry={() => dispatch({ kind: "refresh" })} />;
+            return <Status text={session.message} />;
           case "available":
             return (
               <Claim
@@ -187,6 +163,7 @@ export function Application({
                 dispatch={dispatch}
                 onScan={() => void scan()}
                 attach={ask}
+                onAnswerReply={answerReply}
               />
             );
           default: {
@@ -217,17 +194,6 @@ function Notice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
         onClick={onDismiss}
       >
         Dismiss
-      </button>
-    </div>
-  );
-}
-
-function Empty({ text, onRetry }: { text: string; onRetry: () => void }) {
-  return (
-    <div className="flex flex-col items-start gap-3">
-      <p className="text-sm text-muted-foreground">{text}</p>
-      <button type="button" className="btn-secondary" onClick={onRetry}>
-        Check again
       </button>
     </div>
   );
@@ -338,6 +304,7 @@ function Claimed({
   dispatch,
   onScan,
   attach,
+  onAnswerReply,
 }: {
   work: Work;
   onBoundTab: boolean;
@@ -345,6 +312,7 @@ function Claimed({
   onScan: () => void;
   /** Runs an attach request through the machine, so an attached file starts the applied watch. */
   attach: (request: AttachRequests) => Promise<PanelReply>;
+  onAnswerReply: (reply: PanelReply) => void;
 }) {
   const { scan } = work;
   return (
@@ -384,6 +352,18 @@ function Claimed({
           }
         }
       })()}
+      {(scan.kind === "review" || scan.kind === "filling" || scan.kind === "filled") && (
+        <QuestionAnswers
+          key={`${work.session.id}:${scan.review.nonce}`}
+          sessionId={work.session.id}
+          tabId={work.tabId}
+          nonce={scan.review.nonce}
+          fields={scan.review.fields}
+          disabled={!onBoundTab || scan.kind === "filling"}
+          send={sendToWorker}
+          onConnection={onAnswerReply}
+        />
+      )}
       <FileAttachments
         sessionId={work.session.id}
         tabId={work.tabId}

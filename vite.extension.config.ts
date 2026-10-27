@@ -12,15 +12,24 @@ const outDir = fileURLToPath(new URL("./dist-extension", import.meta.url));
 const alias = { "@shared": fileURLToPath(new URL("./src/shared", import.meta.url)) };
 const define = { "process.env.NODE_ENV": JSON.stringify("production") };
 
-/** Copies extension/manifest.json to the output root. */
+/**
+ * Copies extension/manifest.json and the repo's public/THIRD_PARTY_NOTICES.txt to the output root.
+ * publicDir is off, so this is the only copy of the notices in dist-extension/. A missing notices
+ * file fails the build.
+ */
 function manifest(): Plugin {
   return {
-    name: "hanapbuhay-extension-manifest",
+    name: "rolecraft-extension-manifest",
     generateBundle() {
       this.emitFile({
         type: "asset",
         fileName: "manifest.json",
         source: readFileSync(new URL("./extension/manifest.json", import.meta.url), "utf8"),
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: "THIRD_PARTY_NOTICES.txt",
+        source: readFileSync(new URL("./public/THIRD_PARTY_NOTICES.txt", import.meta.url), "utf8"),
       });
     },
   };
@@ -32,7 +41,7 @@ function manifest(): Plugin {
  */
 function contentScript(): Plugin {
   return {
-    name: "hanapbuhay-extension-content-script",
+    name: "rolecraft-extension-content-script",
     apply: "build",
     async closeBundle() {
       await build({
@@ -49,7 +58,7 @@ function contentScript(): Plugin {
           lib: {
             entry: "src/content/index.ts",
             formats: ["iife"],
-            name: "hanapbuhayContent",
+            name: "rolecraftContent",
             fileName: () => "content.js",
           },
         },

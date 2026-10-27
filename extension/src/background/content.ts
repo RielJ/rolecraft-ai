@@ -1,4 +1,10 @@
-import { DEFAULT_EXTENSION_ENDPOINT, type FillPlan, RuntimeMessage, ScanNonce } from "@shared/extension";
+import {
+  type ApplicationSessionId,
+  DEFAULT_EXTENSION_ENDPOINT,
+  type FillPlan,
+  RuntimeMessage,
+  ScanNonce,
+} from "@shared/extension";
 import { blockedSite } from "@shared/hosts";
 import type { ClientOutcome, Failed, FailureCode } from "../api/client";
 import type { ConnectionStatus, PanelRefusal, PanelReply, PanelResult } from "../messages";
@@ -173,25 +179,24 @@ export function refusedReply(deps: ReplyDeps, reason: PanelRefusal): Promise<Pan
 /**
  * What a server route answers about, which decides whether its failure means the bound session is
  * gone:
- * - `session`: the route looks up the session (prefill, outputs list, draft, task, confirm-applied),
+ * - `session`: the route looks up the session (prefill, outputs list, draft, confirm-applied),
  *   so its not_found is the session's;
  * - `output`: one output of the session (reviewed, PDF). The server's not_found here may be the
  *   output's alone, so only session_expired counts; a later session route catches a lost session;
- * - `none`: not about the session (lookup, import, preferences).
+ * - `none`: does not establish that the current session ended (lookup, import, preferences, task polling).
  */
-export type OutcomeScope = "session" | "output" | "none";
+export type OutcomeScope = "none" | { kind: "session" | "output"; sessionId: ApplicationSessionId };
 
 /** Whether a failed call with this scope and code means the bound session is gone. */
 function dropsBinding({ scope, code }: { scope: OutcomeScope; code: FailureCode }): boolean {
-  switch (scope) {
+  if (scope === "none") return false;
+  switch (scope.kind) {
     case "session":
       return code === "session_expired" || code === "not_found";
     case "output":
       return code === "session_expired";
-    case "none":
-      return false;
     default: {
-      const exhaustive: never = scope;
+      const exhaustive: never = scope.kind;
       return exhaustive;
     }
   }
@@ -229,7 +234,7 @@ export async function fromOutcome<T>({
       return { status: { kind: "unreachable", endpoint: endpoint ?? DEFAULT_EXTENSION_ENDPOINT }, error: null };
     }
     case "failed": {
-      if (dropsBinding({ scope, code: outcome.code })) await store.clearBinding();
+      if (scope !== "none" && dropsBinding({ scope, code: outcome.code })) await store.clearBinding(scope.sessionId);
       const message = outcome.message.slice(0, 500);
       return { ...(await localReply(deps, { kind: "failed", code: outcome.code, message })), error: message };
     }

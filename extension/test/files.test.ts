@@ -656,7 +656,7 @@ describe("statusFromReply", () => {
       [
         { status: { kind: "unpaired", endpoint: ENDPOINT, notice: "revoked" }, error: null },
         "attach",
-        { kind: "problem", message: "Hanapbuhay isn't connected, so nothing was attached.", offerDownload: false },
+        { kind: "problem", message: "Rolecraft isn't connected, so nothing was attached.", offerDownload: false },
       ],
     ];
     for (const [reply, action, expected] of cases) {

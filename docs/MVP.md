@@ -1,4 +1,4 @@
-# MVP: apply with Hanapbuhay
+# MVP: apply with Rolecraft
 
 Agreed on 2026-10-21. This file sets what the MVP is, how work stays on course, and the log of real applications. Read it before starting any change.
 

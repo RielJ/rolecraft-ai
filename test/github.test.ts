@@ -297,7 +297,7 @@ describe("public reader", () => {
     expect(bundle.commits.map((c) => c.subject)).not.toContain("Fix typo in README");
     expect(bundle.commits).toHaveLength(5);
     expect(new Set(seen.map((s) => new URL(s.url).hostname))).toEqual(new Set(["api.github.com"]));
-    expect(seen.every((s) => s.agent === "hanapbuhay/0.1 (personal use)")).toBe(true);
+    expect(seen.every((s) => s.agent === "rolecraft/0.1 (personal use)")).toBe(true);
     expect(seen.some((s) => s.url.includes("commits?author=juandc&per_page=100"))).toBe(true);
   });
 

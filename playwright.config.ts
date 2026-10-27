@@ -2,6 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_ISOLATION_ENV, E2E_SERVER_ARGS } from "./scripts/e2e-isolation";
 
 // E2E runs the built SPA against real servers, one per worker, each on its own port, database and
 // temp dirs, so workers never share rows and never touch the dev database or whatever listens on
@@ -17,9 +18,14 @@ const BASE_DATABASE_URL =
 
 /** The resources of worker slot `slot`: its server's port, database, and fixture dirs. */
 function slotOf(slot: number) {
-  const db = new URL(BASE_DATABASE_URL);
+  let db: URL;
+  try {
+    db = new URL(BASE_DATABASE_URL);
+  } catch {
+    throw new Error("DATABASE_URL_E2E must be a valid database URL.");
+  }
   db.pathname = `${db.pathname}_w${slot}`;
-  const dir = join(tmpdir(), `hanapbuhay-e2e-w${slot}`);
+  const dir = join(tmpdir(), `rolecraft-e2e-w${slot}`);
   return {
     port: BASE_PORT + slot,
     databaseUrl: db.toString(),
@@ -76,11 +82,12 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: slots.map((slot) => ({
-    command: "bun src/server/main.ts",
+    command: ["bun", ...E2E_SERVER_ARGS].join(" "),
     url: `http://localhost:${slot.port}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,
     env: {
+      ...E2E_ISOLATION_ENV,
       PORT: String(slot.port),
       DATABASE_URL: slot.databaseUrl,
       HB_STATIC_DIR: "./dist",

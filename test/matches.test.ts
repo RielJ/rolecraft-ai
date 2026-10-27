@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { compileSkills, type SkillDictionary } from "@/domain/features";
 import { derive, type JobFields } from "@/domain/posting";
 import { jobListings, jobs, sources } from "@/server/db/schema";
 import { createApp } from "@/server/http/app";
 import type { Deps } from "@/server/services/context";
+import { MAX_MATCHES } from "@/server/services/matches";
 import {
   ApiErrorBody,
   BoardItemDto,
@@ -384,6 +385,86 @@ describe("search and filters", () => {
   test("bad filters are a 400 in the app's error shape", async () => {
     const body = await ok(await call("GET", "/matches?payAtLeast=-5"), ApiErrorBody, 400);
     expect(body.error.code).toBe("invalid_input");
+    expect((await ok(await call("GET", "/matches?sort=hot"), ApiErrorBody, 400)).error.code).toBe("invalid_input");
+  });
+});
+
+describe("sort by date", () => {
+  test("newest and oldest order the whole list by when each job was first found", async () => {
+    await targeting({ targetTitles: ["Backend Engineer"] });
+    const profile = await pasteCv("- Ran Go and Postgres services in production");
+    await confirm(profile, "Go and Postgres");
+    // Added oldest first, so Best match and date order disagree: the strong job is the oldest.
+    await addJob({ title: "Backend Engineer, Two of two", description: `Go, PostgreSQL. ${WORLDWIDE}` });
+    await addJob({ title: "Backend Engineer, No skills named", description: `Build things with us. ${WORLDWIDE}` });
+    await addJob({ title: "Backend Engineer, One of three", description: `Go, Rust, Elixir. ${WORLDWIDE}` });
+
+    // Best match (the default): the strong job first, then by skill coverage.
+    expect(titles(await list())).toEqual([
+      "Backend Engineer, Two of two",
+      "Backend Engineer, One of three",
+      "Backend Engineer, No skills named",
+    ]);
+
+    // Newest first: first-found date, so the order they were added, whatever the level.
+    expect(titles(await list("?sort=newest"))).toEqual([
+      "Backend Engineer, One of three",
+      "Backend Engineer, No skills named",
+      "Backend Engineer, Two of two",
+    ]);
+
+    // Oldest first: the same order, reversed.
+    expect(titles(await list("?sort=oldest"))).toEqual([
+      "Backend Engineer, Two of two",
+      "Backend Engineer, No skills named",
+      "Backend Engineer, One of three",
+    ]);
+  });
+
+  test("jobs first found at the same time tie by id, so the order never moves", async () => {
+    const a = await addJob({ title: "A Engineer", description: WORLDWIDE });
+    const b = await addJob({ title: "B Engineer", description: WORLDWIDE });
+    const at = new Date("2026-10-02T12:00:00Z");
+    await deps.db
+      .update(jobs)
+      .set({ firstSeenAt: at })
+      .where(inArray(jobs.id, [a, b]));
+    const tied = [
+      { id: a, title: "A Engineer" },
+      { id: b, title: "B Engineer" },
+    ].sort((x, y) => x.id.localeCompare(y.id));
+    expect(titles(await list("?sort=newest"))).toEqual(tied.map((t) => t.title));
+    expect(titles(await list("?sort=oldest"))).toEqual(tied.map((t) => t.title));
+  });
+
+  test("the list is ordered before the 500 cut, so the far end of the order is what is dropped", async () => {
+    const n = MAX_MATCHES + 2;
+    await deps.db.insert(jobs).values(
+      Array.from({ length: n }, (_, i) => ({
+        userId: deps.userId,
+        origin: "source" as const,
+        title: `Bulk Engineer ${String(i).padStart(3, "0")}`,
+        company: "Acme",
+        titleKey: `bulk-engineer-${i}`,
+        companyKey: "acme",
+        description: WORLDWIDE,
+        contentHash: `bulk-${i}`,
+        descriptionKey: `bulk-${i}`,
+        // Inserted oldest first, so a sort applied only after the cut would drop the newest two.
+        firstSeenAt: new Date(Date.parse("2026-10-01T00:00:00Z") + i * 60_000),
+      })),
+    );
+
+    const newest = await list("?sort=newest");
+    expect(newest.jobs).toHaveLength(MAX_MATCHES);
+    expect(newest.jobs.slice(0, 2).map((j) => j.title)).toEqual(["Bulk Engineer 501", "Bulk Engineer 500"]);
+    expect(newest.jobs.at(-1)?.title).toBe("Bulk Engineer 002");
+    expect(newest.jobs.some((j) => j.title === "Bulk Engineer 000")).toBe(false);
+
+    const oldest = await list("?sort=oldest");
+    expect(oldest.jobs.slice(0, 2).map((j) => j.title)).toEqual(["Bulk Engineer 000", "Bulk Engineer 001"]);
+    expect(oldest.jobs.at(-1)?.title).toBe("Bulk Engineer 499");
+    expect(oldest.jobs.some((j) => j.title === "Bulk Engineer 501")).toBe(false);
   });
 });
 

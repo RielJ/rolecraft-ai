@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { EXTENSION_E2E_PORT, serverEnv } from "./e2e-extension/server-env";
+import { E2E_SERVER_ARGS } from "./scripts/e2e-isolation";
 
 // The extension end-to-end run (docs/EXTENSION.md, "Run the end-to-end test"). The built
 // extension loads into a persistent Chromium context (e2e-extension/fixtures.ts) against the real
@@ -19,7 +20,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "bun src/server/main.ts",
+    command: ["bun", ...E2E_SERVER_ARGS].join(" "),
     url: `http://localhost:${EXTENSION_E2E_PORT}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,

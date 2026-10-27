@@ -1,15 +1,17 @@
 /**
  * The only `fetch` in the server (docs/ARCHITECTURE.md, "Refresh (sync)"): user agent
- * `hanapbuhay/0.1 (personal use)`, at most 2 requests at a time per host, 400 to 900 ms between
+ * `rolecraft/0.1 (personal use)`, at most 2 requests at a time per host, 400 to 900 ms between
  * requests to the same host, a 10 s timeout, `Retry-After` honored, at most 3 attempts with
  * exponential backoff, and a 2 MB response cap. Everything that varies (fetch, sleep, the clock,
  * randomness) is injected so tests never touch the network or wait.
  *
- * URLs come from the user (add by link), so every request and every redirect hop must pass
- * `publicUrl`: http or https only, and never a loopback, private or link-local address.
+ * URLs come from the user (add by link), so every request and redirect hop must pass
+ * `publicUrl`: http or https only, with local hostname patterns and private IP literals blocked.
+ * It does not resolve DNS names or pin the connection address. A permitted hostname may still
+ * resolve to a private address; this is not a complete SSRF boundary (see SECURITY.md).
  */
 
-export const USER_AGENT = "hanapbuhay/0.1 (personal use)";
+export const USER_AGENT = "rolecraft/0.1 (personal use)";
 const PER_HOST = 2;
 const GAP_MIN_MS = 400;
 const GAP_MAX_MS = 900;
@@ -79,7 +81,8 @@ function privateIpv6(host: string): boolean {
 /**
  * The URL if it may be fetched: http or https on the default port for its scheme, and a host
  * that is a name or public address. Refuses `localhost`, `*.local`, `*.internal` and loopback,
- * private, link-local, CGNAT or multicast IP literals.
+ * private, link-local, CGNAT or multicast IP literals. This is a syntactic check only; it does
+ * not check DNS results or prevent DNS rebinding.
  */
 export function publicUrl(raw: string): URL {
   const url = URL.parse(raw);

@@ -58,7 +58,7 @@ function toDto(row: SessionRow, job: JobSummary): ApplicationSessionDto {
 function sessionExpired(): AppError {
   return new AppError({
     code: "session_expired",
-    message: "This application session has ended. Click Apply in Hanapbuhay again.",
+    message: "This application session has ended. Click Apply in Rolecraft again.",
   });
 }
 

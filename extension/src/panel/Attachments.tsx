@@ -79,7 +79,7 @@ function isPdfOutput(output: ExtensionOutputDto): output is PdfOutput {
   return PDF_KINDS.some((k) => k === output.kind);
 }
 
-/** Resumes and cover letters, the outputs Hanapbuhay exports as PDF. Resumes first. */
+/** Resumes and cover letters, the outputs Rolecraft exports as PDF. Resumes first. */
 export function attachableOutputs(outputs: readonly ExtensionOutputDto[]): PdfOutput[] {
   const pdfs = outputs.filter(isPdfOutput);
   return [...pdfs.filter((o) => o.kind === "resume"), ...pdfs.filter((o) => o.kind === "letter")];
@@ -120,7 +120,7 @@ export function refusalText(reason: PanelRefusal): string {
     case "not_active":
       return "Switch to the application tab first.";
     case "unsupported_url":
-      return "This tab isn't a web page Hanapbuhay can work with.";
+      return "This tab isn't a web page Rolecraft can work with.";
     case "blocked_host":
       return "This site's terms forbid automated tools. Download the file and upload it yourself.";
     case "permission_denied":
@@ -163,7 +163,7 @@ export function statusFromReply({
   });
   const parsed = AttachReplyResult.safeParse(reply.result);
   if (!parsed.success) {
-    if (reply.status.kind !== "paired") return problem("Hanapbuhay isn't connected, so nothing was attached.");
+    if (reply.status.kind !== "paired") return problem("Rolecraft isn't connected, so nothing was attached.");
     return problem(reply.error ?? "Something went wrong. Nothing was attached.");
   }
   const result = parsed.data;
@@ -283,7 +283,7 @@ export function FileAttachments({ sessionId, tabId, scan, outputs, onBoundTab, s
       </p>
       {pdfs.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          This job has no resume or cover letter yet. Draft them in Hanapbuhay first.
+          This job has no resume or cover letter yet. Draft them in Rolecraft first.
         </p>
       ) : (
         <ul className="divide-y divide-border rounded-control border border-border">

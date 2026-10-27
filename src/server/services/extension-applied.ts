@@ -89,6 +89,6 @@ export async function confirmApplied(
   if (replay) return replay;
   throw new AppError({
     code: "session_expired",
-    message: "This application session has ended. Click Apply in Hanapbuhay again.",
+    message: "This application session has ended. Click Apply in Rolecraft again.",
   });
 }

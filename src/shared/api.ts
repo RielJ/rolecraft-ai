@@ -1383,6 +1383,11 @@ export const MATCH_SOURCE_GROUPS = ["boards", "sites", "added"] as const;
 export const MatchSourceGroup = z.enum(MATCH_SOURCE_GROUPS);
 export type MatchSourceGroup = z.infer<typeof MatchSourceGroup>;
 
+/** The order of the Matches list: Best match, or by the date each job was first found. */
+export const MATCH_SORTS = ["relevance", "newest", "oldest"] as const;
+export const MatchSort = z.enum(MATCH_SORTS);
+export type MatchSort = z.infer<typeof MatchSort>;
+
 /** `GET /api/matches` filters. Query strings, so booleans arrive as "true" or "false". */
 export const MatchQuery = z.object({
   /** Postgres full-text search over title, company and description. */
@@ -1409,6 +1414,11 @@ export const MatchQuery = z.object({
    * one job site's source id.
    */
   source: z.union([MatchSourceGroup, SourceId]).optional(),
+  /**
+   * The order of the list. Best match (level, then search rank and skill coverage) by default;
+   * `newest` and `oldest` order the whole list by when each job was first found, ties by id.
+   */
+  sort: MatchSort.optional(),
 });
 export type MatchQuery = z.infer<typeof MatchQuery>;
 /** The query string as the SPA sends it. */

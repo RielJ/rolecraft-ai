@@ -23,7 +23,7 @@ import {
 } from "@shared/extension";
 import type { OriginAccess } from "../background/permissions";
 import type { PanelRefusal, PanelReply, PanelRequest } from "../messages";
-import type { AppliedWatch } from "./AppliedPrompt";
+import type { ApplicationCompletion, AppliedWatch } from "./AppliedPrompt";
 
 // The Application screen as a pure state machine (docs/EXTENSION.md).
 // `transition` returns the next state and the worker requests to send; the UI only renders state,
@@ -113,6 +113,7 @@ export type PanelState = { tab: TabInfo | null; session: SessionState; notice: s
 export type PanelEvent =
   | { kind: "opened"; tab: TabInfo | null }
   | { kind: "refresh" }
+  | { kind: "refresh_tab"; tab: TabInfo | null }
   | { kind: "tab_changed"; tab: TabInfo | null }
   | { kind: "discovered"; active: ActiveSessionResponse }
   | { kind: "discover_failed"; message: string }
@@ -121,6 +122,7 @@ export type PanelEvent =
   | { kind: "claim_mismatch"; details: UrlMismatchDetails }
   | { kind: "claim_failed"; message: string }
   | { kind: "session_ended"; message: string }
+  | ({ kind: "application_completed" } & ApplicationCompletion)
   | { kind: "scan_clicked"; access: OriginAccess }
   | { kind: "scanned"; nonce: ScanNonce; adapter: AdapterId; fields: readonly FieldDescriptor[] }
   | { kind: "scan_failed"; message: string }
@@ -296,7 +298,7 @@ export function saveCandidates(scan: Extract<ScanState, { kind: "filled" }>): Sa
   return [...byCategory.values()];
 }
 
-/** Answer questions with no draft yet, which the panel can ask Hanapbuhay to draft. Never salary. */
+/** Answer questions with no draft yet, which the panel can ask Rolecraft to draft. Never salary. */
 export function unansweredQuestions(outputs: readonly ExtensionOutputDto[]): ExtensionOutputDto[] {
   return outputs.filter((o) => o.kind === "answer" && o.generatedAt === null && o.mustAnswer !== "salary");
 }
@@ -391,20 +393,23 @@ function tabChanged(state: PanelState, tab: TabInfo | null): Transition {
   switch (session.kind) {
     case "none":
     case "failed":
-      return { state: { ...next, session: { kind: "loading" } }, effects: [DISCOVER] };
     case "available":
-      return session.claim.kind === "claiming" ? stay(next) : claimFor(next, session.session, false);
+      // Discover first: an Apply click may have replaced the job we were about to claim.
+      return { state: { ...next, session: { kind: "loading" } }, effects: [DISCOVER] };
     case "claimed": {
       const { work } = session;
       // Same tab, new address: a scan or review of the old page is stale. A finished fill stays,
       // so its save prompts survive the page moving on. Another tab: the binding stays put.
       if (tab?.tabId === work.tabId && prev?.tabId === work.tabId && work.scan.kind !== "filled") {
-        return stay({ ...next, session: { kind: "claimed", work: { ...work, scan: { kind: "idle" } } } });
+        return {
+          state: { ...next, session: { kind: "claimed", work: { ...work, scan: { kind: "idle" } } } },
+          effects: [DISCOVER],
+        };
       }
-      return stay(next);
+      return { state: next, effects: [DISCOVER] };
     }
     case "loading":
-      return stay(next);
+      return { state: next, effects: [DISCOVER] };
     default: {
       const exhaustive: never = session;
       return exhaustive;
@@ -416,12 +421,10 @@ function tabChanged(state: PanelState, tab: TabInfo | null): Transition {
 function refresh(state: PanelState): Transition {
   switch (state.session.kind) {
     case "loading":
-      return stay(state);
     case "none":
     case "failed":
-      return { state: { ...state, session: { kind: "loading" } }, effects: [DISCOVER] };
     case "available":
-      return state.session.claim.kind === "claiming" ? stay(state) : { state, effects: [DISCOVER] };
+      return { state: { ...state, session: { kind: "loading" } }, effects: [DISCOVER] };
     case "claimed":
       return { state, effects: [DISCOVER] };
     default: {
@@ -441,6 +444,11 @@ export function transition(state: PanelState, event: PanelEvent): Transition {
 
     case "refresh":
       return refresh(state);
+
+    case "refresh_tab": {
+      const moved = tabChanged(state, event.tab);
+      return moved.effects.length === 0 ? refresh(moved.state) : moved;
+    }
 
     case "discovered": {
       const current = state.session;
@@ -485,6 +493,20 @@ export function transition(state: PanelState, event: PanelEvent): Transition {
     case "claim_failed":
       if (state.session.kind !== "available") return stay(state);
       return stay({ ...state, session: { ...state.session, claim: { kind: "failed", message: event.message } } });
+
+    case "application_completed": {
+      if (state.session.kind !== "claimed" || state.session.work.session.id !== event.sessionId) return stay(state);
+      return {
+        state: {
+          ...state,
+          session: { kind: "loading" },
+          notice: event.result.changed
+            ? "Marked as applied in Rolecraft."
+            : "Rolecraft already had this job as applied or further along.",
+        },
+        effects: [DISCOVER],
+      };
+    }
 
     case "session_ended":
       return { state: { ...state, session: { kind: "loading" }, notice: event.message }, effects: [DISCOVER] };
@@ -801,7 +823,7 @@ export function refusalMessage(reason: PanelRefusal): string {
   }
 }
 
-const SESSION_GONE = "This application session ended. Click Apply in Hanapbuhay to start again.";
+const SESSION_GONE = "This application session ended. Click Apply in Rolecraft to start again.";
 
 /**
  * What a worker reply means for the screen. Anything but `paired` is `connection_lost`: the App
@@ -884,7 +906,15 @@ export function replyToEvent({ request, reply }: { request: PanelRequest; reply:
     // Sent by FileAttachments: only a file that went in counts as acting on the tab.
     case "attach":
       return result?.kind === "attach_done" ? { kind: "attached" } : { kind: "ignored" };
+    case "confirm_applied":
+      return result?.kind === "applied"
+        ? { kind: "application_completed", sessionId: request.sessionId, result: result.result }
+        : { kind: "ignored" };
     // Sent by FileAttachments, ImportJobPanel, AppliedPromptPanel and Diagnostics, never by this machine.
+    case "questions_lookup":
+    case "question_create":
+    case "answer_reference_save":
+    case "answer_read":
     case "diagnostics_list":
     case "diagnostics_clear":
     case "attach_download":
@@ -892,7 +922,6 @@ export function replyToEvent({ request, reply }: { request: PanelRequest; reply:
     case "job_lookup":
     case "job_import":
     case "success_check":
-    case "confirm_applied":
       return { kind: "ignored" };
     default: {
       const exhaustive: never = request;

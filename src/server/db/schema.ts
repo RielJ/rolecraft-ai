@@ -85,6 +85,8 @@ import {
   type TypedValue,
 } from "@/shared/extension";
 
+import type { AnswerReferenceId } from "@/shared/extension-answers";
+
 // Column names are snake_case via `casing: "snake_case"` (drizzle.config.ts and client.ts).
 
 /** `<column> IN ('a','b')` built from the shared enum array, so Zod and the CHECK agree. */
@@ -769,5 +771,28 @@ export const applicationPreferences = pgTable(
       .on(t.userId, t.opportunityId, t.category)
       .where(sql`opportunity_id IS NOT NULL`),
     index("application_preferences_opportunity").on(t.opportunityId),
+  ],
+);
+
+/** Explicitly saved free-text answers. References are suggestions, never automatic prefill. */
+export const answerReferences = pgTable(
+  "answer_references",
+  {
+    id: uuid().primaryKey().defaultRandom().$type<AnswerReferenceId>(),
+    userId: userRef(),
+    opportunityId: uuid()
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" })
+      .$type<OpportunityId>(),
+    questionKey: text().notNull(),
+    question: text().notNull(),
+    body: text().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("answer_references_source_question").on(t.userId, t.opportunityId, t.questionKey),
+    index("answer_references_lookup").on(t.userId, t.questionKey),
+    check("answer_references_question", sql`length(btrim(question)) BETWEEN 5 AND 500`),
+    check("answer_references_body", sql`length(btrim(body)) BETWEEN 1 AND 10000`),
   ],
 );

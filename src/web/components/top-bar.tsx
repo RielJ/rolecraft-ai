@@ -48,7 +48,7 @@ export function TopBar() {
       {/* One 57px row on wide screens (pinned headers below rely on it); narrower, the tabs wrap to a second row. */}
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 sm:px-6 lg:h-14 lg:flex-nowrap lg:py-0">
         <Link to="/" className="font-semibold tracking-tight">
-          Hanapbuhay
+          Rolecraft
         </Link>
         <nav
           ref={nav}

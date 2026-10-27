@@ -1,6 +1,6 @@
-# hanapbuhay architecture
+# Rolecraft architecture
 
-This file describes how hanapbuhay is built: the layers, the data model and the main flows. It describes the code as it is. The reasons behind each rule are in [DECISIONS.md](DECISIONS.md), cited here as "decision N". The Chrome extension is documented in [EXTENSION.md](EXTENSION.md).
+This file describes how Rolecraft is built: the layers, the data model and the main flows. It describes the code as it is. The reasons behind each rule are in [DECISIONS.md](DECISIONS.md), cited here as "decision N". The Chrome extension is documented in [EXTENSION.md](EXTENSION.md).
 
 ## Layers
 
@@ -166,7 +166,7 @@ No migration uses `ALTER DEFAULT PRIVILEGES`, so a new table is closed to sync u
 Per enabled source:
 
 1. **Skip** a source whose last run is inside its `minIntervalMinutes` (15 to 60 by adapter, longer for Remotive). It records `skipped` and closes nothing.
-2. **Fetch** outside any transaction, through `adapters/http.ts`: user agent `hanapbuhay/0.1 (personal use)`, 2 requests at a time per host, 400 to 900 ms between them, 10 s timeout, 3 attempts, `Retry-After` honored, 2 MB cap. Company boards return the whole board (`complete: true`). Built-in boards return a recent window (`complete: false`) and are filtered to the keywords locally.
+2. **Fetch** outside any transaction, through `adapters/http.ts`: user agent `rolecraft/0.1 (personal use)`, 2 requests at a time per host, 400 to 900 ms between them, 10 s timeout, 3 attempts, `Retry-After` honored, 2 MB cap. Company boards return the whole board (`complete: true`). Built-in boards return a recent window (`complete: false`) and are filtered to the keywords locally.
 3. **Filter** every posting with `roleFit` (decisions 44 and 53). Sure drops go to `role_drops` and `last_dropped`. `keep` and `unsure` continue.
 4. **Normalize** with domain code: text, dedup keys, skills with the user's dictionary, seniority, minimum years, pay, hours, eligibility, content hash.
 5. **Plan** with `planSourceRun`, a pure function. It returns `failed` or `rate_limited` (write the `last_*` columns only), `suspicious_empty` (zero postings after a run that had some: change nothing), or `ok` with upserts. The empty check counts postings before any filter.

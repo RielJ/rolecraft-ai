@@ -93,7 +93,16 @@ async function confirmApplied(deps: ImportDeps, request: Request<"confirm_applie
     body: { reason: request.reason },
     schema: ConfirmAppliedResult,
   });
-  return fromOutcome({ deps, outcome, scope: "session", ok: (result) => ({ kind: "applied", result }) });
+  return fromOutcome({
+    deps,
+    outcome,
+    scope: { kind: "session", sessionId: request.sessionId },
+    ok: async (result) => {
+      // A late confirmation of the previous job must not unlink a newer application.
+      await deps.pairing.store.clearBinding(request.sessionId);
+      return { kind: "applied", result };
+    },
+  });
 }
 
 /**

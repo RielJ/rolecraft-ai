@@ -18,15 +18,15 @@ import { z } from "zod";
 //   origin stays optional and ungranted. The prompt itself is a manual check (docs/EXTENSION.md).
 
 /** The job site the user approves in the happy path. Served by a route, never the network. */
-export const APPROVED_ORIGIN = "https://jobs.hb-fixture.test";
+export const APPROVED_ORIGIN = "https://jobs.rolecraft-fixture.test";
 /** A job site the user never approved. */
-export const UNAPPROVED_ORIGIN = "https://other.hb-fixture.test";
+export const UNAPPROVED_ORIGIN = "https://other.rolecraft-fixture.test";
 
 const BUILT_EXTENSION = resolve("dist-extension");
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const APPLICATION_HTML = readFileSync(join(FIXTURES, "application.html"), "utf8");
 const FRAME_HTML = readFileSync(join(FIXTURES, "frame.html"), "utf8");
-const JOB_SITES = /^https:\/\/(?:jobs|other)\.hb-fixture\.test\//;
+const JOB_SITES = /^https:\/\/(?:jobs|other)\.rolecraft-fixture\.test\//;
 
 /** Install-time grants in the test copy only. The shipped manifest has none. */
 const PRE_GRANTED_ORIGINS = ["http://localhost/*", `${APPROVED_ORIGIN}/*`] as const;
@@ -43,7 +43,7 @@ function testCopyOfExtension(): string {
   } catch {
     throw new Error("dist-extension/manifest.json is missing. Run `bun run build:extension` first.");
   }
-  const dir = join(mkdtempSync(join(tmpdir(), "hb-extension-e2e-")), "extension");
+  const dir = join(mkdtempSync(join(tmpdir(), "rolecraft-extension-e2e-")), "extension");
   cpSync(BUILT_EXTENSION, dir, { recursive: true });
   const manifestPath = join(dir, "manifest.json");
   const manifest = Manifest.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
@@ -147,7 +147,7 @@ const EXTENSION_LOAD_TIMEOUT_MS = 15_000;
 export const test = base.extend<{ extension: ExtensionHarness }>({
   context: async ({ baseURL }, use) => {
     const extensionDir = testCopyOfExtension();
-    const profileDir = mkdtempSync(join(tmpdir(), "hb-extension-profile-"));
+    const profileDir = mkdtempSync(join(tmpdir(), "rolecraft-extension-profile-"));
     // `channel: "chromium"` runs full Chromium in the new headless mode, which loads extensions.
     // The default headless shell does not. HEADED=1 shows the window for debugging.
     const context = await chromium.launchPersistentContext(profileDir, {

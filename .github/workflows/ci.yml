@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: hanapbuhay
+          POSTGRES_PASSWORD: hanapbuhay
+          POSTGRES_DB: hanapbuhay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hanapbuhay -d hanapbuhay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DATABASE_URL_TEST: >-
+        postgres://hanapbuhay:hanapbuhay@127.0.0.1:5432/hanapbuhay_test
+      DATABASE_URL_E2E: >-
+        postgres://hanapbuhay:hanapbuhay@127.0.0.1:5432/hanapbuhay_e2e
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Check public repository contents and history
+        run: bun run audit:public --history
+      - name: Check dependency advisories
+        run: bun run audit:deps
+      - name: Lint, typecheck, and test
+        run: bun run check
+      - name: Install browser
+        run: bunx playwright install --with-deps chromium
+      - name: Web browser tests
+        run: bun run e2e
+      # Both suites reset the same database. They must stay sequential.
+      - name: Extension browser tests
+        run: xvfb-run --auto-servernum bun run e2e:extension

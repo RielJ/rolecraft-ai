@@ -15,6 +15,7 @@ export const SUCCESS_CHECK_MS = 3000;
 
 /** The bound session and its tab. */
 export type AppliedWatch = { sessionId: ApplicationSessionId; tabId: number };
+export type ApplicationCompletion = { sessionId: ApplicationSessionId; result: ConfirmAppliedResult };
 
 export type AppliedState =
   | { kind: "off" }
@@ -29,7 +30,7 @@ export type AppliedEvent =
   /** The parent's `watch` prop changed. */
   | { kind: "watch"; watch: AppliedWatch | null }
   | { kind: "tick" }
-  | { kind: "reply"; reply: ImportReply }
+  | { kind: "reply"; watch: AppliedWatch; reply: ImportReply }
   | { kind: "yes_clicked" }
   | { kind: "no_clicked" };
 
@@ -64,7 +65,7 @@ function onReply(state: AppliedState, reply: ImportReply): AppliedStep {
         result?.kind === "failed"
           ? result.message
           : result?.kind === "refused"
-            ? "This tab is no longer linked to the application. Mark it applied from Hanapbuhay instead."
+            ? "This tab is no longer linked to the application. Mark it applied from Rolecraft instead."
             : (reply.error ?? "The extension's background worker did not answer.");
       return stay({ kind: "failed", watch: state.watch, reason: state.reason, message });
     }
@@ -97,6 +98,7 @@ export function appliedTransition(state: AppliedState, event: AppliedEvent): App
         requests: [{ kind: "success_check", sessionId: state.watch.sessionId, tabId: state.watch.tabId }],
       };
     case "reply":
+      if (state.kind === "off" || !sameWatch(state.watch, event.watch)) return stay(state);
       return onReply(state, event.reply);
     case "yes_clicked":
       if (state.kind !== "asking" && state.kind !== "failed") return stay(state);
@@ -127,37 +129,70 @@ export type AppliedPromptProps = {
   send: (request: ImportPanelRequest) => Promise<ImportReply>;
   /** Gets every reply whose status is not `paired`, so the pairing screen comes back. */
   onReply: (reply: Pick<PanelReply, "status" | "error">) => void;
+  /** The Application owner releases completed work and discovers the next Apply session. */
+  onCompleted: (completion: ApplicationCompletion) => void;
   intervalMs?: number;
 };
 
 /** Mounted by Application.tsx with `appliedWatch(state)` from state.ts. */
-export function AppliedPromptPanel({ watch, send, onReply, intervalMs = SUCCESS_CHECK_MS }: AppliedPromptProps) {
+export function AppliedPromptPanel({
+  watch,
+  send,
+  onReply,
+  onCompleted,
+  intervalMs = SUCCESS_CHECK_MS,
+}: AppliedPromptProps) {
   const [state, setState] = useState<AppliedState>(APPLIED_INITIAL);
   const ref = useRef(state);
   const sendRef = useRef(send);
   sendRef.current = send;
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
+  const completedRef = useRef(onCompleted);
+  completedRef.current = onCompleted;
+  const epoch = useRef(0);
+  const live = useRef(true);
 
   // Built once over refs only, so it is stable for the effects below.
   const [dispatch] = useState(() => {
-    const apply = (event: AppliedEvent) => {
+    const apply = (event: AppliedEvent): AppliedState => {
+      if (
+        event.kind === "watch" &&
+        (event.watch === null || ref.current.kind === "off" || !sameWatch(ref.current.watch, event.watch))
+      )
+        epoch.current++;
       const out = appliedTransition(ref.current, event);
       ref.current = out.state;
       setState(out.state);
+      if (out.state.kind === "off") return out.state;
+      const sourceWatch = out.state.watch;
+      const startedIn = epoch.current;
       for (const request of out.requests) {
         void sendRef.current(request).then((reply) => {
+          if (!live.current || startedIn !== epoch.current) return;
           if (reply.status.kind !== "paired") {
             onReplyRef.current(reply);
             apply({ kind: "watch", watch: null });
             return;
           }
-          apply({ kind: "reply", reply });
+          const next = apply({ kind: "reply", watch: sourceWatch, reply });
+          if (request.kind === "confirm_applied" && next.kind === "confirmed") {
+            completedRef.current({ sessionId: sourceWatch.sessionId, result: next.result });
+          }
         });
       }
+      return out.state;
     };
     return apply;
   });
+
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      epoch.current++;
+    };
+  }, []);
 
   const sessionId = watch?.sessionId ?? null;
   const tabId = watch?.tabId ?? null;
@@ -190,7 +225,7 @@ export function AppliedPromptPanel({ watch, send, onReply, intervalMs = SUCCESS_
             Did you submit this application?
           </h2>
           <p className="text-xs text-muted-foreground">
-            {REASON_TEXT[state.reason]} Nothing changes in Hanapbuhay until you answer.
+            {REASON_TEXT[state.reason]} Nothing changes in Rolecraft until you answer.
           </p>
           {state.kind === "failed" && (
             <p role="alert" className="text-sm text-destructive">
@@ -222,8 +257,8 @@ export function AppliedPromptPanel({ watch, send, onReply, intervalMs = SUCCESS_
       return (
         <p role="status" className="rounded-control bg-muted px-3 py-2 text-sm">
           {state.result.changed
-            ? "Marked as applied in Hanapbuhay."
-            : "Hanapbuhay already had this job as applied or further along."}
+            ? "Marked as applied in Rolecraft."
+            : "Rolecraft already had this job as applied or further along."}
         </p>
       );
     default: {

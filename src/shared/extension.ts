@@ -65,7 +65,7 @@ export function endpointOrigin(raw: string): string | null {
   return null;
 }
 
-/** The Hanapbuhay server the extension talks to, normalized to its origin. */
+/** The Rolecraft server the extension talks to, normalized to its origin. */
 export const ExtensionEndpoint = z
   .string()
   .trim()
@@ -904,6 +904,9 @@ export const EXTENSION_AUTH_MATRIX = [
       ["GET", "/api/extension/sessions/active"],
       ["POST", "/api/extension/sessions/:id/claim"],
       ["POST", "/api/extension/sessions/:id/prefill"],
+      ["POST", "/api/extension/sessions/:id/questions/lookup"],
+      ["POST", "/api/extension/sessions/:id/questions"],
+      ["POST", "/api/extension/sessions/:id/answer-references"],
       ["GET", "/api/extension/sessions/:id/outputs"],
       ["PATCH", "/api/extension/sessions/:id/outputs/:outputId"],
       ["POST", "/api/extension/sessions/:id/outputs/:outputId/reviewed"],

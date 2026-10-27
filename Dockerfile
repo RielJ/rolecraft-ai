@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Hanapbuhay: one Bun process serving the API and the built SPA, with Debian's Chromium for PDF
+# Rolecraft: one Bun process serving the API and the built SPA, with Debian's Chromium for PDF
 # export (decision 47). Postgres runs as its own Compose service.
 
 ARG BUN_IMAGE=oven/bun:1.4.3-debian
@@ -41,7 +41,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=prod-deps /app/node_modules ./node_modules
 # The server runs from TypeScript source; tsconfig.json carries the @/ path alias Bun resolves.
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json LICENSE ./
 COPY drizzle ./drizzle
 COPY src/server ./src/server
 COPY src/shared ./src/shared

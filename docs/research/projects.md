@@ -79,7 +79,7 @@ School projects drop off after 1 to 2 years of work, unless they led to a public
 
 No source with data was found. Every page on this is a vendor blog. They agree on one point, and that point matches the "10 minutes under pressure" test in section 2: interviewers now ask candidates to explain design choices, problems they hit and what they would change. A project the candidate can't defend hurts the application.
 
-For hanapbuhay, the safe signal is authorship, which the scan already measures: the candidate's share of commits and of changed lines. The question for a hiring manager is "can you explain it", not "did a tool help". So the share of the work is the right thing to show the user. Whether AI wrote the code is not.
+For rolecraft, the safe signal is authorship, which the scan already measures: the candidate's share of commits and of changed lines. The question for a hiring manager is "can you explain it", not "did a tool help". So the share of the work is the right thing to show the user. Whether AI wrote the code is not.
 
 ## 7. Before linking a repo
 
@@ -121,7 +121,7 @@ This is not legal advice. Contracts vary, and a signed agreement can change the 
 - **California employers:** Labor Code s. 2870 limits invention assignment clauses. They can't take an invention made entirely on the employee's own time, without the employer's equipment or trade secrets, unless it relates to the employer's business or came from work for the employer. ([Cal. Labor Code 2870][ca2870])
 - **Practical rule:** a side project in the employer's line of business is the risky case. Check the employment contract before listing it or making it public.
 
-## What this suggests for hanapbuhay
+## What this suggests for rolecraft
 
 **Picked by the user on 2026-10-20:** all seven, with these choices:
 

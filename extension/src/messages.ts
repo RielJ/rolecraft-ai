@@ -21,6 +21,7 @@ import {
 } from "@shared/extension";
 import { z } from "zod";
 import type { TabRefusal } from "./background/content";
+import { ANSWER_PANEL_REQUESTS, ANSWER_PANEL_RESULTS } from "./messages-answers";
 import { ATTACH_PANEL_REQUESTS, ATTACH_PANEL_RESULTS } from "./messages-attach";
 import { IMPORT_PANEL_REQUESTS, IMPORT_PANEL_RESULTS } from "./messages-import";
 
@@ -56,6 +57,7 @@ const ApprovedOrigin = z
  * session-scoped request against the session-to-tab binding in `chrome.storage.session`.
  */
 export const PanelRequest = z.discriminatedUnion("kind", [
+  ...ANSWER_PANEL_REQUESTS,
   z.strictObject({ kind: z.literal("status") }),
   /** Raw input; the worker validates both. Host permission was requested by the panel first. */
   z.strictObject({ kind: z.literal("pair"), endpoint: z.string().max(300), code: z.string().max(20) }),
@@ -126,6 +128,7 @@ void _everyTabRefusal;
 
 /** The payload of a reply, by what happened. Absent on status, pair and disconnect. */
 export const PanelResult = z.discriminatedUnion("kind", [
+  ...ANSWER_PANEL_RESULTS,
   z.object({ kind: z.literal("session_active"), active: ActiveSessionResponse }),
   z.object({ kind: z.literal("claimed"), session: ApplicationSessionDto }),
   z.object({ kind: z.literal("claim_mismatch"), details: UrlMismatchDetails }),

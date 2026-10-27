@@ -3,7 +3,7 @@ import { requestOriginAccess } from "../background/permissions";
 import type { ConnectionStatus, PanelReply } from "../messages";
 import { asImportReply, type ImportPanelRequest, type ImportReply } from "../messages-import";
 import { Application, activeTab } from "./Application";
-import { AppliedPromptPanel, type AppliedWatch } from "./AppliedPrompt";
+import { type ApplicationCompletion, AppliedPromptPanel, type AppliedWatch } from "./AppliedPrompt";
 import { sendToWorker } from "./bridge";
 import { Diagnostics } from "./Diagnostics";
 import { ImportJobPanel } from "./ImportJob";
@@ -105,6 +105,7 @@ function Paired({
   const [screen, setScreen] = useState<Screen>("application");
   const [busy, setBusy] = useState(false);
   const [watch, setWatch] = useState<AppliedWatch | null>(null);
+  const [completion, setCompletion] = useState<ApplicationCompletion | null>(null);
 
   // A worker reply that says the pairing is gone or the server is down puts the pairing screen back.
   const onWorkerReply = useCallback(
@@ -124,7 +125,7 @@ function Paired({
     <div className="flex min-h-dvh flex-col">
       <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
-          <p className="text-sm font-semibold">Hanapbuhay</p>
+          <p className="text-sm font-semibold">Rolecraft</p>
           <p className="truncate text-xs text-muted-foreground" title={status.endpoint}>
             Paired with {status.endpoint}
           </p>
@@ -148,8 +149,10 @@ function Paired({
       </nav>
       <PanelScreens
         screen={screen}
-        prompt={<AppliedPromptPanel watch={watch} send={askImport} onReply={onWorkerReply} />}
-        application={<Application onReply={onWorkerReply} onWatch={setWatch} />}
+        prompt={
+          <AppliedPromptPanel watch={watch} send={askImport} onReply={onWorkerReply} onCompleted={setCompletion} />
+        }
+        application={<Application onReply={onWorkerReply} onWatch={setWatch} completion={completion} />}
         importScreen={<ImportScreen endpoint={status.endpoint} onReply={onWorkerReply} />}
         diagnostics={<Diagnostics onReply={onWorkerReply} />}
       />

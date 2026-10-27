@@ -25,6 +25,7 @@ import {
   RuntimeMessage,
   SALARY_LABEL_PATTERN,
 } from "@/shared/extension";
+import * as answerContracts from "@/shared/extension-answers";
 import { toApiError } from "@/web/api";
 
 const UUID = "0b9c6f0e-6a53-4a5e-9a4e-3f1f6b1d2c3a";
@@ -504,7 +505,7 @@ describe("caps", () => {
 
   test("every exported string and array schema has a maximum", () => {
     const out: string[] = [];
-    for (const [name, value] of Object.entries(contracts)) {
+    for (const [name, value] of Object.entries({ ...contracts, ...answerContracts })) {
       if (value instanceof z.ZodType) uncapped(value, name, out, new Set());
     }
     expect(out).toEqual([]);

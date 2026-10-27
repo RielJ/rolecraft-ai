@@ -81,7 +81,7 @@ describe("readmeSummary", () => {
   });
 
   test("a paragraph ending in a colon keeps its list", () => {
-    const readme = "# Hanapbuhay\n\nIt does three things:\n\n- Reads job boards.\n- Drafts [files](x).\n\n## Run";
+    const readme = "# Rolecraft\n\nIt does three things:\n\n- Reads job boards.\n- Drafts [files](x).\n\n## Run";
     expect(readmeSummary(readme)).toBe("It does three things:\n- Reads job boards.\n- Drafts files.");
   });
 
@@ -133,7 +133,7 @@ describe("scanLocal", () => {
 
   test("hides non-git folders, repos with few of your commits, and repos mostly by others", () => {
     const result = scan([
-      folder("hanapbuhay"),
+      folder("rolecraft"),
       folder("notes", { git: null }),
       folder("jersey", { git: { authors: { [ME]: 4 }, lastCommitAt: "2026-07-15T00:00:00Z", remote: null } }),
       folder("pi-mux-ref", {
@@ -150,7 +150,7 @@ describe("scanLocal", () => {
       // "local" names no one, so it isn't someone else's commit.
       folder("anon", { git: { authors: { local: 1 }, lastCommitAt: null, remote: null } }),
     ]);
-    expect(result.shown.map((r) => r.folder)).toEqual(["hanapbuhay"]);
+    expect(result.shown.map((r) => r.folder)).toEqual(["rolecraft"]);
     expect(result.hidden.map((r) => [r.folder, r.hiddenBy])).toEqual([
       ["jersey", "few_commits"],
       ["pi-mux-ref", "owned_by"],
@@ -249,7 +249,7 @@ describe("scanLocal", () => {
   test("marks folders already added, by link or by title", () => {
     const result = scan(
       [
-        folder("hanapbuhay"),
+        folder("rolecraft"),
         folder("pi-adw"),
         folder("linked", {
           git: {
@@ -259,11 +259,11 @@ describe("scanLocal", () => {
           },
         }),
       ],
-      { titles: ["Hanapbuhay"], linked: [{ owner: "JuanDC", repo: "linked" }] },
+      { titles: ["Rolecraft"], linked: [{ owner: "JuanDC", repo: "linked" }] },
     );
     expect(result.shown.map((r) => [r.folder, r.added])).toEqual([
-      ["hanapbuhay", true],
       ["pi-adw", false],
+      ["rolecraft", true],
       ["linked", true],
     ]);
   });

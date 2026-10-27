@@ -49,14 +49,14 @@ export const noStore: MiddlewareHandler = async (c, next) => {
 /** `OPTIONS pair/claim`: any well-formed chrome-extension:// origin may ask to claim. */
 export const claimPreflight: MiddlewareHandler = async (c) => {
   const origin = extensionOriginOf(c);
-  if (origin === null) throw forbiddenOrigin("Only the Hanapbuhay extension can claim a pairing code.");
+  if (origin === null) throw forbiddenOrigin("Only the Rolecraft extension can claim a pairing code.");
   return preflight(c, { origin, methods: CLAIM_METHODS });
 };
 
 /** `POST pair/claim`: requires a chrome-extension:// Origin, exposes it to the handler, grants CORS to it. */
 export const claimOrigin: MiddlewareHandler<ClaimEnv> = async (c, next) => {
   const origin = extensionOriginOf(c);
-  if (origin === null) throw forbiddenOrigin("Only the Hanapbuhay extension can claim a pairing code.");
+  if (origin === null) throw forbiddenOrigin("Only the Rolecraft extension can claim a pairing code.");
   c.set("extensionOrigin", origin);
   await next();
   c.header("Access-Control-Allow-Origin", origin);
@@ -68,7 +68,7 @@ export function pairedPreflight(deps: Pick<Deps, "db" | "userId">): MiddlewareHa
     if (c.req.method !== "OPTIONS") return next();
     const origin = extensionOriginOf(c);
     if (origin === null || !(await isPairedOrigin(deps, { origin }))) {
-      throw forbiddenOrigin("This extension is not paired with Hanapbuhay.");
+      throw forbiddenOrigin("This extension is not paired with Rolecraft.");
     }
     return preflight(c, { origin, methods: GUARDED_METHODS });
   };
@@ -80,7 +80,7 @@ export function bearerGuard(deps: Pick<Deps, "db" | "userId" | "clock">): Middle
     const match = /^Bearer (\S+)$/.exec(c.req.header("authorization") ?? "");
     const token = PairingToken.safeParse(match?.[1]);
     if (!token.success) {
-      throw new AppError({ code: "unauthorized", message: "Pair the extension with Hanapbuhay first." });
+      throw new AppError({ code: "unauthorized", message: "Pair the extension with Rolecraft first." });
     }
     const origin = c.req.header("origin");
     const pairing = await authenticatePairing(deps, { token: token.data, origin });

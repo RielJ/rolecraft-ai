@@ -109,6 +109,9 @@ export function outcomeOf({ request, reply }: { request: PanelRequest; reply: Pa
         return result.reason;
       case "attach_download_failed":
         return "download_failed";
+      case "questions":
+      case "answer_reference":
+      case "answer_read":
       case "session_active":
       case "claimed":
       case "scanned":
@@ -177,6 +180,7 @@ function countsOf({ request, reply }: { request: PanelRequest; reply: PanelReply
 /** The tab a request acts on, if any. */
 function tabIdOf(request: PanelRequest): number | null {
   switch (request.kind) {
+    case "answer_read":
     case "scan":
     case "fill":
     case "attach":

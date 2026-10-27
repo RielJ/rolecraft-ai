@@ -11,7 +11,7 @@ export type PairingDeps = {
   hasHostPermission: (pattern: string) => Promise<boolean>;
 };
 
-const UNREACHABLE = "Could not reach Hanapbuhay. Check that the server is running and the address is right.";
+const UNREACHABLE = "Could not reach Rolecraft. Check that the server is running and the address is right.";
 
 function reply(status: ConnectionStatus, error: string | null = null): PanelReply {
   return { status, error };

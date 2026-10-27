@@ -1,6 +1,7 @@
 import { type MarkReviewedInput, TaskDto } from "@shared/api";
 import {
   ActiveSessionResponse,
+  type ApplicationSessionId,
   ClaimSessionResult,
   ExtensionOutputDto,
   ExtensionOutputList,
@@ -8,10 +9,12 @@ import {
   PrefillResponse,
   UrlMismatchDetails,
 } from "@shared/extension";
+import { AnswerReferenceDto, QuestionLookupResult } from "@shared/extension-answers";
 import { createClient, ROUTES } from "../api/client";
 import type { PanelReply, PanelRequest, PanelResult } from "../messages";
 import { type DiagnosticsLog, isRecorded, requestEntry } from "../state/diagnostics";
 import type { SessionBinding, Store } from "../state/storage";
+import { chromeSendAnswer, readTabAnswer, type SendAnswer } from "./answers";
 import { type ContentDeps, fillTab, fromOutcome, localReply, refusedReply, scanTab, storedStatus } from "./content";
 import { type AttachDeps, attachDeps, handleAttach } from "./files";
 import { handleImport, type ImportDeps } from "./import";
@@ -29,6 +32,8 @@ export type PanelDeps = {
   now: () => number;
   /** Sends `read_job` and `success_probe` to frame 0. `chromeSendImport` in the worker. */
   sendImport: ImportDeps["sendContent"];
+  /** One explicit text-field read, only after the session and active tab were checked. */
+  sendAnswer?: SendAnswer;
   /** Chrome Downloads by default; tests pass a fake. */
   download?: AttachDeps["download"] | undefined;
   /** The metadata-only ring buffer (state/diagnostics.ts). */
@@ -45,7 +50,30 @@ async function boundTo(store: Store, sessionId: string): Promise<SessionBinding 
 
 type Request<K extends PanelRequest["kind"]> = Extract<PanelRequest, { kind: K }>;
 
+const claims = new WeakMap<Store, { sessionId: ApplicationSessionId }>();
+
+async function activeSession(deps: PanelDeps): Reply {
+  const store = deps.pairing.store;
+  const binding = await store.readBinding();
+  const pendingClaim = claims.get(store);
+  const outcome = await createClient(deps.pairing).call({ route: ROUTES.activeSession, schema: ActiveSessionResponse });
+  return fromOutcome({
+    deps,
+    outcome,
+    scope: "none",
+    ok: async (active) => {
+      const activeId = active.kind === "active" ? active.session.id : null;
+      if (binding !== null && binding.sessionId !== activeId) await store.clearBinding(binding.sessionId);
+      if (pendingClaim !== undefined && claims.get(store) === pendingClaim && pendingClaim.sessionId !== activeId)
+        claims.delete(store);
+      return { kind: "session_active", active };
+    },
+  });
+}
+
 async function claim(deps: PanelDeps, request: Request<"session_claim">): Reply {
+  const attempt = { sessionId: request.sessionId };
+  claims.set(deps.pairing.store, attempt);
   if ((await storedStatus(deps.pairing.store)).kind !== "paired") return getStatus({ deps: deps.pairing });
   const tab = await deps.content.getTab(request.tabId);
   if (tab === null || tab.url === null) return refusedReply(deps, "unsupported_url");
@@ -57,6 +85,7 @@ async function claim(deps: PanelDeps, request: Request<"session_claim">): Reply 
     body: { tabUrl: tab.url, confirmMismatch: request.confirmMismatch },
     schema: ClaimSessionResult,
   });
+  if (claims.get(deps.pairing.store) !== attempt) return refusedReply(deps, "not_bound");
   if (outcome.kind === "failed" && outcome.code === "url_mismatch") {
     const details = UrlMismatchDetails.safeParse(outcome.details);
     if (details.success) return localReply(deps, { kind: "claim_mismatch", details: details.data });
@@ -98,7 +127,7 @@ async function prefill(deps: PanelDeps, request: Request<"prefill">): Reply {
   return fromOutcome({
     deps,
     outcome,
-    scope: "session",
+    scope: { kind: "session", sessionId: request.sessionId },
     ok: (response): PanelResult =>
       response.nonce === request.nonce
         ? { kind: "prefilled", response }
@@ -132,15 +161,58 @@ async function savePreference(deps: PanelDeps, request: Request<"preference_save
 
 async function sessionCall(
   deps: PanelDeps,
-  request: Request<"outputs_list" | "output_reviewed" | "draft_start">,
+  request: Request<
+    | "outputs_list"
+    | "output_reviewed"
+    | "draft_start"
+    | "questions_lookup"
+    | "question_create"
+    | "answer_reference_save"
+  >,
 ): Reply {
   if ((await boundTo(deps.pairing.store, request.sessionId)) === null) return refusedReply(deps, "not_bound");
   const client = createClient(deps.pairing);
   switch (request.kind) {
+    case "questions_lookup":
+      return fromOutcome({
+        deps,
+        scope: { kind: "session", sessionId: request.sessionId },
+        outcome: await client.call({
+          route: ROUTES.questions,
+          params: { id: request.sessionId },
+          body: request.input,
+          schema: QuestionLookupResult,
+        }),
+        ok: (data) => ({ kind: "questions", data }),
+      });
+    case "question_create":
+      return fromOutcome({
+        deps,
+        scope: { kind: "session", sessionId: request.sessionId },
+        outcome: await client.call({
+          route: ROUTES.createQuestion,
+          params: { id: request.sessionId },
+          body: request.input,
+          schema: ExtensionOutputDto,
+        }),
+        ok: (output) => ({ kind: "output", output }),
+      });
+    case "answer_reference_save":
+      return fromOutcome({
+        deps,
+        scope: { kind: "session", sessionId: request.sessionId },
+        outcome: await client.call({
+          route: ROUTES.saveAnswerReference,
+          params: { id: request.sessionId },
+          body: request.input,
+          schema: AnswerReferenceDto,
+        }),
+        ok: (reference) => ({ kind: "answer_reference", reference }),
+      });
     case "outputs_list":
       return fromOutcome({
         deps,
-        scope: "session",
+        scope: { kind: "session", sessionId: request.sessionId },
         outcome: await client.call({
           route: ROUTES.outputs,
           params: { id: request.sessionId },
@@ -151,7 +223,7 @@ async function sessionCall(
     case "output_reviewed":
       return fromOutcome({
         deps,
-        scope: "output",
+        scope: { kind: "output", sessionId: request.sessionId },
         outcome: await client.call({
           route: ROUTES.reviewOutput,
           params: { id: request.sessionId, outputId: request.outputId },
@@ -163,7 +235,7 @@ async function sessionCall(
     case "draft_start":
       return fromOutcome({
         deps,
-        scope: "session",
+        scope: { kind: "session", sessionId: request.sessionId },
         outcome: await client.call({
           route: ROUTES.draft,
           params: { id: request.sessionId },
@@ -186,17 +258,29 @@ async function attach(deps: PanelDeps, request: Request<"attach" | "attach_downl
     request,
   });
   if (outcome.kind === "refused") return refusedReply(deps, outcome.reason);
-  return fromOutcome({ deps, outcome, scope: "output", ok: (result) => result });
+  return fromOutcome({
+    deps,
+    outcome,
+    scope: { kind: "output", sessionId: request.sessionId },
+    ok: (result) => result,
+  });
 }
 
 async function pollTask(deps: PanelDeps, request: Request<"task_poll">): Reply {
-  if ((await deps.pairing.store.readBinding()) === null) return refusedReply(deps, "not_bound");
+  const binding = await deps.pairing.store.readBinding();
+  if (binding === null) return refusedReply(deps, "not_bound");
   const outcome = await createClient(deps.pairing).call({
     route: ROUTES.task,
     params: { id: request.taskId },
     schema: TaskDto,
   });
-  return fromOutcome({ deps, outcome, scope: "session", ok: (task) => ({ kind: "task", task }) });
+  return fromOutcome({
+    deps,
+    outcome,
+    // This task may belong to a previous job. Its 404 says nothing about the current binding.
+    scope: "none",
+    ok: (task) => ({ kind: "task", task }),
+  });
 }
 
 /** Read or empty the diagnostics log. Local only: no server call, so no ping either. */
@@ -232,12 +316,7 @@ async function answer(deps: PanelDeps, request: PanelRequest): Reply {
     case "disconnect":
       return disconnect({ deps: deps.pairing });
     case "session_active":
-      return fromOutcome({
-        deps,
-        scope: "none",
-        outcome: await createClient(deps.pairing).call({ route: ROUTES.activeSession, schema: ActiveSessionResponse }),
-        ok: (active) => ({ kind: "session_active", active }),
-      });
+      return activeSession(deps);
     case "session_claim":
       return claim(deps, request);
     case "scan":
@@ -262,6 +341,34 @@ async function answer(deps: PanelDeps, request: PanelRequest): Reply {
       });
     case "preference_save":
       return savePreference(deps, request);
+    case "answer_read": {
+      const binding = await boundTo(deps.pairing.store, request.sessionId);
+      if (binding === null || binding.tabId !== request.tabId) return refusedReply(deps, "not_bound");
+      // Validate the live claim before reading a value. This lookup sends field metadata only.
+      const live = await createClient(deps.pairing).call({
+        route: ROUTES.questions,
+        params: { id: request.sessionId },
+        body: { fields: [request.field] },
+        schema: QuestionLookupResult,
+      });
+      if (live.kind !== "ok")
+        return fromOutcome({
+          deps,
+          outcome: live,
+          scope: { kind: "session", sessionId: request.sessionId },
+          ok: () => ({ kind: "refused", reason: "bad_reply" }),
+        });
+      const result = await readTabAnswer({
+        deps: deps.content,
+        send: deps.sendAnswer ?? chromeSendAnswer,
+        tabId: request.tabId,
+        message: { kind: "read_answer", nonce: request.nonce, field: request.field },
+      });
+      return localReply(deps, result);
+    }
+    case "questions_lookup":
+    case "question_create":
+    case "answer_reference_save":
     case "outputs_list":
     case "output_reviewed":
     case "draft_start":

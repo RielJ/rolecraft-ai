@@ -1,8 +1,11 @@
 import "../zod-setup";
 import { RuntimeMessage } from "@shared/extension";
 import { blockedSite } from "@shared/hosts";
+import type { z } from "zod";
 import { detect } from "../adapters";
+import { ReadAnswerRequest, ReadAnswerResult } from "../messages-answers";
 import { ImportContentReply, ImportContentRequest } from "../messages-import";
+import { readAnswer } from "./answers";
 import { attachFile, type CurrentScan } from "./files";
 import { fillFields } from "./fill";
 import { readJobReply } from "./import";
@@ -25,6 +28,7 @@ function pageUrl(location: Location): string {
 type Incoming =
   | { kind: "runtime"; message: RuntimeMessage }
   | { kind: "import"; message: ImportContentRequest }
+  | { kind: "answer"; message: z.infer<typeof ReadAnswerRequest> }
   | { kind: "none" };
 
 /** The two worker → page schemas. Their kinds do not overlap, so trying both is unambiguous. */
@@ -32,10 +36,12 @@ function parseIncoming(raw: unknown): Incoming {
   const runtime = RuntimeMessage.safeParse(raw);
   if (runtime.success) return { kind: "runtime", message: runtime.data };
   const asked = ImportContentRequest.safeParse(raw);
-  return asked.success ? { kind: "import", message: asked.data } : { kind: "none" };
+  if (asked.success) return { kind: "import", message: asked.data };
+  const answer = ReadAnswerRequest.safeParse(raw);
+  return answer.success ? { kind: "answer", message: answer.data } : { kind: "none" };
 }
 
-export type ContentReply = RuntimeMessage | ImportContentReply;
+export type ContentReply = RuntimeMessage | ImportContentReply | ReadAnswerResult;
 
 /**
  * Handles one message from the worker and returns the reply, or null for no reply. Answers
@@ -115,6 +121,8 @@ export function createContentHandler({ document, measure }: { document: Document
     const location = document.location;
     if (incoming.kind === "none" || location === null || blockedSite(location.href) !== null) return null;
     switch (incoming.kind) {
+      case "answer":
+        return ReadAnswerResult.parse(readAnswer({ current, ...incoming.message, measure }));
       case "runtime": {
         const reply = runtimeReply(incoming.message, location);
         const checked = RuntimeMessage.safeParse(reply);
@@ -135,13 +143,27 @@ export function createContentHandler({ document, measure }: { document: Document
 
 declare global {
   /** Set in the isolated world (the page cannot see it) once the listener is installed. */
+  var rolecraftContentInstalled: true | undefined;
+  /** Legacy marker from before the Rolecraft rename. Pages opened earlier still carry it. */
   var hanapbuhayContentInstalled: true | undefined;
+}
+
+type InstallMarkers = { rolecraftContentInstalled?: true | undefined; hanapbuhayContentInstalled?: true | undefined };
+
+/**
+ * Claims the one listener slot of this isolated world. False when either marker is set, so a page
+ * that got the content script under the old name never gets a second listener.
+ */
+export function claimInstall(scope: InstallMarkers): boolean {
+  if (scope.rolecraftContentInstalled === true || scope.hanapbuhayContentInstalled === true) return false;
+  scope.rolecraftContentInstalled = true;
+  scope.hanapbuhayContentInstalled = true;
+  return true;
 }
 
 /** Runs once per page even when injected again: the isolated world keeps the first listener. */
 function install(): void {
-  if (window.top !== window || globalThis.hanapbuhayContentInstalled === true) return;
-  globalThis.hanapbuhayContentInstalled = true;
+  if (window.top !== window || !claimInstall(globalThis)) return;
   const handle = createContentHandler({ document, measure: measureInPage });
   chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
     // Only the worker (or our panel) via chrome.tabs.sendMessage: same extension, not from a tab.

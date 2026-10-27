@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Deps } from "../../../services/context";
 import { bearerGuard, type ExtensionEnv, noStore, pairedPreflight } from "../../extension-guard";
+import { extensionAnswerRoutes } from "./answers";
 import { extensionAppliedRoutes } from "./applied";
 import { extensionImportRoutes } from "./import";
 import { extensionMaterialRoutes } from "./materials";
@@ -28,6 +29,7 @@ export function extensionRoutes(deps: Deps) {
     .route("/", extensionPreferenceRoutes(deps))
     .route("/", extensionPrefillRoutes(deps))
     .route("/", extensionMaterialRoutes(deps))
+    .route("/", extensionAnswerRoutes(deps))
     .route("/", extensionAppliedRoutes(deps));
 
   return new Hono().use(noStore).route("/pair", pairClaimRoutes(deps)).route("/", guarded);

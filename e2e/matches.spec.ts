@@ -319,6 +319,51 @@ test("skills show as a percentage of the required ones; the pane gives the count
   await expect(reasons).toContainText("Nice to have, not in your facts: Kafka, Rust");
 });
 
+test("Sort: Best match keeps the strongest first; Newest and Oldest order by when jobs were found", async ({
+  page,
+}) => {
+  await withSql(async (sql) => {
+    const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;
+    // Echo (the oldest job) is the only one your skills cover, so Best match and date order disagree.
+    await sql`INSERT INTO user_skills (user_id, key, name, kind)
+      VALUES (${user?.id ?? ""}, 'go', 'Go', 'added'), (${user?.id ?? ""}, 'postgresql', 'PostgreSQL', 'added')`;
+    await sql`UPDATE jobs SET skills = '{Go,PostgreSQL}' WHERE title = 'Echo Engineer'`;
+  });
+  await page.goto("/");
+  const options = () => list(page).getByRole("option");
+  const re = (t: string) => new RegExp(t);
+
+  // Best match: Echo's level leads; the rest follow newest first.
+  await expect(options()).toHaveText(
+    ["Echo Engineer", "Alpha Engineer", "Bravo Engineer", "Charlie Engineer", "Delta Engineer"].map(re),
+  );
+
+  // Newest first: the request carries the sort, and the list follows the first-found date.
+  const sorted = page.waitForRequest((r) => r.method() === "GET" && r.url().includes("sort=newest"));
+  await page.getByRole("button", { name: "Sort: Best match" }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Best match" })).toBeVisible();
+  await page.getByText("Dates are when jobs were first found.").click();
+  await page.getByRole("menuitemradio", { name: "Newest first" }).click();
+  await sorted;
+  await expect(options()).toHaveText(
+    ["Alpha Engineer", "Bravo Engineer", "Charlie Engineer", "Delta Engineer", "Echo Engineer"].map(re),
+  );
+
+  // Oldest first: the same list, reversed.
+  await page.getByRole("button", { name: "Sort: Newest first" }).click();
+  await page.getByRole("menuitemradio", { name: "Oldest first" }).click();
+  await expect(options()).toHaveText(
+    ["Echo Engineer", "Delta Engineer", "Charlie Engineer", "Bravo Engineer", "Alpha Engineer"].map(re),
+  );
+
+  // Back to Best match, and the button still reads the choice.
+  await page.getByRole("button", { name: "Sort: Oldest first" }).click();
+  await page.getByRole("menuitemradio", { name: "Best match" }).click();
+  await expect(options()).toHaveText(
+    ["Echo Engineer", "Alpha Engineer", "Bravo Engineer", "Charlie Engineer", "Delta Engineer"].map(re),
+  );
+});
+
 test("the reading pane offers Merge for a likely duplicate, and merging leaves one job", async ({ page }) => {
   await withSql(async (sql) => {
     const [user] = await sql<{ id: string }[]>`SELECT id FROM users LIMIT 1`;

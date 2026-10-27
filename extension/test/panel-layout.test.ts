@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PanelScreens, SCREENS } from "../src/panel/App";
+import { Application } from "../src/panel/Application";
 
 // Where the paired panel puts its parts (App.tsx). The applied question must show on every tab:
 // an answer the user never sees is no better than no question.
@@ -34,6 +35,12 @@ function render(screen: (typeof SCREENS)[number]["id"]) {
 }
 
 describe("panel layout", () => {
+  test("Refresh application remains available even while discovery is loading", () => {
+    const html = renderToStaticMarkup(
+      createElement(Application, { onReply: () => {}, onWatch: () => {}, completion: null }),
+    );
+    expect(html).toContain("Refresh application</button>");
+  });
   test("the applied question shows whichever tab is open", () => {
     for (const { id } of SCREENS) expect(render(id).shown("prompt")).toBe(true);
   });

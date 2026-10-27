@@ -96,7 +96,7 @@ test("Settings: create a code, see it claimed and used, revoke it", async ({ pag
   // Revoke asks first; Cancel keeps it.
   await pairings.getByRole("button", { name: "Revoke" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Revoke this pairing?" });
-  await expect(dialog.getByText("The extension stops working with Hanapbuhay right away.")).toBeVisible();
+  await expect(dialog.getByText("The extension stops working with Rolecraft right away.")).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(pairings.getByText("Active")).toBeVisible();
 

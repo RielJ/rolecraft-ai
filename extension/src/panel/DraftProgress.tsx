@@ -2,7 +2,7 @@ import type { ExtensionOutputDto } from "@shared/extension";
 import type { DraftState, OutputsState, PanelEvent } from "./state";
 import { unansweredQuestions } from "./state";
 
-// Custom questions on this job that have no answer yet. "Draft" asks Hanapbuhay to write one,
+// Custom questions on this job that have no answer yet. "Draft" asks Rolecraft to write one,
 // one at a time; a drafted answer comes back unreviewed and fills only after the user OKs it.
 
 function DraftStatus({

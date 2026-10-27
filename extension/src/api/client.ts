@@ -8,7 +8,7 @@ import {
 import type { z } from "zod";
 import type { Store } from "../state/storage";
 
-// The only code that talks to the Hanapbuhay server. It runs in the service worker.
+// The only code that talks to the Rolecraft server. It runs in the service worker.
 // Fail closed: no token, a 401, a network failure or a body that does not parse never yields data.
 
 /** `fetch` as the client calls it. The worker passes the global; tests pass a fake. */
@@ -23,6 +23,9 @@ export const ROUTES = {
   activeSession: { method: "GET", path: "/api/extension/sessions/active" },
   claimSession: { method: "POST", path: "/api/extension/sessions/:id/claim" },
   prefill: { method: "POST", path: "/api/extension/sessions/:id/prefill" },
+  questions: { method: "POST", path: "/api/extension/sessions/:id/questions/lookup" },
+  createQuestion: { method: "POST", path: "/api/extension/sessions/:id/questions" },
+  saveAnswerReference: { method: "POST", path: "/api/extension/sessions/:id/answer-references" },
   outputs: { method: "GET", path: "/api/extension/sessions/:id/outputs" },
   editOutput: { method: "PATCH", path: "/api/extension/sessions/:id/outputs/:outputId" },
   reviewOutput: { method: "POST", path: "/api/extension/sessions/:id/outputs/:outputId/reviewed" },
@@ -69,7 +72,7 @@ const BAD_RESPONSE: Failed = {
   kind: "failed",
   status: 0,
   code: "bad_response",
-  message: "The server answered with something the extension cannot read. Update Hanapbuhay and the extension.",
+  message: "The server answered with something the extension cannot read. Update Rolecraft and the extension.",
   details: undefined,
 };
 
@@ -121,11 +124,12 @@ export function createClient({ fetch, store }: { fetch: FetchLike; store: Store 
     for (const [key, value] of Object.entries(args.query ?? {})) url.searchParams.set(key, value);
     const headers = new Headers({ Authorization: `Bearer ${pairing.token}` });
 
+    const binding = await store.readBinding();
     let res: Response;
     try {
       res = await fetch(url.href, requestInit({ method: args.route.method, headers, body: args.body }));
     } catch {
-      await store.clearBinding();
+      if (binding !== null) await store.clearBinding(binding.sessionId);
       return { kind: "unreachable" };
     }
     if (res.status === 401) {

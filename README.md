@@ -1,6 +1,6 @@
-# Hanapbuhay
+# Rolecraft
 
-Hanapbuhay is a job search tool for one person in the Philippines who applies to remote jobs and contracts. It does three things:
+Rolecraft is a local-first job search workspace with AI-assisted application drafting. It currently focuses on people in the Philippines applying to remote jobs and contracts. It does three things:
 
 - It reads public job boards and company boards, and tells you whether each job can hire from the Philippines.
 - It keeps the jobs you care about on a board, from Saved to Closed.
@@ -8,7 +8,11 @@ Hanapbuhay is a job search tool for one person in the Philippines who applies to
 
 It never submits an application. You copy or export the files and apply yourself, or let the optional Chrome extension fill the empty fields of the form after you check them.
 
-Each person runs their own copy, with their own database and their own AI key. There is no login.
+Each person runs their own copy, with their own database and their own AI credentials. There is no login.
+
+**Keep it local.** Do not expose the app or database to the internet, a shared network or a public tunnel. Anyone who reaches the API can access your profile and drafts or spend your AI budget. The provided Compose configuration binds both ports to loopback. See [SECURITY.md](SECURITY.md) for the trust model and data handling.
+
+Rolecraft was previously called Hanapbuhay. The `HB_*` environment variables, default `hanapbuhay` database names, database roles and existing storage keys are kept for compatibility. Do not rename or delete your databases or volumes to upgrade. If you rename your checkout folder, Compose may select a different project and create empty volumes; keep the existing Compose project name with `docker compose -p <existing-project-name> ...`.
 
 ## Run it with Docker
 
@@ -42,7 +46,7 @@ You need [Bun](https://bun.sh) 1.4.3 or later and Docker for Postgres.
 1. Install dependencies and copy the example environment:
 
    ```sh
-   bun install
+   bun install --frozen-lockfile
    cp .env.example .env
    ```
 
@@ -102,6 +106,7 @@ The extension adds a side panel that fills empty fields on a job's application f
 | `HB_FX` | `live` | Where exchange rates come from (decision 67). `fixture` reads recorded ECB and currency-api bodies from `HB_FX_DIR` instead of the network. |
 | `HB_FX_DIR` | `./test/fixtures/fx` | The fixture files for `HB_FX=fixture`. A missing file fails like an unreachable site. |
 | `HB_PI_BIN` | `pi` | The pi binary for `HB_AI=pi`. |
+| `HB_PI_PROVIDER` | `anthropic` | The pi provider: `anthropic`, `openai`, or `openai-codex`. Pick models supported by that provider. |
 | `HB_PI_MODEL_LIGHT` | `claude-haiku-5-5` | The light-tier model for `HB_AI=pi`. |
 | `HB_PI_MODEL_WRITING` | `claude-opus-5-5` | The writing-tier model for `HB_AI=pi`. |
 | `HB_PI_THINKING_LIGHT` | `off` | The thinking level for light-tier pi calls. |
@@ -116,7 +121,7 @@ Compose reads `HB_PORT` (the host port for the app), `HB_DB_PORT` (the host port
 | Value | AI calls go to | Use it for |
 |---|---|---|
 | `live` | Anthropic or OpenAI, with the API key you save in **Settings**. | Docker, and any copy you run for real. |
-| `pi` | The `pi` CLI on your machine, signed in to Anthropic. The app stores no key and never reads pi's credentials. | Local development only. It needs pi and its sign-in on the host, so the Docker image always uses `live`. |
+| `pi` | The `pi` CLI on your machine, using `HB_PI_PROVIDER` and its existing sign-in. The app stores no key and never reads pi's credentials. | Local development only. It needs pi and its sign-in on the host, so the Docker image always uses `live`. |
 | `fake` | A scripted provider with fixed replies. | Tests and Playwright. |
 
 With `HB_AI=pi`, **Settings** shows "AI runs through pi on this machine" instead of the key form. At startup the server checks that pi is signed in, and logs a warning if it is not.
@@ -149,7 +154,7 @@ The recorded run of that command reported 0 missed exclusions and 0 invented cla
 
 The docs in `docs/`:
 
-- [docs/MVP.md](docs/MVP.md): what the app must do for real use now, the rules that keep work on course, and the log of real applications. `docs/features/` holds one doc per unbuilt feature.
+- [docs/MVP.md](docs/MVP.md): the original personal-use MVP scope and application-log template. Some scope notes predate the extension and later features. `docs/features/` holds one doc per unbuilt feature.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the app is built. Layers, data model, the main flows, and open work.
 - [docs/DECISIONS.md](docs/DECISIONS.md): the rules the app follows and why, numbered. Code comments cite them as "decision N".
 - [docs/EXTENSION.md](docs/EXTENSION.md): the Chrome extension, from setup to its threat model.
@@ -186,6 +191,8 @@ Domain code may not read the clock or use randomness. Callers pass `now`.
 | `bun run check:changed` | Biome and both `tsc` runs, then only the tests your uncommitted changes reach: `bun test --changed`, `bun run build`, and `scripts/e2e-changed.ts`. That script runs every e2e spec when the app changed, and `playwright test --only-changed` otherwise. |
 | `bun run e2e` | Playwright specs in `e2e/`. It builds `dist/` first, since the server serves the built app. The suite starts the server on port 3100 with `HB_AI=fake`, `HB_SOURCES=fixture` and `HB_FX=fixture`, against `hanapbuhay_e2e`. |
 | `bun run e2e:extension` | The Chrome extension end to end, in `e2e-extension/`. It builds `dist/` and `dist-extension/` and starts the server on port 3110 against `hanapbuhay_e2e`. See [docs/EXTENSION.md](docs/EXTENSION.md). |
+| `bun run audit:public --history` | Best-effort checks of tracked files and reachable Git history for secrets and private or generated files. It does not inspect your ignored `.env` or runtime data. |
+| `bun audit` | Dependency vulnerability advisories for the lockfile. Requires registry access. |
 | `bun run eval ...` | The evaluation set. It makes real AI calls, so it costs money. |
 
 Start Postgres with `bun run db:up` before `bun run check` or `bun run e2e`.
@@ -206,3 +213,11 @@ Set `HB_E2E_PORT` to run the e2e server on a port other than 3100, for example `
 A change to a module that most files import, such as `src/shared/api.ts`, `src/server/db/schema.ts` or `test/reset.ts`, selects most of the tests. That is expected.
 
 `e2e/craft.spec.ts` runs axe on every screen in the light and dark themes. It also checks focus rings, the themed selection and scrollbar, and the empty, loading, and error states. It saves screenshots to `test-results/craft/`.
+
+## Contributing and publishing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for development checks and compatibility rules. The [public-release checklist](docs/PUBLIC_RELEASE.md) covers Git history, private data, dependency advisories and GitHub settings. Do not include real application data in issues or test fixtures.
+
+## License
+
+Rolecraft is licensed under [MIT](LICENSE). Fonts, icons and copied UI components retain their own licenses; see [the third-party notices](public/THIRD_PARTY_NOTICES.txt), also included in the built web app and extension.

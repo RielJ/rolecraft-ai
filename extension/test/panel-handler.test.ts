@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApplicationSessionId, FieldId, type FillPlan, type RuntimeMessage, ScanNonce } from "@shared/extension";
+import type { SendAnswer } from "../src/background/answers";
 import type { ContentDeps } from "../src/background/content";
 import { handlePanelRequest, type PanelDeps } from "../src/background/panel";
 import type { PermissionsApi } from "../src/background/permissions";
@@ -54,7 +55,7 @@ function sessionDto(status: "pending" | "claimed" = "claimed") {
   };
 }
 
-type Route = (url: URL, init: RequestInit) => Response;
+type Route = (url: URL, init: RequestInit) => Response | Promise<Response>;
 
 function setup({
   paired = true,
@@ -64,6 +65,7 @@ function setup({
   serverDown = false,
   pingOk = true,
   pageReply,
+  answerReply,
   diagnostics,
 }: {
   /** Replaces the ring buffer over the session area, e.g. with one that fails. */
@@ -76,6 +78,7 @@ function setup({
   pingOk?: boolean;
   /** What the page answers a `read_job` or `success_probe`. */
   pageReply?: (message: ImportContentRequest) => unknown;
+  answerReply?: SendAnswer;
 } = {}) {
   const local = memoryArea(paired ? { endpoint: ENDPOINT, pairing: { pairingId: PAIRING_ID, token: TOKEN } } : {});
   const session = memoryArea(
@@ -141,6 +144,7 @@ function setup({
       },
     },
     content,
+    ...(answerReply === undefined ? {} : { sendAnswer: answerReply }),
     permissions,
     now: () => 1234,
     sendImport: async (_tabId, message) => {
@@ -194,6 +198,47 @@ describe("panel requests: schema", () => {
 });
 
 describe("panel requests: claim", () => {
+  test("a slow old claim cannot replace a newer application binding", async () => {
+    const oldResponse = Promise.withResolvers<Response>();
+    const entered = Promise.withResolvers<void>();
+    const t = setup({
+      route: (url) => {
+        if (url.pathname.includes(SESSION_ID)) {
+          entered.resolve();
+          return oldResponse.promise;
+        }
+        return json(200, { session: { ...sessionDto(), id: OTHER_SESSION, company: "Next Company" } });
+      },
+    });
+    const old = t.ask({
+      kind: "session_claim",
+      sessionId: SESSION_ID,
+      tabId: 7,
+      tabUrl: APPLY_URL,
+      confirmMismatch: false,
+    });
+    await entered.promise;
+    await t.ask({
+      kind: "session_claim",
+      sessionId: OTHER_SESSION,
+      tabId: 7,
+      tabUrl: APPLY_URL,
+      confirmMismatch: false,
+    });
+    oldResponse.resolve(json(200, { session: sessionDto() }));
+    await old;
+    expect(await t.store.readBinding()).toMatchObject({ sessionId: OTHER_SESSION });
+  });
+
+  test("discovery of no active session releases the previous binding", async () => {
+    const t = setup({ route: () => json(200, { kind: "none" }) });
+    expect((await t.ask({ kind: "session_active" })).result).toEqual({
+      kind: "session_active",
+      active: { kind: "none" },
+    });
+    expect(await t.store.readBinding()).toBeNull();
+  });
+
   test("binds the session to the tab the claim came from", async () => {
     const t = setup({ bound: false, route: () => json(200, { session: sessionDto() }) });
     const reply = await t.ask({
@@ -335,6 +380,40 @@ describe("panel requests: session-scoped server calls", () => {
     });
     const reply = await t.ask({ kind: "prefill", sessionId: SESSION_ID, nonce: NONCE, fields: [] });
     expect(reply.result).toMatchObject({ kind: "failed", code: "bad_response" });
+  });
+
+  test("polling an old job's missing task does not unlink the current job", async () => {
+    const t = setup({ route: () => json(404, { error: { code: "not_found", message: "That task was not found." } }) });
+    const binding = await t.store.readBinding();
+    if (binding === null) throw new Error("No binding");
+    await t.store.saveBinding({ ...binding, sessionId: ApplicationSessionId.parse(OTHER_SESSION), tabId: 8 });
+    const reply = await t.ask({ kind: "task_poll", taskId: "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918" });
+    expect(reply.result).toMatchObject({ kind: "failed", code: "not_found" });
+    expect(await t.store.readBinding()).toMatchObject({ sessionId: OTHER_SESSION, tabId: 8 });
+  });
+
+  test("a late expired response from the old job does not unlink the new job", async () => {
+    const response = Promise.withResolvers<Response>();
+    const entered = Promise.withResolvers<void>();
+    const t = setup({
+      route: () => {
+        entered.resolve();
+        return response.promise;
+      },
+    });
+    const old = t.ask({ kind: "outputs_list", sessionId: SESSION_ID });
+    await entered.promise;
+    const binding = await t.store.readBinding();
+    if (binding === null) throw new Error("No binding");
+    await t.store.saveBinding({
+      ...binding,
+      sessionId: ApplicationSessionId.parse(OTHER_SESSION),
+      tabId: 8,
+      claimedAt: 2,
+    });
+    response.resolve(json(409, { error: { code: "session_expired", message: "ended" } }));
+    await old;
+    expect(await t.store.readBinding()).toMatchObject({ sessionId: OTHER_SESSION, tabId: 8 });
   });
 
   test("an expired session drops the binding", async () => {
@@ -694,5 +773,97 @@ describe("panel requests: diagnostics", () => {
     };
     const t = setup({ diagnostics: broken });
     expect((await t.ask({ kind: "status" })).status.kind).toBe("paired");
+  });
+});
+
+const CUSTOM_FIELD = {
+  fieldId: "custom-question-1",
+  label: "What is your ideal tech stack?",
+  control: "textarea",
+  autocomplete: null,
+  name: null,
+  required: true,
+  options: [],
+  adapterCategory: null,
+};
+
+describe("custom question requests", () => {
+  test("lookup and explicit saves forward only through the claimed session routes", async () => {
+    const h = setup({
+      route: (url) => {
+        if (url.pathname.endsWith("/questions/lookup")) return json(200, { questions: [] });
+        if (url.pathname.endsWith("/answer-references"))
+          return json(200, {
+            id: OTHER_OPPORTUNITY,
+            question: CUSTOM_FIELD.label,
+            body: "TypeScript and Postgres",
+            company: "Acme",
+            updatedAt: NOW,
+          });
+        return json(500, {});
+      },
+    });
+    expect(
+      (await h.ask({ kind: "questions_lookup", sessionId: SESSION_ID, input: { fields: [CUSTOM_FIELD] } })).result
+        ?.kind,
+    ).toBe("questions");
+    expect(
+      (
+        await h.ask({
+          kind: "answer_reference_save",
+          sessionId: SESSION_ID,
+          input: { field: CUSTOM_FIELD, body: "TypeScript and Postgres" },
+        })
+      ).result?.kind,
+    ).toBe("answer_reference");
+    expect(h.calls.map((call) => call.path)).toEqual([
+      `/api/extension/sessions/${SESSION_ID}/questions/lookup`,
+      `/api/extension/sessions/${SESSION_ID}/answer-references`,
+    ]);
+    expect(h.sent).toHaveLength(0);
+    const log = JSON.stringify(await h.log.list());
+    expect(log).not.toContain("TypeScript");
+    expect(log).not.toContain(CUSTOM_FIELD.label);
+  });
+  test("explicit read validates the live session, only reads the bound tab, and logs no text", async () => {
+    const read: number[] = [];
+    const h = setup({
+      route: () => json(200, { questions: [] }),
+      answerReply: async (tabId, message) => {
+        read.push(tabId);
+        return {
+          kind: "answer_text",
+          nonce: message.nonce,
+          fieldId: message.field.fieldId,
+          body: "private approved text",
+        };
+      },
+    });
+    const request = { kind: "answer_read", sessionId: SESSION_ID, tabId: 7, nonce: NONCE, field: CUSTOM_FIELD };
+    expect((await h.ask({ ...request, tabId: 8 })).result).toEqual({ kind: "refused", reason: "not_bound" });
+    expect((await h.ask({ ...request, sessionId: OTHER_SESSION })).result).toEqual({
+      kind: "refused",
+      reason: "not_bound",
+    });
+    expect(read).toHaveLength(0);
+    expect((await h.ask(request)).result).toMatchObject({ kind: "answer_read", body: "private approved text" });
+    expect(read).toEqual([7]);
+    expect(h.calls).toHaveLength(1);
+    expect(JSON.stringify(await h.log.list())).not.toContain("private approved text");
+  });
+  test("revoked or expired sessions cannot read any value", async () => {
+    for (const code of ["unauthorized", "session_expired"]) {
+      let reads = 0;
+      const h = setup({
+        route: () => json(code === "unauthorized" ? 401 : 409, { error: { code, message: "Gone" } }),
+        answerReply: async () => {
+          reads++;
+          return undefined;
+        },
+      });
+      await h.ask({ kind: "answer_read", sessionId: SESSION_ID, tabId: 7, nonce: NONCE, field: CUSTOM_FIELD });
+      expect(reads).toBe(0);
+      expect(await h.store.readBinding()).toBeNull();
+    }
   });
 });

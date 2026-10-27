@@ -174,7 +174,7 @@ export async function claimPairing(
     )
     .returning({ id: extensionPairings.id });
   if (!row) {
-    throw unauthorized("That code is wrong, already used or expired. Create a new code in Hanapbuhay settings.");
+    throw unauthorized("That code is wrong, already used or expired. Create a new code in Rolecraft settings.");
   }
   return { pairingId: row.id, token };
 }

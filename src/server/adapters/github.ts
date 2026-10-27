@@ -135,7 +135,7 @@ function ghFailure({ stderr, exit }: { stderr: string; exit: number }): GithubEr
   if (exit === 4 || status === 401) {
     return new GithubError({
       kind: "unavailable",
-      message: "gh is not signed in. Sign in with gh yourself, then read again; hanapbuhay never signs gh in or out.",
+      message: "gh is not signed in. Sign in with gh yourself, then read again; rolecraft never signs gh in or out.",
     });
   }
   const line = stderr.trim().split("\n").at(-1)?.slice(0, 200) ?? "";
@@ -883,7 +883,7 @@ export function createGhReader({ user, ...options }: GhOptions & { user: string 
     if (login.toLowerCase() !== user.toLowerCase()) {
       throw new GithubError({
         kind: "account_mismatch",
-        message: `gh is signed in as "${login || "nobody"}", but HB_GITHUB_USER is "${user}". Switch gh to ${user} yourself (hanapbuhay never changes gh's account), or change HB_GITHUB_USER.`,
+        message: `gh is signed in as "${login || "nobody"}", but HB_GITHUB_USER is "${user}". Switch gh to ${user} yourself (rolecraft never changes gh's account), or change HB_GITHUB_USER.`,
       });
     }
   }

@@ -23,7 +23,7 @@ export function extensionWebRoutes(deps: Deps) {
       if (!SAFE_METHODS.has(c.req.method) && !JSON_CONTENT_TYPE.test(c.req.header("content-type") ?? "")) {
         throw new AppError({
           code: "forbidden_origin",
-          message: "Send this request from the Hanapbuhay page, as JSON.",
+          message: "Send this request from the Rolecraft page, as JSON.",
         });
       }
       await next();

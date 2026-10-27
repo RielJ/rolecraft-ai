@@ -37,7 +37,7 @@ import { loadUserSkillRows } from "./user-skills";
  * confirmed fact or a changed role family shows on the next request with nothing stored to update.
  */
 
-/** Rows past this are not sent; the list is sorted first, so they are the weakest and oldest. */
+/** Rows past this are not sent; the list is sorted first, so they are the far end of the order. */
 export const MAX_MATCHES = 500;
 
 type Targeting = {
@@ -298,9 +298,9 @@ function payFilterOf(t: Targeting, payAtLeast: number | undefined): MatchList["p
 
 /**
  * The Matches inbox: open jobs not yet saved or dismissed, Strong first. With a search, full-text
- * hits are ranked within each level; without one, newest first. Excluded jobs show only when
- * asked for, unsure ones unless asked not to, and the pay filter never hides a job it cannot
- * convert.
+ * hits are ranked within each level; without one, newest first. `sort=newest`/`oldest` put the
+ * first-found date over level and rank instead. Excluded jobs show only when asked for, unsure
+ * ones unless asked not to, and the pay filter never hides a job it cannot convert.
  */
 export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: MatchQuery = {}): Promise<MatchList> {
   const q = query.q?.trim() ?? "";
@@ -406,15 +406,24 @@ export async function listMatches(deps: Pick<Deps, "db" | "userId">, query: Matc
     });
   }
 
+  // By date: firstSeenAt, the "seen ago" date the list shows, over level and search rank.
+  // Ties break by id, so the order never moves between reads.
+  const byDate: Record<"newest" | "oldest", (a: (typeof shown)[number], b: (typeof shown)[number]) => number> = {
+    newest: (a, b) => b.seenAt - a.seenAt || a.id.localeCompare(b.id),
+    oldest: (a, b) => a.seenAt - b.seenAt || a.id.localeCompare(b.id),
+  };
+  const { sort } = query;
+  const dateOrder = sort === "newest" || sort === "oldest" ? byDate[sort] : null;
   shown.sort(
-    (a, b) =>
-      levelRank(a.level) - levelRank(b.level) ||
-      b.rank - a.rank ||
-      // Within a level, the jobs your skills cover best come first.
-      b.coverage - a.coverage ||
-      b.skillsMatched - a.skillsMatched ||
-      b.seenAt - a.seenAt ||
-      a.title.localeCompare(b.title),
+    dateOrder ??
+      ((a, b) =>
+        levelRank(a.level) - levelRank(b.level) ||
+        b.rank - a.rank ||
+        // Within a level, the jobs your skills cover best come first.
+        b.coverage - a.coverage ||
+        b.skillsMatched - a.skillsMatched ||
+        b.seenAt - a.seenAt ||
+        a.title.localeCompare(b.title)),
   );
   const page = shown.slice(0, MAX_MATCHES);
   return {

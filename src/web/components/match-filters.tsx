@@ -1,6 +1,6 @@
 import { ChevronDownIcon, EyeOffIcon, SearchIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
-import type { MatchList, MatchSourceGroup, SourceId } from "@/shared/api";
+import type { MatchList, MatchSort, MatchSourceGroup, SourceId } from "@/shared/api";
 import { cn } from "../lib/utils";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -218,4 +218,44 @@ export function SourceFilter({
 /** A radio value back to a pick: "all", a group name, or one of the listed sites' ids. */
 function pick(v: string, sources: Facets["sources"]): SourcePick {
   return GROUPS.find((g) => g.value === v)?.value ?? sources.sites.find((s) => s.id === v)?.id ?? null;
+}
+
+const SORTS: readonly { value: MatchSort; label: string }[] = [
+  { value: "relevance", label: "Best match" },
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+];
+
+/** Sort: Best match by default, or by the date each job was first found. */
+export function SortFilter({ value, onChange }: { value: MatchSort; onChange: (next: MatchSort) => void }) {
+  const label = SORTS.find((s) => s.value === value)?.label ?? "Best match";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`Sort: ${label}`}
+          className={triggerClass(value !== "relevance")}
+        >
+          <span className="truncate">{label}</span>
+          <ChevronDownIcon aria-hidden className="text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(v) => onChange(SORTS.find((s) => s.value === v)?.value ?? value)}
+        >
+          {SORTS.map((s) => (
+            <DropdownMenuRadioItem key={s.value} value={s.value}>
+              {s.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <p className="px-2 pb-1.5 text-muted-foreground text-xs">Dates are when jobs were first found.</p>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

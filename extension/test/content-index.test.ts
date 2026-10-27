@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { FieldId, ScanNonce } from "@shared/extension";
 import { Window } from "happy-dom";
-import { createContentHandler } from "../src/content/index";
+import { claimInstall, createContentHandler } from "../src/content/index";
 import { bytesToBase64 } from "../src/messages-attach";
 import type { ImportContentReply } from "../src/messages-import";
 
@@ -180,5 +180,23 @@ describe("content handler: formSeen", () => {
     page.removeForm();
     page.scan();
     expect(page.probe()).toEqual(gone);
+  });
+});
+
+describe("install guard", () => {
+  test("the first injection claims the slot and a second one does not", () => {
+    const scope = {};
+    expect(claimInstall(scope)).toBe(true);
+    expect(claimInstall(scope)).toBe(false);
+  });
+
+  test("a page that got the script before the Rolecraft rename keeps its single listener", () => {
+    expect(claimInstall({ hanapbuhayContentInstalled: true })).toBe(false);
+  });
+
+  test("sets both markers, so the old build also sees the slot as taken", () => {
+    const scope = {};
+    claimInstall(scope);
+    expect(scope).toEqual({ rolecraftContentInstalled: true, hanapbuhayContentInstalled: true });
   });
 });

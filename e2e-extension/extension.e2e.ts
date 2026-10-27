@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { AddJobResult, ProfileDto } from "@/shared/api";
 import {
   addJob,
   boardStatus,
@@ -22,7 +23,7 @@ import { EXTENSION_E2E_PORT, STOPPABLE_SERVER_PORT } from "./server-env";
 // site is a fixture served by a Playwright route.
 
 const ENDPOINT = `http://localhost:${EXTENSION_E2E_PORT}`;
-const APPLY_URL = `${APPROVED_ORIGIN}/acme/platform-engineer/apply?source=hanapbuhay`;
+const APPLY_URL = `${APPROVED_ORIGIN}/acme/platform-engineer/apply?source=rolecraft`;
 
 test.beforeEach(resetDatabase);
 
@@ -167,7 +168,10 @@ test("pair, Apply, claim, scan, attach, prefill, confirm applied", async ({ page
   await expect(prompt).toBeVisible({ timeout: 15_000 });
   expect(await boardStatus(page.request, opportunityId)).toBe("saved");
   await prompt.getByRole("button", { name: "Yes, mark applied" }).click();
-  await expect(panel.getByText("Marked as applied in Hanapbuhay.")).toBeVisible();
+  await expect(panel.getByText("Marked as applied in Rolecraft.")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Scan form", exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: JOB.title })).toHaveCount(0);
+  expect((await extension.storage()).session.binding).toBeUndefined();
 
   // The board shows it under Applied, and the session is done.
   expect(await boardStatus(page.request, opportunityId)).toBe("applied");
@@ -188,13 +192,74 @@ test("pair, Apply, claim, scan, attach, prefill, confirm applied", async ({ page
   }
 });
 
+test("the same panel follows a new Apply after completion without reopening", async ({ page, extension }) => {
+  const firstId = await pairedWithSession({ page, extension, applyUrl: APPLY_URL });
+  const { job, tab, panel } = await openClaimed(extension, APPLY_URL);
+  await scan(panel);
+  await panel.getByRole("button", { name: /^Prefill \d+ fields?$/ }).click();
+  await expect(panel.getByText(/^Filled 3 fields/)).toBeVisible();
+  await job.getByRole("button", { name: "Submit application", exact: true }).click();
+  await expect(panel.getByRole("region", { name: "Did you submit this application?" })).toBeVisible({
+    timeout: 15_000,
+  });
+  await panel.getByRole("button", { name: "Yes, mark applied", exact: true }).click();
+  await expect(panel.getByText("Marked as applied in Rolecraft.")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: JOB.title })).toHaveCount(0);
+  expect(await boardStatus(page.request, firstId)).toBe("applied");
+
+  const nextUrl = `${APPROVED_ORIGIN}/next/backend-engineer/apply`;
+  const added = await page.request.post("/api/jobs/from-paste", {
+    data: { ...JOB, title: "Backend Engineer", company: "Next Co", url: nextUrl },
+  });
+  expect(added.status()).toBe(201);
+  const nextId = AddJobResult.parse(await added.json()).opportunityId;
+  await startSession(page.request, ENDPOINT, nextId);
+  await extension.worker.evaluate(
+    async ({ windowId, url }) => {
+      await chrome.tabs.create({ windowId, url, active: true });
+    },
+    { windowId: tab.windowId, url: nextUrl },
+  );
+  await expect(panel.getByRole("heading", { name: "Backend Engineer" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Scan form", exact: true })).toBeEnabled();
+  expect((await extension.storage()).session.binding).toMatchObject({ opportunityId: nextId });
+  expect((await sessionRows()).map((row) => row.status)).toEqual(["completed", "claimed"]);
+});
+
+test("Refresh application discovers a new job and preserves current form values", async ({ page, extension }) => {
+  await pairedWithSession({ page, extension, applyUrl: APPLY_URL });
+  const { job, panel } = await openClaimed(extension, APPLY_URL);
+  await scan(panel);
+  await panel.getByRole("button", { name: "Refresh application", exact: true }).click();
+  await expect(panel.getByRole("region", { name: "Will fill" })).toBeVisible();
+
+  const nextUrl = `${APPROVED_ORIGIN}/next/backend-engineer/apply`;
+  await job.goto(nextUrl);
+  await expect(panel.getByRole("button", { name: "Scan form", exact: true })).toBeEnabled();
+  await job.locator("#email").fill("already.typed@example.ph");
+  const added = await page.request.post("/api/jobs/from-paste", {
+    data: { ...JOB, title: "Backend Engineer", company: "Next Co", url: nextUrl },
+  });
+  expect(added.status()).toBe(201);
+  const nextId = AddJobResult.parse(await added.json()).opportunityId;
+  // Starting a session alone emits no Chrome tab event. Refresh must query the server again.
+  await startSession(page.request, ENDPOINT, nextId);
+  await panel.getByRole("button", { name: "Refresh application", exact: true }).click();
+  await expect(panel.getByRole("heading", { name: "Backend Engineer" })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: JOB.title })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Scan form", exact: true })).toBeEnabled();
+  await expect(job.locator("#email")).toHaveValue("already.typed@example.ph");
+  expect((await extension.storage()).session.binding).toMatchObject({ opportunityId: nextId });
+  expect((await sessionRows()).map((row) => row.status)).toEqual(["expired", "claimed"]);
+});
+
 test("a page's postMessage and a subframe's runtime message get no answer", async ({ page, extension }) => {
   await pairedWithSession({ page, extension, applyUrl: APPLY_URL });
   const { job, tab, panel } = await openClaimed(extension, APPLY_URL);
   await scan(panel);
 
   // The page cannot reach the extension's runtime: no externally_connectable.
-  expect(await job.evaluate(() => typeof Reflect.get(globalThis, "chrome")?.runtime?.sendMessage)).toBe("undefined");
+  expect(await job.evaluate(() => typeof globalThis.chrome?.runtime?.sendMessage)).toBe("undefined");
 
   // Messages the extension would act on, posted by the page and by its subframe. The content
   // script has no message listener, so the page sees only its own posts and nothing changes.
@@ -213,7 +278,10 @@ test("a page's postMessage and a subframe's runtime message get no answer", asyn
       for (const message of messages) window.parent.postMessage(message, "*");
     }, forged);
   await job.waitForTimeout(1_500);
-  expect(await job.evaluate(() => Reflect.get(window, "received"))).toEqual([...forged, ...forged]);
+  expect(await job.evaluate(() => ("received" in window ? window.received : undefined))).toEqual([
+    ...forged,
+    ...forged,
+  ]);
   expect(await formValues(job)).toEqual(UNTOUCHED);
 
   // A script running in the subframe (the extension never injects one there) sends a scan result.
@@ -307,8 +375,8 @@ test("a revoked pairing puts the panel back on pairing and fills nothing", async
 
   // Prefill checks the pairing first: the server says 401, the panel shows pairing again.
   await panel.getByRole("button", { name: /^Prefill \d+ fields?$/ }).click();
-  await expect(panel.getByRole("heading", { name: "Pair with Hanapbuhay" })).toBeVisible();
-  await expect(panel.getByText("This browser was disconnected from Hanapbuhay. Pair it again.")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Pair with Rolecraft" })).toBeVisible();
+  await expect(panel.getByText("This browser was disconnected from Rolecraft. Pair it again.")).toBeVisible();
   expect(await formValues(job)).toEqual(UNTOUCHED);
 
   // The token and the session binding are gone; the endpoint stays for the next pairing.
@@ -330,17 +398,113 @@ test("with the server stopped the panel fails closed and the page is unchanged",
 
     await server.stop();
     await panel.getByRole("button", { name: /^Prefill \d+ fields?$/ }).click();
-    await expect(panel.getByRole("heading", { name: "Pair with Hanapbuhay" })).toBeVisible();
+    await expect(panel.getByRole("heading", { name: "Pair with Rolecraft" })).toBeVisible();
     await expect(
-      panel.getByText(`Can't reach Hanapbuhay at ${server.origin}. Start the server, then retry.`),
+      panel.getByText(`Can't reach Rolecraft at ${server.origin}. Start the server, then retry.`),
     ).toBeVisible();
     expect(await formValues(job)).toEqual(UNTOUCHED);
 
     // Retry with the server still down stays closed.
     await panel.getByRole("button", { name: "Retry" }).click();
-    await expect(panel.getByRole("heading", { name: "Pair with Hanapbuhay" })).toBeVisible();
+    await expect(panel.getByRole("heading", { name: "Pair with Rolecraft" })).toBeVisible();
     expect(await formValues(job)).toEqual(UNTOUCHED);
   } finally {
     await server.stop();
   }
+});
+
+const CUSTOM_QUESTION = "What is your ideal tech stack?";
+async function addCustomQuestion(job: Page) {
+  await job.locator("form").evaluate((form, question) => {
+    const label = document.createElement("label");
+    label.htmlFor = "custom-answer";
+    label.textContent = question;
+    const input = document.createElement("textarea");
+    input.id = "custom-answer";
+    input.name = "custom_answer";
+    form.prepend(label, input);
+  }, CUSTOM_QUESTION);
+}
+
+test("explicitly saved custom answers become review-only references on another job", async ({ page, extension }) => {
+  await pairedWithSession({ page, extension, applyUrl: APPLY_URL });
+  const first = await openClaimed(extension, APPLY_URL);
+  await addCustomQuestion(first.job);
+  await scan(first.panel);
+  const firstAnswers = first.panel.getByRole("region", { name: "Custom answers" });
+  await first.job.getByLabel(CUSTOM_QUESTION, { exact: true }).fill("I prefer TypeScript and Postgres.");
+  await expect(firstAnswers.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("");
+  await firstAnswers.getByRole("button", { name: "Read from form" }).click();
+  await expect(firstAnswers.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue(
+    "I prefer TypeScript and Postgres.",
+  );
+  await firstAnswers.getByRole("button", { name: "Save reference", exact: true }).click();
+  await expect(firstAnswers.getByText("Reference saved. It will only be reused when you choose it.")).toBeVisible();
+  await first.panel.close();
+  await first.job.close();
+
+  const secondUrl = `${APPROVED_ORIGIN}/another-company/platform-engineer/apply`;
+  const added = await page.request.post("/api/jobs/from-paste", {
+    data: { ...JOB, company: "Another Company", url: secondUrl },
+  });
+  expect(added.status()).toBe(201);
+  const secondId = AddJobResult.parse(await added.json()).opportunityId;
+  await startSession(page.request, ENDPOINT, secondId);
+  const second = await openClaimed(extension, secondUrl);
+  await addCustomQuestion(second.job);
+  await scan(second.panel);
+  const answers = second.panel.getByRole("region", { name: "Custom answers" });
+  await expect(answers.getByText("From Acme Inc", { exact: true })).toBeVisible();
+  await expect(answers.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("");
+  await expect(second.job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("");
+  await answers.getByRole("button", { name: "Use as starting point" }).click();
+  await expect(answers.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("I prefer TypeScript and Postgres.");
+  await expect(second.job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("");
+  await answers.getByRole("button", { name: "Fill this answer", exact: true }).click();
+  await expect(second.job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue(
+    "I prefer TypeScript and Postgres.",
+  );
+  await answers.getByLabel(CUSTOM_QUESTION, { exact: true }).fill("A different answer.");
+  await answers.getByRole("button", { name: "Fill this answer", exact: true }).click();
+  await expect(second.job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue(
+    "I prefer TypeScript and Postgres.",
+  );
+  expect(JSON.stringify(await extension.storage())).not.toContain("I prefer TypeScript");
+});
+
+test("a newly scanned question can draft through the server without automatically filling", async ({
+  page,
+  extension,
+}) => {
+  await pairedWithSession({ page, extension, applyUrl: APPLY_URL });
+  const key = await page.request.put("/api/settings/ai-key", {
+    data: { provider: "anthropic", key: "sk-ant-extension-fixture-ABCD" },
+  });
+  expect(key.ok()).toBe(true);
+  expect(
+    (
+      await page.request.put("/api/profile/cv", {
+        data: { text: "- Built a payments API in Go serving 2M requests a day" },
+      })
+    ).ok(),
+  ).toBe(true);
+  await expect
+    .poll(async () => ProfileDto.parse(await (await page.request.get("/api/profile")).json()).facts.length, {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0);
+  expect((await page.request.post("/api/facts/confirm-all")).ok()).toBe(true);
+  const { job, panel } = await openClaimed(extension, APPLY_URL);
+  await addCustomQuestion(job);
+  await scan(panel);
+  const answers = panel.getByRole("region", { name: "Custom answers" });
+  await answers.getByRole("button", { name: "Generate draft", exact: true }).click();
+  await expect(answers.getByText("Draft ready. Check every fact and company name before filling.")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(answers.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue(/payments API/);
+  await expect(answers.getByLabel(CUSTOM_QUESTION, { exact: true })).not.toHaveValue(/FACT-/);
+  await expect(job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue("");
+  await answers.getByRole("button", { name: "Fill this answer", exact: true }).click();
+  await expect(job.getByLabel(CUSTOM_QUESTION, { exact: true })).toHaveValue(/payments API/);
 });

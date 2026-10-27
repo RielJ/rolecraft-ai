@@ -214,6 +214,60 @@ describe("panel state: session discovery and claim", () => {
     expect(work(again.state).scan.kind).toBe("review");
   });
 
+  test("switching from a claimed job checks for a newer Apply session", () => {
+    const reviewed = run(TO_REVIEW);
+    const tab = { tabId: 8, url: "https://boards.example/jobs/2" };
+    const switched = transition(reviewed.state, { kind: "tab_changed", tab });
+    expect(switched.effects.map((effect) => effect.request)).toEqual([{ kind: "session_active" }]);
+    const nextSession = ApplicationSessionDto.parse({
+      ...SESSION,
+      id: "1c9f2e0f-4d3b-4f60-9b8c-7d6e5f4a3b2c",
+      applyUrl: tab.url,
+      company: "Next Company",
+    });
+    const discovered = transition(switched.state, {
+      kind: "discovered",
+      active: { kind: "active", session: nextSession },
+    });
+    expect(discovered.effects.map((effect) => effect.request)).toEqual([
+      { kind: "session_claim", sessionId: nextSession.id, tabId: 8, tabUrl: tab.url, confirmMismatch: false },
+    ]);
+    const claimed = transition(discovered.state, { kind: "claimed", session: nextSession });
+    expect(work(claimed.state).session.company).toBe("Next Company");
+    expect(work(claimed.state).scan.kind).toBe("idle");
+    expect(appliedWatch(claimed.state)).toBeNull();
+  });
+
+  test("switching tabs from an old mismatch discovers first instead of claiming the old job", () => {
+    const mismatched = run([
+      { kind: "opened", tab: TAB },
+      { kind: "discovered", active: { kind: "active", session: SESSION } },
+      { kind: "claim_mismatch", details: { sessionUrlKey: "boards.example/jobs/1", tabUrlKey: "other.example" } },
+    ]);
+    const switched = transition(mismatched.state, {
+      kind: "tab_changed",
+      tab: { tabId: 8, url: "https://boards.example/jobs/2" },
+    });
+    expect(switched.effects.map((effect) => effect.request)).toEqual([{ kind: "session_active" }]);
+  });
+
+  test("confirming applied clears the previous job and checks for the next application", () => {
+    const { state } = run([...TO_REVIEW, { kind: "attached" }]);
+    const event = replyToEvent({
+      request: { kind: "confirm_applied", sessionId: SESSION.id, reason: "form_gone" },
+      reply: {
+        status: { kind: "paired", endpoint: "http://localhost:3000", pairingId: PairingId.parse(SESSION_ID) },
+        error: null,
+        result: { kind: "applied", result: { opportunityId: SESSION.opportunityId, status: "applied", changed: true } },
+      },
+    });
+    const completed = transition(state, event);
+    expect(completed.state.session.kind).toBe("loading");
+    expect(appliedWatch(completed.state)).toBeNull();
+    expect(completed.state.notice).toBe("Marked as applied in Rolecraft.");
+    expect(completed.effects.map((effect) => effect.request)).toEqual([{ kind: "session_active" }]);
+  });
+
   test("a claim loads the job's outputs", () => {
     const { kinds } = run(TO_REVIEW.slice(0, 3));
     expect(kinds).toEqual(["session_active", "session_claim", "outputs_list"]);

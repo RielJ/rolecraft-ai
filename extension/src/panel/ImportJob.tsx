@@ -48,7 +48,7 @@ const REFUSALS: Record<ImportRefusal, string> = {
   not_active: "Switch to the job's tab, then try again.",
   unsupported_url: "The extension can only read web pages served over HTTPS.",
   blocked_host:
-    "This site's terms forbid automated tools, so the extension won't read it. Paste the job into Hanapbuhay instead.",
+    "This site's terms forbid automated tools, so the extension won't read it. Paste the job into Rolecraft instead.",
   permission_denied: "Chrome didn't let the extension read this tab. Click Read this page and allow access.",
   not_bound: "The extension lost track of this tab. Try again.",
   bad_reply: "The page didn't answer. Reload it and try again.",
@@ -231,7 +231,7 @@ export function ImportJobPanel({ endpoint, tab, requestAccess, send, onReply }: 
             return (
               <div className="flex flex-col items-start gap-3">
                 <p className="text-sm text-muted-foreground">
-                  Save the job on this tab to Hanapbuhay. You check and edit what was read before anything is saved.
+                  Save the job on this tab to Rolecraft. You check and edit what was read before anything is saved.
                 </p>
                 {state.notice !== null && (
                   <p role="status" className="rounded-control bg-muted px-3 py-2 text-sm">
@@ -276,7 +276,7 @@ export function ImportJobPanel({ endpoint, tab, requestAccess, send, onReply }: 
               <div className="flex flex-col items-start gap-3">
                 <p role="status" className="text-sm">
                   {state.result.kind === "created"
-                    ? `Saved “${state.title}” to Hanapbuhay.`
+                    ? `Saved “${state.title}” to Rolecraft.`
                     : `“${state.title}” was already saved, so nothing new was added.`}
                 </p>
                 <div className="flex gap-2">
@@ -286,7 +286,7 @@ export function ImportJobPanel({ endpoint, tab, requestAccess, send, onReply }: 
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Open in Hanapbuhay
+                    Open in Rolecraft
                   </a>
                   <button type="button" className="btn-secondary" onClick={cancel}>
                     Done
@@ -319,7 +319,7 @@ function AlreadySaved({ found, endpoint, onDone }: { found: Found; endpoint: str
           target="_blank"
           rel="noreferrer"
         >
-          {found.opportunityId === null ? "Open Hanapbuhay" : "Open in Hanapbuhay"}
+          {found.opportunityId === null ? "Open Rolecraft" : "Open in Rolecraft"}
         </a>
         <button type="button" className="btn-secondary" onClick={onDone}>
           Done

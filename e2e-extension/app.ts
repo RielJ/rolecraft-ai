@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AddJobResult, BoardItemDto, WorkspaceDto } from "@/shared/api";
 import { CreatePairingResult } from "@/shared/extension";
 import { E2E_DATABASE_URL } from "../playwright.config";
+import { E2E_SERVER_ARGS } from "../scripts/e2e-isolation";
 import { resetTables } from "../test/reset";
 import { serverEnv } from "./server-env";
 
@@ -107,7 +108,7 @@ export async function pairingCodeFromSettings(page: Page): Promise<string> {
 
 /** Fill the panel's pairing form and pair. Host access to the endpoint is pre-granted (fixtures.ts). */
 export async function pairPanel(panel: Page, { endpoint, code }: { endpoint: string; code: string }): Promise<void> {
-  await panel.getByLabel("Hanapbuhay address").fill(endpoint);
+  await panel.getByLabel("Rolecraft address").fill(endpoint);
   await panel.getByLabel("Pairing code").fill(code);
   await panel.getByRole("button", { name: "Pair", exact: true }).click();
   await expect(panel.getByText(`Paired with ${endpoint}`)).toBeVisible();
@@ -135,7 +136,7 @@ export class StoppableServer {
   ) {}
 
   static async start(port: number): Promise<StoppableServer> {
-    const child = spawn("bun", ["src/server/main.ts"], {
+    const child = spawn("bun", E2E_SERVER_ARGS, {
       env: { ...process.env, ...serverEnv(port) },
       stdio: "ignore",
     });

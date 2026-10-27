@@ -58,6 +58,13 @@ function parsed<T>(schema: z.ZodType<T>, value: unknown): T | null {
 }
 
 export function createStore({ local, session }: { local: KeyValueArea; session: KeyValueArea }) {
+  // Serialize compare-and-clear with saves so a late response cannot remove a newer binding.
+  let bindingWrites = Promise.resolve();
+  const updateBinding = (update: () => Promise<void>): Promise<void> => {
+    const next = bindingWrites.then(update);
+    bindingWrites = next.catch(() => {});
+    return next;
+  };
   return {
     async readLocal(): Promise<LocalState> {
       const raw = await local.get(Object.values(LOCAL_KEYS));
@@ -71,7 +78,7 @@ export function createStore({ local, session }: { local: KeyValueArea; session: 
 
     /** Endpoint and token are written together so a token never points at another server. */
     async savePairing({ endpoint, pairing }: { endpoint: ExtensionEndpoint; pairing: StoredPairing }): Promise<void> {
-      await session.remove([SESSION_KEYS.binding]);
+      await updateBinding(() => session.remove([SESSION_KEYS.binding]));
       await local.set({ [LOCAL_KEYS.endpoint]: endpoint, [LOCAL_KEYS.pairing]: pairing });
     },
 
@@ -81,7 +88,7 @@ export function createStore({ local, session }: { local: KeyValueArea; session: 
 
     /** Unpaired: drop the token and the session binding, keep the endpoint for the pairing screen. */
     async clearPairing(): Promise<void> {
-      await session.remove([SESSION_KEYS.binding]);
+      await updateBinding(() => session.remove([SESSION_KEYS.binding]));
       await local.remove([LOCAL_KEYS.pairing]);
     },
 
@@ -99,11 +106,17 @@ export function createStore({ local, session }: { local: KeyValueArea; session: 
     },
 
     async saveBinding(binding: SessionBinding): Promise<void> {
-      await session.set({ [SESSION_KEYS.binding]: binding });
+      await updateBinding(() => session.set({ [SESSION_KEYS.binding]: binding }));
     },
 
-    async clearBinding(): Promise<void> {
-      await session.remove([SESSION_KEYS.binding]);
+    async clearBinding(expectedSessionId?: ApplicationSessionId): Promise<void> {
+      await updateBinding(async () => {
+        if (expectedSessionId !== undefined) {
+          const raw = await session.get([SESSION_KEYS.binding]);
+          if (parsed(SessionBinding, raw[SESSION_KEYS.binding])?.sessionId !== expectedSessionId) return;
+        }
+        await session.remove([SESSION_KEYS.binding]);
+      });
     },
   };
 }

@@ -43,6 +43,18 @@ describe("manifest", () => {
     },
   );
 
+  test("is branded Rolecraft, with no old product name left", () => {
+    expect(raw).toMatchObject({ name: "Rolecraft", action: { default_title: "Open Rolecraft" } });
+    expect(text).toContain("Rolecraft");
+    expect(text.toLowerCase()).not.toContain("hanapbuhay");
+  });
+
+  test("the panel page title is Rolecraft", async () => {
+    const html = await Bun.file(join(import.meta.dir, "..", "panel.html")).text();
+    expect(html).toContain("<title>Rolecraft</title>");
+    expect(html.toLowerCase()).not.toContain("hanapbuhay");
+  });
+
   test("the panel and the worker point at built files", () => {
     expect(manifest.side_panel.default_path).toBe("panel.html");
     expect(manifest.background.service_worker).toBe("background.js");

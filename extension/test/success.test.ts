@@ -204,7 +204,7 @@ function setup({
     },
   };
   const ask = (request: unknown) => handleImport({ deps, request: ImportPanelRequest.parse(request) });
-  return { ask, calls, sent };
+  return { ask, calls, sent, store };
 }
 
 describe("success_check", () => {
@@ -240,8 +240,8 @@ describe("success_check", () => {
 });
 
 describe("confirm_applied", () => {
-  test("posts the reason for the bound session", async () => {
-    const { ask, calls } = setup();
+  test("posts the reason for the bound session and releases its binding", async () => {
+    const { ask, calls, store } = setup();
     const reply = await ask({ kind: "confirm_applied", sessionId: SESSION_ID, reason: "form_gone" });
     expect(reply.result).toEqual({
       kind: "applied",
@@ -250,6 +250,7 @@ describe("confirm_applied", () => {
     expect(calls).toEqual([
       { method: "POST", path: `/api/extension/sessions/${SESSION_ID}/confirm-applied`, body: { reason: "form_gone" } },
     ]);
+    expect(await store.readBinding()).toBeNull();
   });
 
   test("refuses a session the panel is not bound to", async () => {
@@ -267,8 +268,8 @@ describe("confirm_applied", () => {
 const WATCH: AppliedWatch = { sessionId: SESSION_ID, tabId: 7 };
 const paired = { kind: "paired", endpoint: ENDPOINT, pairingId: PAIRING_ID } as const;
 
-function reply(result: ImportReply["result"]): AppliedEvent {
-  return { kind: "reply", reply: asImportReply({ status: paired, error: null, result }) };
+function reply(result: ImportReply["result"], watch: AppliedWatch = WATCH): AppliedEvent {
+  return { kind: "reply", watch, reply: asImportReply({ status: paired, error: null, result }) };
 }
 
 function run(events: readonly AppliedEvent[], from: AppliedState = APPLIED_INITIAL) {
@@ -285,6 +286,13 @@ function run(events: readonly AppliedEvent[], from: AppliedState = APPLIED_INITI
 const signal = reply({ kind: "success_checked", reason: "confirmation_url" });
 
 describe("applied prompt state", () => {
+  test("an old session's success signal cannot prompt for a new job", () => {
+    const other = { ...WATCH, sessionId: OTHER_SESSION, tabId: 8 };
+    const checking = run([{ kind: "watch", watch: other }, { kind: "tick" }]);
+    const oldReply = { ...signal, watch: WATCH };
+    expect(appliedTransition(checking.state, oldReply).state).toEqual(checking.state);
+  });
+
   test("checks nothing until the parent starts watching", () => {
     expect(run([{ kind: "tick" }, { kind: "tick" }]).requests).toEqual([]);
   });

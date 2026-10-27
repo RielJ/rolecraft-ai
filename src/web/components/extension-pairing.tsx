@@ -301,7 +301,7 @@ function RevokeDialog({ pairing, onClose }: { pairing: PairingDto | null; onClos
           <AlertDialogTitle>Revoke this pairing?</AlertDialogTitle>
           <AlertDialogDescription>
             {pairing?.status === "active"
-              ? "The extension stops working with Hanapbuhay right away. To use it again, pair it with a new code."
+              ? "The extension stops working with Rolecraft right away. To use it again, pair it with a new code."
               : "The code stops working right away."}
           </AlertDialogDescription>
         </AlertDialogHeader>
